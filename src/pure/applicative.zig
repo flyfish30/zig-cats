@@ -24,7 +24,7 @@ pub fn Applicative(comptime ApplicativeImpl: type) type {
     const has_sup_impl = @hasField(ApplicativeImpl, "SupImpl");
 
     const InstanceType = struct {
-        const InstanceImpl = ApplicativeImpl;
+        pub const InstanceImpl = ApplicativeImpl;
         const FunctorSup = if (has_sup_impl)
             Functor(InstanceImpl.SupImpl)
         else

@@ -120,6 +120,17 @@ pub fn castInplaceValue(comptime T: type, val: anytype) T {
     }
 }
 
+pub fn getDefaultFn(comptime Fn: type) fn (MapFnInType(Fn)) MapFnRetType(Fn) {
+    return struct {
+        const A = MapFnInType(Fn);
+        const B = MapFnRetType(Fn);
+        fn defaultFn(a: A) B {
+            _ = a;
+            return std.mem.zeroes(B);
+        }
+    }.defaultFn;
+}
+
 pub fn Maybe(comptime A: type) type {
     return ?A;
 }

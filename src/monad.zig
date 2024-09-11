@@ -42,7 +42,7 @@ pub fn Monad(comptime MonadImpl: type) type {
 
     return struct {
         const Self = @This();
-        const InstanceImpl = MonadImpl;
+        pub const InstanceImpl = MonadImpl;
         const ApplicativeSup = if (has_sup_impl)
             Applicative(InstanceImpl.SupImpl)
         else

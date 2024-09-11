@@ -44,7 +44,7 @@ pub fn Applicative(comptime ApplicativeImpl: type) type {
 
     return struct {
         const Self = @This();
-        const InstanceImpl = ApplicativeImpl;
+        pub const InstanceImpl = ApplicativeImpl;
         const FunctorSup = if (has_sup_impl)
             Functor(InstanceImpl.SupImpl)
         else

@@ -80,7 +80,7 @@ pub fn Functor(comptime FunctorImpl: type) type {
     const F = FunctorImpl.F;
     return struct {
         const Self = @This();
-        const InstanceImpl = FunctorImpl;
+        pub const InstanceImpl = FunctorImpl;
 
         pub const Error = InstanceImpl.Error;
 
@@ -157,7 +157,7 @@ pub fn NatTrans(
 
     return struct {
         const Self = @This();
-        const InstanceImpl = NatTransImpl;
+        pub const InstanceImpl = NatTransImpl;
 
         const FTransType = @TypeOf(struct {
             fn transFn(

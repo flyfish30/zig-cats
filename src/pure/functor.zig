@@ -13,6 +13,9 @@ const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
 
 const Maybe = base.Maybe;
+const Array = base.Array;
+
+const getDefaultFn = base.getDefaultFn;
 
 pub const MaybeFunctorImpl = applicative.MaybeApplicativeImpl;
 pub const ArrayFunctorImpl = applicative.ArrayApplicativeImpl;
@@ -134,7 +137,7 @@ pub fn NatTrans(
     const G = NatTransImpl.G;
 
     const InstanceType = struct {
-        const InstanceImpl = NatTransImpl;
+        pub const InstanceImpl = NatTransImpl;
 
         const FTransType = @TypeOf(struct {
             fn transFn(comptime A: type, fa: F(A)) G(A) {
@@ -153,4 +156,36 @@ pub fn NatTrans(
 
     InstanceType.init();
     return InstanceType;
+}
+
+pub fn MaybeToArrayNatImpl(comptime len: usize) type {
+    return struct {
+        const F = Maybe;
+        const G = Array(len);
+
+        pub fn trans(comptime A: type, fa: F(A)) G(A) {
+            if (fa) |a| {
+                return [1]A{a} ** len;
+            } else {
+                const info_a = @typeInfo(A);
+                if (info_a == .Fn) {
+                    return [1]A{getDefaultFn(A)} ** len;
+                } else if (info_a == .Pointer and @typeInfo(std.meta.Child(A)) == .Fn) {
+                    return [1]A{getDefaultFn(std.meta.Child(A))} ** len;
+                }
+                return std.mem.zeroes([len]A);
+            }
+        }
+    };
+}
+
+pub fn ArrayToMaybeNatImpl(comptime len: usize) type {
+    return struct {
+        const F = Array(len);
+        const G = Maybe;
+
+        pub fn trans(comptime A: type, fa: F(A)) G(A) {
+            return fa[0];
+        }
+    };
 }
