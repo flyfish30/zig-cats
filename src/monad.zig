@@ -3,8 +3,10 @@ const base = @import("base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 
+const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 const TCtor = base.TCtor;
 
@@ -20,6 +22,7 @@ const isInplaceMap = base.isInplaceMap;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 const castInplaceValue = base.castInplaceValue;
 
+const Functor = functor.Functor;
 const Applicative = applicative.Applicative;
 
 const FunctorFxTypes = functor.FunctorFxTypes;
@@ -235,6 +238,103 @@ pub const MaybeMonadImpl = struct {
     }
 };
 
+// These functions are defined for unit test
+const add10 = struct {
+    fn f(a: u32) u32 {
+        return a + 10;
+    }
+}.f;
+
+const add_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+const mul_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) * 3.14;
+    }
+}.f;
+
+const add_pi_f32 = struct {
+    fn f(a: u32) f32 {
+        return @as(f32, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+test "Maybe Functor fmap" {
+    const MaybeFunctor = Functor(MaybeMonadImpl);
+    var maybe_functor = MaybeFunctor.init(.{ .none = {} });
+
+    var maybe_a: ?u32 = null;
+    maybe_a = try maybe_functor.fmap(.InplaceMap, add10, maybe_a);
+    try testing.expectEqual(null, maybe_a);
+
+    maybe_a = 32;
+    maybe_a = try maybe_functor.fmap(.InplaceMap, add10, maybe_a);
+    try testing.expectEqual(42, maybe_a);
+
+    maybe_a = null;
+    var maybe_b = try maybe_functor.fmap(.NewValMap, add_pi_f64, maybe_a);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 32;
+    maybe_b = try maybe_functor.fmap(.NewValMap, add_pi_f64, maybe_a);
+    try testing.expectEqual(32 + 3.14, maybe_b);
+}
+
+test "Maybe Applicative pure and fapply" {
+    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    var maybe_applicative = MaybeApplicative.init(.{ .none = {} });
+
+    const add24_from_f64 = &struct {
+        fn f(x: f64) u32 {
+            return @intFromFloat(@floor(x) + 24);
+        }
+    }.f;
+    const fapply_fn = try maybe_applicative.pure(add24_from_f64);
+
+    var maybe_a: ?f64 = null;
+    var maybe_b = try maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 1.68;
+    maybe_b = try maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
+    try testing.expectEqual(1 + 24, maybe_b);
+
+    maybe_b = try maybe_applicative.fapply(u32, u32, null, maybe_b);
+    try testing.expectEqual(null, maybe_b);
+}
+
+test "Maybe Monad bind" {
+    const MaybeMonad = Monad(MaybeMonadImpl);
+    var maybe_monad = MaybeMonad.init(.{ .none = {} });
+
+    const bind_fn = &struct {
+        fn f(self: *MaybeMonadImpl, x: f64) MaybeMonad.MbType(u32) {
+            _ = self;
+            if (x == 3.14) {
+                return null;
+            } else {
+                return @intFromFloat(@floor(x * 4.0));
+            }
+        }
+    }.f;
+
+    var maybe_a: ?f64 = null;
+    var maybe_b = try maybe_monad.bind(f64, u32, maybe_a, bind_fn);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 3.14;
+    maybe_b = try maybe_monad.bind(f64, u32, maybe_a, bind_fn);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 8.0;
+    maybe_b = try maybe_monad.bind(f64, u32, maybe_a, bind_fn);
+    try testing.expectEqual(32, maybe_b);
+}
+
 pub const ArrayListMonadImpl = struct {
     allocator: Allocator,
 
@@ -325,18 +425,23 @@ pub const ArrayListMonadImpl = struct {
             @compileError("The bitsize of translated value is not equal origin value, failed to map it");
         }
 
-        const arr = if (@typeInfo(@TypeOf(fa)) == .Pointer)
+        const array = if (@typeInfo(@TypeOf(fa)) == .Pointer)
             @constCast(fa).moveToUnmanaged()
         else
             @constCast(&fa).moveToUnmanaged();
-        var slice = arr.items;
+        var slice = array.items;
         var i: usize = 0;
         while (i < slice.len) : (i += 1) {
             const a = if (comptime isMapRef(K)) &slice[i] else slice[i];
             const b = if (has_err) try map_lam.call(a) else map_lam.call(a);
             slice[i] = castInplaceValue(A, b);
         }
-        return ArrayList(B).fromOwnedSlice(self.allocator, @ptrCast(slice));
+
+        var array_b: ArrayListUnmanaged(B) = .{
+            .items = @ptrCast(slice),
+            .capacity = array.capacity,
+        };
+        return array_b.toManaged(self.allocator);
     }
 
     fn mapNewValue(
@@ -358,10 +463,10 @@ pub const ArrayListMonadImpl = struct {
     }
 
     pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
-        var arr = try ArrayList(@TypeOf(a)).initCapacity(self.allocator, ARRAY_DEFAULT_LEN);
+        var array = try ArrayList(@TypeOf(a)).initCapacity(self.allocator, ARRAY_DEFAULT_LEN);
 
-        arr.appendAssumeCapacity(a);
-        return arr;
+        array.appendAssumeCapacity(a);
+        return array;
     }
 
     pub fn fapply(
@@ -427,3 +532,74 @@ pub const ArrayListMonadImpl = struct {
         return mb;
     }
 };
+
+test "ArrayList Functor fmap" {
+    const allocator = testing.allocator;
+    const ArrayListFunctor = Functor(ArrayListMonadImpl);
+    var array_functor = ArrayListFunctor.init(.{ .allocator = allocator });
+
+    var array_a = ArrayList(u32).init(allocator);
+    defer array_a.deinit();
+
+    try array_a.appendSlice(&[_]u32{ 0, 1, 2, 3 });
+    array_a = try array_functor.fmap(.InplaceMap, add10, array_a);
+    try testing.expectEqualSlices(u32, &[_]u32{ 10, 11, 12, 13 }, array_a.items);
+
+    const array_f32 = try array_functor.fmap(.InplaceMap, add_pi_f32, array_a);
+    array_a.clearRetainingCapacity();
+    try testing.expectEqualSlices(f32, &[_]f32{ 13.14, 14.14, 15.14, 16.14 }, array_f32.items);
+
+    try array_a.appendSlice(&[_]u32{ 10, 20, 30, 40 });
+    const array_f64 = try array_functor.fmap(.NewValMap, mul_pi_f64, array_a);
+    defer array_f64.deinit();
+    try testing.expectEqual(4, array_f64.items.len);
+    for (&[_]f64{ 31.4, 62.8, 94.2, 125.6 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array_f64.items[i], std.math.floatEps(f64));
+    }
+}
+
+test "ArrayList Applicative pure and fapply" {
+    const allocator = testing.allocator;
+    const ArrayListApplicative = Applicative(ArrayListMonadImpl);
+    var array_applicative = ArrayListApplicative.init(.{ .allocator = allocator });
+
+    const array_pured = try array_applicative.pure(@as(u32, 42));
+    defer array_pured.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{42}, array_pured.items);
+
+    var array_a = ArrayList(u32).init(allocator);
+    defer array_a.deinit();
+    try array_a.appendSlice(&[_]u32{ 10, 20, 30, 40 });
+
+    const IntToFloatFn = *const fn (u32) f64;
+    var array_fns = ArrayList(IntToFloatFn).init(allocator);
+    defer array_fns.deinit();
+    try array_fns.appendSlice(&[_]IntToFloatFn{ add_pi_f64, mul_pi_f64 });
+
+    const array_f64 = try array_applicative.fapply(u32, f64, array_fns, array_a);
+    defer array_f64.deinit();
+    try testing.expectEqual(8, array_f64.items.len);
+    for (&[_]f64{ 13.14, 23.14, 33.14, 43.14, 31.4, 62.8, 94.2, 125.6 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array_f64.items[i], std.math.floatEps(f64));
+    }
+}
+
+test "ArrayList Monad bind" {
+    const allocator = testing.allocator;
+    const ArrayListMonad = Monad(ArrayListMonadImpl);
+    var array_monad = ArrayListMonad.init(.{ .allocator = allocator });
+
+    var array_a = ArrayList(f64).init(allocator);
+    defer array_a.deinit();
+    try array_a.appendSlice(&[_]f64{ 10, 20, 30, 40 });
+    const array_binded = try array_monad.bind(f64, u32, array_a, struct {
+        fn f(inst: *@TypeOf(array_monad), a: f64) ArrayListMonad.MbType(u32) {
+            var arr_b = try ArrayList(u32).initCapacity(inst.allocator, 2);
+            arr_b.appendAssumeCapacity(@intFromFloat(@ceil(a * 4.0)));
+            arr_b.appendAssumeCapacity(@intFromFloat(@ceil(a * 9.0)));
+            return arr_b;
+        }
+    }.f);
+    defer array_binded.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{ 40, 90, 80, 180, 120, 270, 160, 360 }, array_binded.items);
+}

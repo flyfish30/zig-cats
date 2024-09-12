@@ -10,3 +10,7 @@ pub usingnamespace @import("monad.zig");
 pub usingnamespace @import("compose.zig");
 pub usingnamespace @import("product.zig");
 pub usingnamespace @import("coproduct.zig");
+
+test {
+    std.testing.refAllDecls(@This());
+}

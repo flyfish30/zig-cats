@@ -7,6 +7,7 @@ The Monoid/Functor/Applicative/Monad has support pure data type.
 - [ ] Monoid
 
 - [x] Functor
+- [x] Natural Transformation
 - [x] Applicative Functor
 - [x] Monad
 

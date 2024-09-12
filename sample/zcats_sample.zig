@@ -66,6 +66,7 @@ fn maybeSample() !void {
 
 fn arraylistSample() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     const ArrayListMonad = Monad(ArrayListMonadImpl);
@@ -136,7 +137,7 @@ fn arraylistSample() !void {
     // example of monad
     const arr_binded = try array_m.bind(f64, u32, arr_new, struct {
         fn f(inst: *@TypeOf(array_m), a: f64) ArrayListMonad.MbType(u32) {
-            var arr_b = ArrayList(u32).initCapacity(inst.allocator, 2) catch @panic("arraylistSample: No memory to create result arraylist monad!");
+            var arr_b = try ArrayList(u32).initCapacity(inst.allocator, 2);
             arr_b.appendAssumeCapacity(@intFromFloat(@ceil(a * 4.0)));
             arr_b.appendAssumeCapacity(@intFromFloat(@ceil(a * 9.0)));
             return arr_b;
