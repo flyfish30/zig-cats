@@ -51,10 +51,8 @@ pub fn Applicative(comptime ApplicativeImpl: type) type {
             Functor(InstanceImpl);
 
         pub const Error = InstanceImpl.Error;
-
-        const AFxTypes = ApplicativeFxTypes(F, Error);
-        pub const APaType = AFxTypes.APaType;
-        pub const AFbType = AFxTypes.AFbType;
+        pub const APaType = InstanceImpl.APaType;
+        pub const AFbType = InstanceImpl.AFbType;
 
         const PureType = @TypeOf(struct {
             fn pureFn(instance: *InstanceImpl, a: anytype) APaType(@TypeOf(a)) {

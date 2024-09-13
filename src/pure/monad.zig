@@ -3,6 +3,7 @@ const base = @import("../base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 
+const testing = std.testing;
 const assert = std.debug.assert;
 
 const TCtor = base.TCtor;
@@ -19,6 +20,7 @@ const isInplaceMap = base.isInplaceMap;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 const castInplaceValue = base.castInplaceValue;
 
+const Functor = functor.Functor;
 const Applicative = applicative.Applicative;
 
 const FunctorFxTypes = functor.FunctorFxTypes;
@@ -39,6 +41,7 @@ pub fn Monad(comptime MonadImpl: type) type {
         else
             Applicative(InstanceImpl);
 
+        pub const MbType = M;
         const BindType = @TypeOf(struct {
             fn bindFn(
                 comptime A: type,
@@ -178,6 +181,111 @@ pub const MaybeMonadImpl = struct {
         return null;
     }
 };
+
+// These functions are defined for unit test
+const add10 = struct {
+    fn f(a: u32) u32 {
+        return a + 10;
+    }
+}.f;
+
+const add_pi_f32 = struct {
+    fn f(a: u32) f32 {
+        return @as(f32, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+const add_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+const mul_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) * 3.14;
+    }
+}.f;
+
+const add_e_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) + 2.71828;
+    }
+}.f;
+
+const mul_e_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) * 2.71828;
+    }
+}.f;
+
+test "Maybe Functor fmap" {
+    const MaybeFunctor = Functor(MaybeMonadImpl);
+
+    var maybe_a: ?u32 = null;
+    maybe_a = MaybeFunctor.fmap(.InplaceMap, add10, maybe_a);
+    try testing.expectEqual(null, maybe_a);
+
+    maybe_a = 32;
+    maybe_a = MaybeFunctor.fmap(.InplaceMap, add10, maybe_a);
+    try testing.expectEqual(42, maybe_a);
+
+    maybe_a = null;
+    var maybe_b = MaybeFunctor.fmap(.NewValMap, add_pi_f64, maybe_a);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 32;
+    maybe_b = MaybeFunctor.fmap(.NewValMap, add_pi_f64, maybe_a);
+    try testing.expectEqual(32 + 3.14, maybe_b);
+}
+
+test "Maybe Applicative pure and fapply" {
+    const MaybeApplicative = Applicative(MaybeMonadImpl);
+
+    const add24_from_f64 = &struct {
+        fn f(x: f64) u32 {
+            return @intFromFloat(@floor(x) + 24);
+        }
+    }.f;
+    const fapply_fn = MaybeApplicative.pure(add24_from_f64);
+
+    var maybe_a: ?f64 = null;
+    var maybe_b = MaybeApplicative.fapply(f64, u32, fapply_fn, maybe_a);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 1.68;
+    maybe_b = MaybeApplicative.fapply(f64, u32, fapply_fn, maybe_a);
+    try testing.expectEqual(1 + 24, maybe_b);
+
+    maybe_b = MaybeApplicative.fapply(u32, u32, null, maybe_b);
+    try testing.expectEqual(null, maybe_b);
+}
+
+test "Maybe Monad bind" {
+    const MaybeMonad = Monad(MaybeMonadImpl);
+
+    const bind_fn = &struct {
+        fn f(x: f64) MaybeMonad.MbType(u32) {
+            if (x == 3.14) {
+                return null;
+            } else {
+                return @intFromFloat(@floor(x * 4.0));
+            }
+        }
+    }.f;
+
+    var maybe_a: ?f64 = null;
+    var maybe_b = MaybeMonad.bind(f64, u32, maybe_a, bind_fn);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 3.14;
+    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, bind_fn);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 8.0;
+    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, bind_fn);
+    try testing.expectEqual(32, maybe_b);
+}
 
 pub fn ArrayMonadImpl(comptime len: usize) type {
     return struct {
@@ -395,4 +503,62 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             return imap(A, B, imap_lam, ma);
         }
     };
+}
+
+const ARRAY_LEN = 4;
+const ArrayF = Array(ARRAY_LEN);
+
+test "Array Functor fmap" {
+    const ArrayFunctor = Functor(ArrayMonadImpl(ARRAY_LEN));
+
+    var array_a = ArrayF(u32){ 0, 1, 2, 3 };
+    array_a = ArrayFunctor.fmap(.InplaceMap, add10, array_a);
+    try testing.expectEqualSlices(u32, &[_]u32{ 10, 11, 12, 13 }, &array_a);
+
+    const array_f32 = ArrayFunctor.fmap(.InplaceMap, add_pi_f32, array_a);
+    try testing.expectEqualSlices(f32, &[_]f32{ 13.14, 14.14, 15.14, 16.14 }, &array_f32);
+
+    const array_f64 = ArrayFunctor.fmap(.NewValMap, mul_pi_f64, array_a);
+    try testing.expectEqual(4, array_f64.len);
+    for (&[_]f64{ 31.4, 34.54, 37.68, 40.82 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array_f64[i], std.math.floatEps(f64));
+    }
+}
+
+test "Array Applicative pure and fapply" {
+    const ArrayApplicative = Applicative(ArrayMonadImpl(ARRAY_LEN));
+
+    const array_pured = ArrayApplicative.pure(@as(u32, 42));
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 42, 42 }, &array_pured);
+
+    const array_a = ArrayF(u32){ 10, 20, 30, 40 };
+    const IntToFloatFn = *const fn (u32) f64;
+    const array_fns = ArrayF(IntToFloatFn){ add_pi_f64, mul_pi_f64, add_e_f64, mul_e_f64 };
+
+    const array_f64 = ArrayApplicative.fapply(u32, f64, array_fns, array_a);
+    try testing.expectEqual(4, array_f64.len);
+    for (&[_]f64{ 13.14, 62.8, 32.71828, 108.7312 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array_f64[i], std.math.floatEps(f64));
+    }
+}
+
+test "Array Monad bind" {
+    const ArrayMonad = Monad(ArrayMonadImpl(ARRAY_LEN));
+
+    const array_a = ArrayF(f64){ 10, 20, 30, 40 };
+    const array_binded = ArrayMonad.bind(f64, u32, array_a, struct {
+        fn f(a: f64) ArrayMonad.MbType(u32) {
+            var array_b: ArrayF(u32) = undefined;
+            var j: usize = 0;
+            while (j < array_b.len) : (j += 1) {
+                if ((j & 0x1) == 0) {
+                    array_b[j] = @intFromFloat(@ceil(a * 4.0));
+                } else {
+                    array_b[j] = @intFromFloat(@ceil(a * 9.0));
+                }
+            }
+            return array_b;
+        }
+    }.f);
+    try testing.expectEqualSlices(u32, &[_]u32{ 40, 180, 120, 360 }, &array_binded);
 }

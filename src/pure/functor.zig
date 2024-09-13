@@ -65,15 +65,14 @@ pub fn Functor(comptime FunctorImpl: type) type {
         @compileError("The Functor instance must has deinitFa function!");
     }
 
-    const F = FunctorImpl.F;
+    // const F = FunctorImpl.F;
     const InstanceType = struct {
         const InstanceImpl = FunctorImpl;
 
-        pub const FxTypes = FunctorFxTypes(F);
-        pub const FaType = FxTypes.FaType;
-        pub const FbType = FxTypes.FbType;
-        pub const FaLamType = FxTypes.FaLamType;
-        pub const FbLamType = FxTypes.FbLamType;
+        pub const FaType = InstanceImpl.FaType;
+        pub const FbType = InstanceImpl.FbType;
+        pub const FaLamType = InstanceImpl.FaLamType;
+        pub const FbLamType = InstanceImpl.FbLamType;
 
         /// Typeclass function for map with function
         const FMapType = @TypeOf(struct {

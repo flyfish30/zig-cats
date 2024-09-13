@@ -52,7 +52,7 @@ pub fn Monad(comptime MonadImpl: type) type {
             Applicative(InstanceImpl);
 
         pub const Error = InstanceImpl.Error;
-        pub const MbType = MonadFxTypes(M, Error).MbType;
+        pub const MbType = InstanceImpl.MbType;
 
         const BindType = @TypeOf(struct {
             fn bindFn(
