@@ -271,23 +271,23 @@ test "Compose Applicative pure and fapply" {
     const array_fns = ArrayF(IntToFloatFn){ add_pi_f64, mul_pi_f64, add_e_f64, mul_e_f64 };
     var arr_maybe_fns = ArrayAndMaybe(IntToFloatFn){ array_fns, add_pi_f64 };
     const arr_maybe_b = ArrayAndMaybeApplicative.fapply(u32, f64, arr_maybe_fns, arr_maybe_a);
-    for (&[_]f32{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
-        try testing.expectApproxEqRel(a, arr_maybe_b[0][i], std.math.floatEps(f32));
+    for (&[_]f64{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, arr_maybe_b[0][i], std.math.floatEps(f64));
     }
     try testing.expectEqual(45.14, arr_maybe_b[1]);
 
     arr_maybe_a[1] = null; // (array_a, null)
     const arr_maybe_c = ArrayAndMaybeApplicative.fapply(u32, f64, arr_maybe_fns, arr_maybe_a);
-    for (&[_]f32{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
-        try testing.expectApproxEqRel(a, arr_maybe_c[0][i], std.math.floatEps(f32));
+    for (&[_]f64{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, arr_maybe_c[0][i], std.math.floatEps(f64));
     }
     try testing.expectEqual(null, arr_maybe_c[1]);
 
     arr_maybe_fns[1] = null; // (array_fns, null)
     arr_maybe_a[1] = 23; // (array_a, 23)
     const arr_maybe_d = ArrayAndMaybeApplicative.fapply(u32, f64, arr_maybe_fns, arr_maybe_a);
-    for (&[_]f32{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
-        try testing.expectApproxEqRel(a, arr_maybe_d[0][i], std.math.floatEps(f32));
+    for (&[_]f64{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, arr_maybe_d[0][i], std.math.floatEps(f64));
     }
     try testing.expectEqual(null, arr_maybe_d[1]);
 }

@@ -401,7 +401,11 @@ fn coproductSample() !void {
     const ArrayListApplicative = Applicative(ArrayListMonadImpl);
     const MaybeApplicative = Applicative(MaybeMonadImpl);
     const NatMaybeToArray = NatTrans(MaybeToArrayListNatImpl);
-    const ArrayListOrMaybeApplicative = CoproductApplicative(ArrayListApplicative, MaybeApplicative, NatMaybeToArray);
+    const ArrayListOrMaybeApplicative = CoproductApplicative(
+        ArrayListApplicative,
+        MaybeApplicative,
+        NatMaybeToArray,
+    );
 
     var array_or_maybe = ArrayListOrMaybeApplicative.init(.{
         .functor_sup = .{

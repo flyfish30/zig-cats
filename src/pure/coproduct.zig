@@ -3,6 +3,7 @@ const base = @import("../base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 
+const testing = std.testing;
 const assert = std.debug.assert;
 const TCtor = base.TCtor;
 
@@ -191,4 +192,146 @@ pub fn CoproductApplicative(
         NaturalGF.InstanceImpl,
     );
     return Applicative(ImplFG);
+}
+
+// These functions are defined for unit test
+const add4 = struct {
+    fn f(a: u32) u32 {
+        return a + 4;
+    }
+}.f;
+
+const add10 = struct {
+    fn f(a: u32) u32 {
+        return a + 10;
+    }
+}.f;
+
+const mul2 = struct {
+    fn f(a: u32) u32 {
+        return a * 2;
+    }
+}.f;
+
+const mul3 = struct {
+    fn f(a: u32) u32 {
+        return a * 3;
+    }
+}.f;
+
+const add_pi_f32 = struct {
+    fn f(a: u32) f32 {
+        return @as(f32, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+const add_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+const mul_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) * 3.14;
+    }
+}.f;
+
+const add_e_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) + 2.71828;
+    }
+}.f;
+
+const mul_e_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) * 2.71828;
+    }
+}.f;
+
+const monad = @import("monad.zig");
+const NatTrans = functor.NatTrans;
+const MaybeToArrayNatImpl = functor.MaybeToArrayNatImpl;
+const ArrayMonadImpl = monad.ArrayMonadImpl;
+const MaybeMonadImpl = monad.MaybeMonadImpl;
+
+const Maybe = base.Maybe;
+const Array = base.Array;
+const ARRAY_LEN = 4;
+const ArrayF = Array(ARRAY_LEN);
+
+test "Compose Functor fmap" {
+    // test (ArrayF, Maybe) product functor
+    const ArrayOrMaybe = CoproductFG(ArrayF, Maybe);
+    const ArrayFunctor = Functor(ArrayMonadImpl(ARRAY_LEN));
+    const MaybeFunctor = Functor(MaybeMonadImpl);
+    const ArrayOrMaybeFunctor = CoproductFunctor(ArrayFunctor, MaybeFunctor);
+
+    const array_a = ArrayF(u32){ 1, 2, 3, 4 };
+
+    var or_array_a = ArrayOrMaybe(u32){ .inl = array_a };
+    or_array_a = ArrayOrMaybeFunctor.fmap(.InplaceMap, add10, or_array_a);
+    try testing.expectEqualSlices(u32, &[_]u32{ 11, 12, 13, 14 }, &or_array_a.inl);
+
+    var or_maybe_a = ArrayOrMaybe(u32){ .inr = 42 };
+    or_maybe_a = ArrayOrMaybeFunctor.fmap(.InplaceMap, mul3, or_maybe_a);
+    try testing.expectEqual(126, or_maybe_a.inr);
+
+    var or_maybe_b = ArrayOrMaybe(u32){ .inr = null };
+    or_maybe_b = ArrayOrMaybeFunctor.fmap(.InplaceMap, mul3, or_maybe_b);
+    try testing.expectEqual(null, or_maybe_b.inr);
+
+    const or_array_b = ArrayOrMaybeFunctor.fmap(.NewValMap, add4, or_array_a);
+    try testing.expectEqualSlices(u32, &[_]u32{ 15, 16, 17, 18 }, &or_array_b.inl);
+
+    const or_maybe_c = ArrayOrMaybeFunctor.fmap(.NewValMap, mul2, or_maybe_a);
+    try testing.expectEqual(252, or_maybe_c.inr);
+
+    const or_maybe_d = ArrayOrMaybeFunctor.fmap(.NewValMap, mul2, or_maybe_b);
+    try testing.expectEqual(null, or_maybe_d.inr);
+}
+
+test "Compose Applicative pure and fapply" {
+    // const IntToIntFn = *const fn (u32) u32;
+    const IntToFloatFn = *const fn (u32) f64;
+
+    // test (ArrayF, Maybe) product applicative
+    const ArrayOrMaybe = CoproductFG(ArrayF, Maybe);
+    const ArrayApplicative = Applicative(ArrayMonadImpl(ARRAY_LEN));
+    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const NatMaybeToArray = NatTrans(MaybeToArrayNatImpl(ARRAY_LEN));
+    const ArrayOrMaybeApplicative = CoproductApplicative(
+        ArrayApplicative,
+        MaybeApplicative,
+        NatMaybeToArray,
+    );
+
+    const arr_maybe_pured = ArrayOrMaybeApplicative.pure(@as(f32, 3.14));
+    try testing.expectEqual(3.14, arr_maybe_pured.inr);
+
+    const array_a = ArrayF(u32){ 1, 2, 3, 4 };
+    const or_array_a = ArrayOrMaybe(u32){ .inl = array_a };
+    const or_maybe_a = ArrayOrMaybe(u32){ .inr = 7 };
+
+    const array_fns = ArrayF(IntToFloatFn){ add_pi_f64, mul_pi_f64, add_e_f64, mul_e_f64 };
+    const or_array_fns = ArrayOrMaybe(IntToFloatFn){ .inl = array_fns };
+    const or_maybe_fns = ArrayOrMaybe(IntToFloatFn){ .inr = mul_pi_f64 };
+
+    const array_array_a = ArrayOrMaybeApplicative.fapply(u32, f64, or_array_fns, or_array_a);
+    for (&[_]f64{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array_array_a.inl[i], std.math.floatEps(f64));
+    }
+
+    const maybe_array_a = ArrayOrMaybeApplicative.fapply(u32, f64, or_maybe_fns, or_array_a);
+    for (&[_]f64{ 3.14, 6.28, 9.42, 12.56 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, maybe_array_a.inl[i], std.math.floatEps(f64));
+    }
+
+    const array_maybe_a = ArrayOrMaybeApplicative.fapply(u32, f64, or_array_fns, or_maybe_a);
+    for (&[_]f64{ 10.14, 21.98, 9.71828, 19.02796 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array_maybe_a.inl[i], std.math.floatEps(f64));
+    }
+
+    const maybe_maybe_a = ArrayOrMaybeApplicative.fapply(u32, f64, or_maybe_fns, or_maybe_a);
+    try testing.expectEqual(21.98, maybe_maybe_a.inr);
 }
