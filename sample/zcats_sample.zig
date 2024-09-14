@@ -150,11 +150,35 @@ fn arraylistSample() !void {
 // Deinit the array3 with type ArrayList(Maybe(ArrayList(A))
 fn array3Deinit(array3: anytype) void {
     for (array3.items) |item| {
-        if (item) |o| {
-            o.deinit();
+        if (item) |arr| {
+            arr.deinit();
         }
     }
     array3.deinit();
+}
+
+// pretty print the arr3 with type ArrayList(Maybe(ArrayList(A))
+fn array3PrettyPrint(arr3: anytype) void {
+    std.debug.print("{{ \n", .{});
+    var j: u32 = 0;
+    for (arr3.items) |item| {
+        if (item) |arr| {
+            std.debug.print(" {{ ", .{});
+            for (arr.items) |a| {
+                std.debug.print("{any},", .{a});
+            }
+            std.debug.print(" }},", .{});
+        } else {
+            std.debug.print(" {any},", .{item});
+        }
+
+        j += 1;
+        if (j == 16) {
+            j = 0;
+            std.debug.print("\n", .{});
+        }
+    }
+    std.debug.print("}}\n", .{});
 }
 
 fn composeSample() !void {
@@ -223,32 +247,6 @@ fn composeSample() !void {
     const arr_applied = try array_maybe.fapply(f64, u32, arr_fns, arr_new);
     defer arr_applied.deinit();
     std.debug.print("arr_applied: {any}\n", .{arr_applied.items});
-
-    // pretty print the arr3 with type ArrayList(Maybe(ArrayList(A))
-    const array3PrettyPrint = struct {
-        fn prettyPrint(arr3: anytype) void {
-            std.debug.print("{{ \n", .{});
-            var j: u32 = 0;
-            for (arr3.items) |item| {
-                if (item) |o| {
-                    std.debug.print(" {{ ", .{});
-                    for (o.items) |a| {
-                        std.debug.print("{any},", .{a});
-                    }
-                    std.debug.print(" }},", .{});
-                } else {
-                    std.debug.print(" {any},", .{item});
-                }
-
-                j += 1;
-                if (j == 16) {
-                    j = 0;
-                    std.debug.print("\n", .{});
-                }
-            }
-            std.debug.print("}}\n", .{});
-        }
-    }.prettyPrint;
 
     // example of compose three applicative functor
     const IntToIntFn = *const fn (u32) u32;

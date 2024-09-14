@@ -3,6 +3,7 @@ const base = @import("../base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 
+const testing = std.testing;
 const assert = std.debug.assert;
 const TCtor = base.TCtor;
 
@@ -156,4 +157,137 @@ pub fn ProductFunctor(comptime FunctorF: type, comptime FunctorG: type) type {
 pub fn ProductApplicative(comptime ApplicativeF: type, comptime ApplicativeG: type) type {
     const ImplFG = ProductApplicativeImpl(ApplicativeF.InstanceImpl, ApplicativeG.InstanceImpl);
     return Applicative(ImplFG);
+}
+
+// These functions are defined for unit test
+const add4 = struct {
+    fn f(a: u32) u32 {
+        return a + 4;
+    }
+}.f;
+
+const add10 = struct {
+    fn f(a: u32) u32 {
+        return a + 10;
+    }
+}.f;
+
+const mul2 = struct {
+    fn f(a: u32) u32 {
+        return a * 2;
+    }
+}.f;
+
+const mul3 = struct {
+    fn f(a: u32) u32 {
+        return a * 3;
+    }
+}.f;
+
+const add_pi_f32 = struct {
+    fn f(a: u32) f32 {
+        return @as(f32, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+const add_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+const mul_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) * 3.14;
+    }
+}.f;
+
+const add_e_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) + 2.71828;
+    }
+}.f;
+
+const mul_e_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) * 2.71828;
+    }
+}.f;
+
+const monad = @import("monad.zig");
+const ArrayMonadImpl = monad.ArrayMonadImpl;
+const MaybeMonadImpl = monad.MaybeMonadImpl;
+
+const Maybe = base.Maybe;
+const ARRAY_LEN = 4;
+const Array = base.Array;
+const ArrayF = Array(ARRAY_LEN);
+
+test "Compose Functor fmap" {
+    // test (ArrayF, Maybe) product functor
+    const ArrayAndMaybe = ProductFG(ArrayF, Maybe);
+    const ArrayFunctor = Functor(ArrayMonadImpl(ARRAY_LEN));
+    const MaybeFunctor = Functor(MaybeMonadImpl);
+    const ArrayAndMaybeFunctor = ProductFunctor(ArrayFunctor, MaybeFunctor);
+
+    const array_a = ArrayF(u32){ 1, 2, 3, 4 };
+    var arr_maybe_a = ArrayAndMaybe(u32){ array_a, 42 };
+    arr_maybe_a = ArrayAndMaybeFunctor.fmap(.InplaceMap, add10, arr_maybe_a);
+    try testing.expectEqualSlices(u32, &[_]u32{ 11, 12, 13, 14 }, &arr_maybe_a[0]);
+    try testing.expectEqual(52, arr_maybe_a[1]);
+
+    arr_maybe_a[1] = null; // (array_a, null)
+    arr_maybe_a = ArrayAndMaybeFunctor.fmap(.InplaceMap, mul3, arr_maybe_a);
+    try testing.expectEqualSlices(u32, &[_]u32{ 33, 36, 39, 42 }, &arr_maybe_a[0]);
+    try testing.expectEqual(null, arr_maybe_a[1]);
+
+    var arr_maybe_b = ArrayAndMaybeFunctor.fmap(.NewValMap, add4, arr_maybe_a);
+    try testing.expectEqualSlices(u32, &[_]u32{ 37, 40, 43, 46 }, &arr_maybe_b[0]);
+    try testing.expectEqual(null, arr_maybe_b[1]);
+
+    arr_maybe_b[1] = 18; // (array_a, 18)
+    const arr_maybe_c = ArrayAndMaybeFunctor.fmap(.NewValMap, mul2, arr_maybe_b);
+    try testing.expectEqualSlices(u32, &[_]u32{ 74, 80, 86, 92 }, &arr_maybe_c[0]);
+    try testing.expectEqual(36, arr_maybe_c[1]);
+}
+
+test "Compose Applicative pure and fapply" {
+    // const IntToIntFn = *const fn (u32) u32;
+    const IntToFloatFn = *const fn (u32) f64;
+
+    // test (ArrayF, Maybe) product applicative
+    const ArrayAndMaybe = ProductFG(ArrayF, Maybe);
+    const ArrayApplicative = Applicative(ArrayMonadImpl(ARRAY_LEN));
+    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayAndMaybeApplicative = ProductApplicative(ArrayApplicative, MaybeApplicative);
+
+    const arr_maybe_pured = ArrayAndMaybeApplicative.pure(@as(u32, 7));
+    try testing.expectEqualSlices(u32, &[_]u32{ 7, 7, 7, 7 }, &arr_maybe_pured[0]);
+    try testing.expectEqual(7, arr_maybe_pured[1]);
+
+    const array_a = ArrayF(u32){ 1, 2, 3, 4 };
+    var arr_maybe_a = ArrayAndMaybe(u32){ array_a, 42 };
+
+    const array_fns = ArrayF(IntToFloatFn){ add_pi_f64, mul_pi_f64, add_e_f64, mul_e_f64 };
+    var arr_maybe_fns = ArrayAndMaybe(IntToFloatFn){ array_fns, add_pi_f64 };
+    const arr_maybe_b = ArrayAndMaybeApplicative.fapply(u32, f64, arr_maybe_fns, arr_maybe_a);
+    for (&[_]f32{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, arr_maybe_b[0][i], std.math.floatEps(f32));
+    }
+    try testing.expectEqual(45.14, arr_maybe_b[1]);
+
+    arr_maybe_a[1] = null; // (array_a, null)
+    const arr_maybe_c = ArrayAndMaybeApplicative.fapply(u32, f64, arr_maybe_fns, arr_maybe_a);
+    for (&[_]f32{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, arr_maybe_c[0][i], std.math.floatEps(f32));
+    }
+    try testing.expectEqual(null, arr_maybe_c[1]);
+
+    arr_maybe_fns[1] = null; // (array_fns, null)
+    arr_maybe_a[1] = 23; // (array_a, 23)
+    const arr_maybe_d = ArrayAndMaybeApplicative.fapply(u32, f64, arr_maybe_fns, arr_maybe_a);
+    for (&[_]f32{ 4.14, 6.28, 5.71828, 10.87312 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, arr_maybe_d[0][i], std.math.floatEps(f32));
+    }
+    try testing.expectEqual(null, arr_maybe_d[1]);
 }

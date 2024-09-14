@@ -346,103 +346,11 @@ const Array = base.Array;
 const ArrayF = Array(ARRAY_LEN);
 const ArrayList = std.ArrayList;
 
-test "Compose Functor fmap" {
-    // test (ArrayList ∘ Maybe) composed functor
-    const allocator = testing.allocator;
-    const ArrayListFunctor = Functor(ArrayListMonadImpl);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
-    const ArrayMaybeFunctor = ComposeFunctor(ArrayListFunctor, MaybeFunctor);
-    var array_maybe = ArrayMaybeFunctor.init(.{
-        .instanceF = .{ .allocator = allocator },
-        .instanceG = .{ .none = {} },
-    });
-
-    var array_a = ArrayList(Maybe(u32)).init(allocator);
-    defer array_a.deinit();
-    try array_a.appendSlice(&[_]?u32{ null, 1, 2, null });
-    array_a = try array_maybe.fmap(.InplaceMap, add10, array_a);
-    try testing.expectEqualSlices(?u32, &[_]?u32{ null, 11, 12, null }, array_a.items);
-
-    const array_f32 = try array_maybe.fmap(.InplaceMap, add_pi_f32, array_a);
-    // Don't free items of array_f32, because inplace map ensure the array_f32
-    // and array_a share the same items slice.
-    // defer array_f32.deinit();
-    try testing.expectEqualSlices(?f32, &[_]?f32{ null, 14.14, 15.14, null }, array_f32.items);
-
-    array_a.clearRetainingCapacity();
-    try array_a.appendSlice(&[_]?u32{ null, 11, 12, null });
-    const array_f64 = try array_maybe.fmap(.NewValMap, mul_pi_f64, array_a);
-    defer array_f64.deinit();
-    for (&[_]?f64{ null, 34.54, 37.68, null }, 0..) |a, i| {
-        if (a) |_a| {
-            try testing.expectApproxEqRel(_a, array_f64.items[i].?, std.math.floatEps(f64));
-        } else {
-            try testing.expectEqual(a, array_f64.items[i]);
-        }
-    }
-
-    // test ((ArrayList ∘ Maybe) ∘ ArrayList) composed functor
-    const ArrayMaybeArrayFunctor = ComposeFunctor(ArrayMaybeFunctor, ArrayListFunctor);
-    var array_maybe_array = ArrayMaybeArrayFunctor.init(.{
-        .instanceF = array_maybe,
-        .instanceG = ArrayListFunctor.init(.{ .allocator = allocator }),
-    });
-
-    var array3_a = ArrayList(Maybe(ArrayList(u32))).init(allocator);
-    defer array3_a.deinit();
-    var array_int1 = ArrayList(u32).init(allocator);
-    defer array_int1.deinit();
-    var array_int2 = ArrayList(u32).init(allocator);
-    defer array_int2.deinit();
-    try array_int1.appendSlice(&[_]u32{ 10, 11, 12, 13 });
-    try array_int2.appendSlice(&[_]u32{ 15, 17, 21, 23 });
-    try array3_a.append(null);
-    try array3_a.append(array_int1);
-    try array3_a.append(array_int2);
-    try array3_a.append(null);
-
-    const array3_f32 = try array_maybe_array.fmap(.NewValMap, add_pi_f32, array3_a);
-    defer {
-        for (array3_f32.items) |item| {
-            if (item) |o| {
-                o.deinit();
-            }
-        }
-        array3_f32.deinit();
-    }
-    try testing.expectEqual(null, array3_f32.items[0]);
-    for (&[_]f32{ 13.14, 14.14, 15.14, 16.14 }, 0..) |a, i| {
-        try testing.expectApproxEqRel(a, array3_f32.items[1].?.items[i], std.math.floatEps(f32));
-    }
-    for (&[_]f32{ 18.14, 20.14, 24.14, 26.14 }, 0..) |a, i| {
-        try testing.expectApproxEqRel(a, array3_f32.items[2].?.items[i], std.math.floatEps(f32));
-    }
-    try testing.expectEqual(null, array3_f32.items[3]);
-
-    const array3_f64 = try array_maybe_array.fmap(.NewValMap, mul_pi_f64, array3_a);
-    defer {
-        for (array3_f64.items) |item| {
-            if (item) |o| {
-                o.deinit();
-            }
-        }
-        array3_f64.deinit();
-    }
-    try testing.expectEqual(null, array3_f64.items[0]);
-    for (&[_]f64{ 31.4, 34.54, 37.68, 40.82 }, 0..) |a, i| {
-        try testing.expectApproxEqRel(a, array3_f64.items[1].?.items[i], std.math.floatEps(f64));
-    }
-    for (&[_]f64{ 47.1, 53.38, 65.94, 72.22 }, 0..) |a, i| {
-        try testing.expectApproxEqRel(a, array3_f64.items[2].?.items[i], std.math.floatEps(f64));
-    }
-    try testing.expectEqual(null, array3_f64.items[3]);
-}
-
 // Deinit the array3 with type ArrayList(Maybe(ArrayList(A))
 fn array3Deinit(array3: anytype) void {
     for (array3.items) |item| {
-        if (item) |o| {
-            o.deinit();
+        if (item) |arr| {
+            arr.deinit();
         }
     }
     array3.deinit();
@@ -487,14 +395,90 @@ fn array3ToSlices(
     return slices;
 }
 
+test "Compose Functor fmap" {
+    // test (ArrayList ∘ Maybe) composed functor
+    const allocator = testing.allocator;
+    const ArrayListFunctor = Functor(ArrayListMonadImpl);
+    const MaybeFunctor = Functor(MaybeMonadImpl);
+    const ArrayMaybeFunctor = ComposeFunctor(ArrayListFunctor, MaybeFunctor);
+    var array_maybe = ArrayMaybeFunctor.init(.{
+        .instanceF = .{ .allocator = allocator },
+        .instanceG = .{ .none = {} },
+    });
+
+    var array_a = ArrayList(Maybe(u32)).init(allocator);
+    defer array_a.deinit();
+    try array_a.appendSlice(&[_]?u32{ null, 1, 2, null });
+    array_a = try array_maybe.fmap(.InplaceMap, add10, array_a);
+    try testing.expectEqualSlices(?u32, &[_]?u32{ null, 11, 12, null }, array_a.items);
+
+    const array_f32 = try array_maybe.fmap(.InplaceMap, add_pi_f32, array_a);
+    // Don't free items of array_f32, because inplace map ensure the array_f32
+    // and array_a share the same items slice.
+    // defer array_f32.deinit();
+    try testing.expectEqualSlices(?f32, &[_]?f32{ null, 14.14, 15.14, null }, array_f32.items);
+
+    array_a.clearRetainingCapacity();
+    try array_a.appendSlice(&[_]?u32{ null, 11, 12, null });
+    const array_f64 = try array_maybe.fmap(.NewValMap, mul_pi_f64, array_a);
+    defer array_f64.deinit();
+    for (&[_]?f64{ null, 34.54, 37.68, null }, 0..) |a, i| {
+        if (a) |_a| {
+            try testing.expectApproxEqRel(_a, array_f64.items[i].?, std.math.floatEps(f64));
+        } else {
+            try testing.expectEqual(a, array_f64.items[i]);
+        }
+    }
+
+    // test ((ArrayList ∘ Maybe) ∘ ArrayList) composed functor
+    const ArrayMaybeArrayFunctor = ComposeFunctor(ArrayMaybeFunctor, ArrayListFunctor);
+    var array_maybe_array = ArrayMaybeArrayFunctor.init(.{
+        .instanceF = array_maybe,
+        .instanceG = ArrayListFunctor.init(.{ .allocator = allocator }),
+    });
+
+    const array3_ints_slice = &ArrayF(Maybe(ArrayF(u32))){
+        null,
+        [_]u32{ 10, 11, 12, 13 },
+        [_]u32{ 15, 17, 21, 23 },
+        null,
+    };
+    const array3_a = try array3FromSlices(u32, ARRAY_LEN, allocator, @constCast(array3_ints_slice));
+    defer array3Deinit(array3_a);
+
+    const array3_f32 = try array_maybe_array.fmap(.NewValMap, add_pi_f32, array3_a);
+    defer array3Deinit(array3_f32);
+    try testing.expectEqual(4, array3_f32.items.len);
+    try testing.expectEqual(null, array3_f32.items[0]);
+    for (&[_]f32{ 13.14, 14.14, 15.14, 16.14 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array3_f32.items[1].?.items[i], std.math.floatEps(f32));
+    }
+    for (&[_]f32{ 18.14, 20.14, 24.14, 26.14 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array3_f32.items[2].?.items[i], std.math.floatEps(f32));
+    }
+    try testing.expectEqual(null, array3_f32.items[3]);
+
+    const array3_f64 = try array_maybe_array.fmap(.NewValMap, mul_pi_f64, array3_a);
+    defer array3Deinit(array3_f64);
+    try testing.expectEqual(4, array3_f64.items.len);
+    try testing.expectEqual(null, array3_f64.items[0]);
+    for (&[_]f64{ 31.4, 34.54, 37.68, 40.82 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array3_f64.items[1].?.items[i], std.math.floatEps(f64));
+    }
+    for (&[_]f64{ 47.1, 53.38, 65.94, 72.22 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array3_f64.items[2].?.items[i], std.math.floatEps(f64));
+    }
+    try testing.expectEqual(null, array3_f64.items[3]);
+}
+
 // Pretty print the array3 with type ArrayList(Maybe(ArrayList(A))
 fn array3PrettyPrint(array3: anytype) void {
     std.debug.print("{{ \n", .{});
     var j: u32 = 0;
     for (array3.items) |item| {
-        if (item) |o| {
+        if (item) |arr| {
             std.debug.print(" {{ ", .{});
-            for (o.items) |a| {
+            for (arr.items) |a| {
                 std.debug.print("{any},", .{a});
             }
             std.debug.print(" }},", .{});
