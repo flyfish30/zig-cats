@@ -134,7 +134,7 @@ pub const MaybeMonadImpl = struct {
     ) FbType(@TypeOf(map_fn)) {
         _ = self;
         const MapFn = @TypeOf(map_fn);
-        const has_err, const B = isErrorUnionOrVal(MapFnRetType(MapFn));
+        const has_err, const B = comptime isErrorUnionOrVal(MapFnRetType(MapFn));
         if (comptime isMapRef(K)) {
             if (fa.* != null) {
                 const b = map_fn(&(fa.*.?));
@@ -160,7 +160,7 @@ pub const MaybeMonadImpl = struct {
     ) FbLamType(@TypeOf(map_lam)) {
         _ = self;
         const MapLam = @TypeOf(map_lam);
-        const has_err, const B = isErrorUnionOrVal(MapLamRetType(MapLam));
+        const has_err, const B = comptime isErrorUnionOrVal(MapLamRetType(MapLam));
         if (comptime isMapRef(K)) {
             if (fa.* != null) {
                 const b = map_lam.call(@constCast(&(fa.*.?)));
@@ -180,7 +180,9 @@ pub const MaybeMonadImpl = struct {
 
     pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
         _ = self;
-        return a;
+        const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
+        const fa: ?_A = if (has_err) try a else a;
+        return fa;
     }
 
     pub fn fapply(
@@ -192,7 +194,7 @@ pub const MaybeMonadImpl = struct {
         fa: F(A),
     ) AFbType(B) {
         _ = self;
-        const has_err, const _B = isErrorUnionOrVal(B);
+        const has_err, const _B = comptime isErrorUnionOrVal(B);
         if (ff) |f| {
             if (fa) |a| {
                 const b = f(a);
@@ -212,7 +214,7 @@ pub const MaybeMonadImpl = struct {
         fa: F(A),
     ) AFbType(B) {
         _ = self;
-        const has_err, const _B = isErrorUnionOrVal(B);
+        const has_err, const _B = comptime isErrorUnionOrVal(B);
         if (flam) |lam| {
             if (fa) |a| {
                 const b = lam.call(a);
@@ -463,9 +465,11 @@ pub const ArrayListMonadImpl = struct {
     }
 
     pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
-        var array = try ArrayList(@TypeOf(a)).initCapacity(self.allocator, ARRAY_DEFAULT_LEN);
+        const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
+        var array = try ArrayList(_A).initCapacity(self.allocator, ARRAY_DEFAULT_LEN);
 
-        array.appendAssumeCapacity(a);
+        const _a: _A = if (has_err) try a else a;
+        array.appendAssumeCapacity(_a);
         return array;
     }
 

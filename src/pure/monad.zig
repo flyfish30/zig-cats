@@ -35,7 +35,7 @@ pub fn Monad(comptime MonadImpl: type) type {
     const has_sup_impl = @hasField(MonadImpl, "SupImpl");
 
     const InstanceType = struct {
-        const InstanceImpl = MonadImpl;
+        pub const InstanceImpl = MonadImpl;
         const ApplicativeSup = if (has_sup_impl)
             Applicative(InstanceImpl.SupImpl)
         else
@@ -534,7 +534,6 @@ test "Array Applicative pure and fapply" {
     const array_a = ArrayF(u32){ 10, 20, 30, 40 };
     const IntToFloatFn = *const fn (u32) f64;
     const array_fns = ArrayF(IntToFloatFn){ add_pi_f64, mul_pi_f64, add_e_f64, mul_e_f64 };
-
     const array_f64 = ArrayApplicative.fapply(u32, f64, array_fns, array_a);
     try testing.expectEqual(4, array_f64.len);
     for (&[_]f64{ 13.14, 62.8, 32.71828, 108.7312 }, 0..) |a, i| {

@@ -111,12 +111,20 @@ pub fn isErrorUnionOrVal(comptime E: type) struct { bool, type } {
 
 pub fn castInplaceValue(comptime T: type, val: anytype) T {
     const info = @typeInfo(@TypeOf(val));
-    if (info == .Optional) {
-        const v = val orelse return null;
-        const retv: std.meta.Child(T) = @bitCast(v);
-        return retv;
-    } else {
-        return @bitCast(val);
+    switch (info) {
+        .Optional => {
+            const v = val orelse return null;
+            return castInplaceValue(std.meta.Child(T), v);
+        },
+        .Struct => {
+            if (info.Struct.layout == .auto) {
+                @compileError("Can't inplace cast struct with auto layout");
+            }
+            return @bitCast(val);
+        },
+        else => {
+            return @bitCast(val);
+        },
     }
 }
 

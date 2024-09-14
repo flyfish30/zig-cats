@@ -21,7 +21,12 @@ pub fn ApplicativeFxTypes(comptime F: TCtor, comptime E: type) type {
     return struct {
         /// return type of pure a
         pub fn APaType(comptime A: type) type {
-            return E!F(A);
+            const has_err, const _A = comptime isErrorUnionOrVal(A);
+            if (has_err) {
+                return (E || @typeInfo(A).ErrorUnion.error_set)!F(_A);
+            } else {
+                return E!F(A);
+            }
         }
 
         /// return type of fapply

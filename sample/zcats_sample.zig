@@ -147,6 +147,16 @@ fn arraylistSample() !void {
     std.debug.print("arr_binded: {any}\n", .{arr_binded.items});
 }
 
+// Deinit the array3 with type ArrayList(Maybe(ArrayList(A))
+fn array3Deinit(array3: anytype) void {
+    for (array3.items) |item| {
+        if (item) |o| {
+            o.deinit();
+        }
+    }
+    array3.deinit();
+}
+
 fn composeSample() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -215,7 +225,7 @@ fn composeSample() !void {
     std.debug.print("arr_applied: {any}\n", .{arr_applied.items});
 
     // pretty print the arr3 with type ArrayList(Maybe(ArrayList(A))
-    const prettyPrintArr3 = struct {
+    const array3PrettyPrint = struct {
         fn prettyPrint(arr3: anytype) void {
             std.debug.print("{{ \n", .{});
             var j: u32 = 0;
@@ -270,15 +280,8 @@ fn composeSample() !void {
         }
     }{ .allocator = allocator, .fns = fn_int_array[0..2] };
 
-    var arr3_fns = try array_maybe.fmapLam(.NewValMap, intToFns, arr);
-    defer {
-        for (arr3_fns.items) |item| {
-            if (item) |o| {
-                o.deinit();
-            }
-        }
-        arr3_fns.deinit();
-    }
+    const arr3_fns = try array_maybe.fmapLam(.NewValMap, intToFns, arr);
+    defer array3Deinit(arr3_fns);
 
     const intToArr = struct {
         allocator: Allocator,
@@ -298,36 +301,21 @@ fn composeSample() !void {
         }
     }{ .allocator = allocator };
 
-    var arr3_ints = try array_maybe.fmapLam(.NewValMap, intToArr, arr_applied);
-    defer {
-        for (arr3_ints.items) |item| {
-            if (item) |o| {
-                o.deinit();
-            }
-        }
-        arr3_ints.deinit();
-    }
-    // std.debug.print("arr3_ints: {any}\n", .{arr3_ints.items});
+    const arr3_ints = try array_maybe.fmapLam(.NewValMap, intToArr, arr_applied);
+    defer array3Deinit(arr3_ints);
+    // std.debug.print("arr3_ints: ", .{});
+    // array3PrettyPrint(arr3_ints);
 
     const ArrayMaybeArrayApplicative = ComposeApplicative(ArrayListMaybeApplicative, ArrayListApplicative);
     var array_maybe_array = ArrayMaybeArrayApplicative.init(.{ .functor_sup = .{
         .instanceF = array_maybe,
-        .instanceG = ArrayListApplicative.init(.{
-            .allocator = allocator,
-        }),
+        .instanceG = ArrayListApplicative.init(.{ .allocator = allocator }),
     } });
 
     const arr3_appried = try array_maybe_array.fapply(u32, u32, arr3_fns, arr3_ints);
-    defer {
-        for (arr3_appried.items) |item| {
-            if (item) |o| {
-                o.deinit();
-            }
-        }
-        arr3_appried.deinit();
-    }
+    defer array3Deinit(arr3_appried);
     std.debug.print("arr3_appried: ", .{});
-    prettyPrintArr3(arr3_appried);
+    array3PrettyPrint(arr3_appried);
 }
 
 fn productSample() !void {

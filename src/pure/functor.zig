@@ -67,7 +67,7 @@ pub fn Functor(comptime FunctorImpl: type) type {
 
     // const F = FunctorImpl.F;
     const InstanceType = struct {
-        const InstanceImpl = FunctorImpl;
+        pub const InstanceImpl = FunctorImpl;
 
         pub const FaType = InstanceImpl.FaType;
         pub const FbType = InstanceImpl.FbType;

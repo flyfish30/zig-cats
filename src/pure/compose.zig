@@ -3,6 +3,7 @@ const base = @import("../base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 
+const testing = std.testing;
 const TCtor = base.TCtor;
 
 const MapFnInType = base.MapFnInType;
@@ -224,4 +225,185 @@ pub fn ComposeFunctor(comptime FunctorF: type, comptime FunctorG: type) type {
 pub fn ComposeApplicative(comptime ApplicativeF: type, comptime ApplicativeG: type) type {
     const ImplFG = ComposeApplicativeImpl(ApplicativeF.InstanceImpl, ApplicativeG.InstanceImpl);
     return Applicative(ImplFG);
+}
+
+// These functions are defined for unit test
+const add4 = struct {
+    fn f(a: u32) u32 {
+        return a + 4;
+    }
+}.f;
+
+const add10 = struct {
+    fn f(a: u32) u32 {
+        return a + 10;
+    }
+}.f;
+
+const mul2 = struct {
+    fn f(a: u32) u32 {
+        return a * 2;
+    }
+}.f;
+
+const mul3 = struct {
+    fn f(a: u32) u32 {
+        return a * 3;
+    }
+}.f;
+
+const add_pi_f32 = struct {
+    fn f(a: u32) f32 {
+        return @as(f32, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+const add_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) + 3.14;
+    }
+}.f;
+
+const mul_pi_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) * 3.14;
+    }
+}.f;
+
+const add_e_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) + 2.71828;
+    }
+}.f;
+
+const mul_e_f64 = struct {
+    fn f(a: u32) f64 {
+        return @as(f64, @floatFromInt(a)) * 2.71828;
+    }
+}.f;
+
+const monad = @import("monad.zig");
+const ArrayMonadImpl = monad.ArrayMonadImpl;
+const MaybeMonadImpl = monad.MaybeMonadImpl;
+
+const Maybe = base.Maybe;
+const Array = base.Array;
+const ARRAY_LEN = 4;
+const ArrayF = Array(ARRAY_LEN);
+
+test "Compose Functor fmap" {
+    // test (ArrayF ∘ Maybe) composed functor
+    const ArrayFunctor = Functor(ArrayMonadImpl(ARRAY_LEN));
+    const MaybeFunctor = Functor(MaybeMonadImpl);
+    const ArrayMaybeFunctor = ComposeFunctor(ArrayFunctor, MaybeFunctor);
+
+    var array_a = ArrayF(Maybe(u32)){ null, 1, 2, null };
+    array_a = ArrayMaybeFunctor.fmap(.InplaceMap, add10, array_a);
+    try testing.expectEqualSlices(?u32, &[_]?u32{ null, 11, 12, null }, &array_a);
+
+    const array_f32 = ArrayMaybeFunctor.fmap(.InplaceMap, add_pi_f32, array_a);
+    try testing.expectEqualSlices(?f32, &[_]?f32{ null, 14.14, 15.14, null }, &array_f32);
+
+    const array_f64 = ArrayMaybeFunctor.fmap(.NewValMap, mul_pi_f64, array_a);
+    for (&[_]?f64{ null, 34.54, 37.68, null }, 0..) |a, i| {
+        if (a) |_a| {
+            try testing.expectApproxEqRel(_a, array_f64[i].?, std.math.floatEps(f64));
+        } else {
+            try testing.expectEqual(a, array_f64[i]);
+        }
+    }
+
+    // test ((ArrayF ∘ Maybe) ∘ ArrayF) composed functor
+    const ArrayMaybeArrayFunctor = ComposeFunctor(ArrayMaybeFunctor, ArrayFunctor);
+
+    var array3_a = ArrayF(Maybe(ArrayF(u32))){
+        null,
+        [_]u32{ 0, 1, 2, 3 },
+        [_]u32{ 5, 7, 11, 13 },
+        null,
+    };
+    array3_a = ArrayMaybeArrayFunctor.fmap(.InplaceMap, add10, array3_a);
+    try testing.expectEqualSlices(
+        ?[4]u32,
+        &[_]?[4]u32{ null, [_]u32{ 10, 11, 12, 13 }, [_]u32{ 15, 17, 21, 23 }, null },
+        &array3_a,
+    );
+
+    const array3_f32 = ArrayMaybeArrayFunctor.fmap(.InplaceMap, add_pi_f32, array3_a);
+    try testing.expectEqual(null, array3_f32[0]);
+    for (&[_]f32{ 13.14, 14.14, 15.14, 16.14 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array3_f32[1].?[i], std.math.floatEps(f32));
+    }
+    for (&[_]f32{ 18.14, 20.14, 24.14, 26.14 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array3_f32[2].?[i], std.math.floatEps(f32));
+    }
+    try testing.expectEqual(null, array3_f32[3]);
+
+    const array3_f64 = ArrayMaybeArrayFunctor.fmap(.NewValMap, mul_pi_f64, array3_a);
+    try testing.expectEqual(null, array3_f64[0]);
+    for (&[_]f64{ 31.4, 34.54, 37.68, 40.82 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array3_f64[1].?[i], std.math.floatEps(f64));
+    }
+    for (&[_]f64{ 47.1, 53.38, 65.94, 72.22 }, 0..) |a, i| {
+        try testing.expectApproxEqRel(a, array3_f64[2].?[i], std.math.floatEps(f64));
+    }
+    try testing.expectEqual(null, array3_f64[3]);
+}
+
+test "Compose Applicative pure and fapply" {
+    const IntToIntFn = *const fn (u32) u32;
+    const IntToFloatFn = *const fn (u32) f64;
+
+    // test (ArrayF ∘ Maybe) composed applicative
+    const ArrayApplicative = Applicative(ArrayMonadImpl(ARRAY_LEN));
+    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayMaybeApplicative = ComposeApplicative(ArrayApplicative, MaybeApplicative);
+
+    const array_pured = ArrayMaybeApplicative.pure(@as(u32, 42));
+    try testing.expectEqualSlices(?u32, &[_]?u32{ 42, 42, 42, 42 }, &array_pured);
+
+    const array_a = ArrayF(Maybe(u32)){ null, 20, 30, 40 };
+    const array_fns = ArrayF(Maybe(IntToFloatFn)){ add_pi_f64, mul_pi_f64, null, mul_e_f64 };
+    const array_f64 = ArrayMaybeApplicative.fapply(u32, f64, array_fns, array_a);
+    try testing.expectEqual(4, array_f64.len);
+    for (&[_]?f64{ null, 62.8, null, 108.7312 }, 0..) |a, i| {
+        if (a) |_a| {
+            try testing.expectApproxEqRel(_a, array_f64[i].?, std.math.floatEps(f64));
+        } else {
+            try testing.expectEqual(a, array_f64[i]);
+        }
+    }
+
+    // test ((ArrayF ∘ Maybe) ∘ ArrayF) composed applicative
+    const ArrayMaybeArrayApplicative = ComposeApplicative(ArrayMaybeApplicative, ArrayApplicative);
+
+    const array3_pured = ArrayMaybeArrayApplicative.pure(@as(u32, 42));
+    for (0..4) |i| {
+        try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 42, 42 }, &array3_pured[i].?);
+    }
+
+    const array3_a = ArrayF(Maybe(ArrayF(u32))){
+        null,
+        [_]u32{ 1, 2, 3, 4 },
+        [_]u32{ 5, 7, 11, 13 },
+        null,
+    };
+    var array3_fns = ArrayF(Maybe(ArrayF(IntToIntFn))){
+        null,
+        [_]IntToIntFn{ add4, add10, mul2, mul3 },
+        [_]IntToIntFn{ add10, mul2, mul3, add4 },
+        null,
+    };
+    var array3_b = ArrayMaybeArrayApplicative.fapply(u32, u32, array3_fns, array3_a);
+    try testing.expectEqual(null, array3_b[0]);
+    try testing.expectEqualSlices(u32, &[_]u32{ 5, 12, 6, 12 }, &array3_b[1].?);
+    try testing.expectEqualSlices(u32, &[_]u32{ 15, 14, 33, 17 }, &array3_b[2].?);
+    try testing.expectEqual(null, array3_b[3]);
+
+    array3_fns = ArrayF(Maybe(ArrayF(IntToIntFn))){ null, [_]IntToIntFn{ add4, add10, mul2, mul3 }, null, [_]IntToIntFn{ add10, mul2, mul3, add4 } };
+    array3_b = ArrayMaybeArrayApplicative.fapply(u32, u32, array3_fns, array3_a);
+    try testing.expectEqual(null, array3_b[0]);
+    try testing.expectEqualSlices(u32, &[_]u32{ 5, 12, 6, 12 }, &array3_b[1].?);
+    try testing.expectEqual(null, array3_b[2]);
+    try testing.expectEqual(null, array3_b[3]);
 }
