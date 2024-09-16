@@ -20,6 +20,8 @@ const FunctorFxTypes = functor.FunctorFxTypes;
 const Applicative = applicative.Applicative;
 const ApplicativeFxTypes = applicative.ApplicativeFxTypes;
 
+const getFreeNothing = base.getFreeNothing;
+
 /// Compose two Type constructor to one Type constructor, the parameter
 /// F and G are one parameter Type consturctor.
 pub fn ComposeFG(comptime F: TCtor, comptime G: TCtor) TCtor {
@@ -61,7 +63,7 @@ pub fn ComposeFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
 
         pub fn deinitFa(
             fga: anytype, // F(G(A))
-            comptime free_fn: fn (BaseType(@TypeOf(fga))) void,
+            comptime free_fn: *const fn (BaseType(@TypeOf(fga))) void,
         ) void {
             const free_ga_fn = struct {
                 fn freeGa(ga: ImplF.BaseType(@TypeOf(fga))) void {
@@ -148,7 +150,7 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
 
         pub inline fn deinitFa(
             fga: anytype, // F(G(A))
-            comptime free_fn: fn (BaseType(@TypeOf(fga))) void,
+            comptime free_fn: *const fn (BaseType(@TypeOf(fga))) void,
         ) void {
             return SupImpl.deinitFa(fga, free_fn);
         }
@@ -249,14 +251,8 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
                 }
             }{ .inner_instance = &self.functor_sup.instanceG };
 
-            const free_fn = struct {
-                fn free_fn(lam: @TypeOf(inner_fapply).ApplyLam) void {
-                    _ = lam;
-                }
-            }.free_fn;
-
             const flam = try self.functor_sup.instanceF.fmapLam(.NewValMapRef, inner_fapply, @constCast(&fgf));
-            defer ImplF.deinitFa(flam, free_fn);
+            defer ImplF.deinitFa(flam, getFreeNothing(@TypeOf(inner_fapply).ApplyLam));
             return self.functor_sup.instanceF.fapplyLam(
                 ImplG.F(A),
                 ImplG.AFbType(B),

@@ -125,7 +125,6 @@ pub fn runDo(ctx: anytype) DoRetType(@TypeOf(ctx)) {
     inline while (i > 0) : (i -= 1) {
         const decl = info.Struct.decls[i - 1];
         if (comptime std.mem.startsWith(u8, decl.name, "do")) {
-            // std.debug.print("do function {d} name: {s}\n", .{ i, decl.name });
             const fn_info = @typeInfo(@TypeOf(@field(CtxType, decl.name)));
             const A = fn_info.Fn.params[1].type.?;
             const MB = fn_info.Fn.return_type.?;
@@ -146,6 +145,8 @@ pub fn runDo(ctx: anytype) DoRetType(@TypeOf(ctx)) {
     _ = has_err_r;
     const R = ImplType.BaseType(_MR);
     if (k) |_k| {
+        // free intermediate monad for avoid memory leak
+        defer ImplType.deinitFa(init_m, base.getFreeNothing(T));
         const final_k: *const fn (*ImplType, T) MR = @ptrCast(_k);
         return try @constCast(&ctx.monad_impl).bind(T, R, init_m, final_k);
     } else {
@@ -184,7 +185,7 @@ fn MonadImplType(comptime CtxType: type) type {
     return std.meta.FieldType(CtxType, .monad_impl);
 }
 
-/// k is a optional of continuation function
+// k is a optional of continuation function
 fn mkDoContFn(
     comptime CtxType: type,
     comptime A: type,
@@ -201,7 +202,7 @@ fn mkDoContFn(
         fn doCont(impl: *ImplType, a: A) MR {
             const has_err1, const _MB = comptime isErrorUnionOrVal(MB);
             _ = has_err1;
-            const B = MaybeMonadImpl.BaseType(_MB);
+            const B = ImplType.BaseType(_MB);
 
             const mb = try @call(
                 .auto,
@@ -209,6 +210,8 @@ fn mkDoContFn(
                 .{ @constCast(impl), a },
             );
             if (k) |_k| {
+                // free intermediate monad for avoid memory leak
+                defer ImplType.deinitFa(mb, base.getFreeNothing(B));
                 return try @constCast(impl).bind(B, R, mb, _k);
             } else {
                 return mb;
@@ -217,47 +220,6 @@ fn mkDoContFn(
     }.doCont;
 
     return comptime do_cont;
-}
-
-test "runDo Maybe" {
-    const input1: i32 = 42;
-
-    const MaybeMonad = Monad(MaybeMonadImpl);
-    const maybe_m = MaybeMonad.init(.{ .none = {} });
-    const do_ctx = struct {
-        monad_impl: MaybeMonadImpl,
-        param1: i32,
-
-        // intermediate variable
-        a: i32 = undefined,
-        b: u32 = undefined,
-
-        const Ctx = @This();
-        // the do context struct must has init function
-        pub fn init(impl: *MaybeMonadImpl) MaybeMonadImpl.MbType(i32) {
-            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
-            std.debug.print("run init\n", .{});
-            return ctx.param1;
-        }
-
-        // the name of other do step function must be starts with "do" string
-        pub fn do1(impl: *MaybeMonadImpl, a: i32) MaybeMonadImpl.MbType(u32) {
-            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
-            std.debug.print("run do1\n", .{});
-            ctx.a = a;
-            return @abs(a) + 2;
-        }
-
-        // the name of other do step function must be starts with "do" string
-        pub fn do2(impl: *MaybeMonadImpl, b: u32) MaybeMonadImpl.MbType(f64) {
-            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
-            std.debug.print("run do2\n", .{});
-            ctx.b = b;
-            return @as(f64, @floatFromInt(b)) + 3.14;
-        }
-    }{ .monad_impl = maybe_m, .param1 = input1 };
-    const out = runDo(do_ctx);
-    try testing.expectEqual(47.14, out);
 }
 
 pub const MaybeMonadImpl = struct {
@@ -289,7 +251,7 @@ pub const MaybeMonadImpl = struct {
 
     pub fn deinitFa(
         fa: anytype, // Maybe(A)
-        comptime free_fn: fn (BaseType(@TypeOf(fa))) void,
+        comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
     ) void {
         if (fa) |a| {
             free_fn(a);
@@ -507,6 +469,44 @@ test "Maybe Monad bind" {
     try testing.expectEqual(32, maybe_b);
 }
 
+test "runDo Maybe" {
+    const input1: i32 = 42;
+
+    const MaybeMonad = Monad(MaybeMonadImpl);
+    const maybe_m = MaybeMonad.init(.{ .none = {} });
+    const do_ctx = struct {
+        monad_impl: MaybeMonadImpl,
+        param1: i32,
+
+        // intermediate variable
+        a: i32 = undefined,
+        b: u32 = undefined,
+
+        const Ctx = @This();
+        // the do context struct must has init function
+        pub fn init(impl: *MaybeMonadImpl) MaybeMonadImpl.MbType(i32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            return ctx.param1;
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do1(impl: *MaybeMonadImpl, a: i32) MaybeMonadImpl.MbType(u32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            ctx.a = a;
+            return @abs(a) + 2;
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do2(impl: *MaybeMonadImpl, b: u32) MaybeMonadImpl.MbType(f64) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            ctx.b = b;
+            return @as(f64, @floatFromInt(b)) + 3.14;
+        }
+    }{ .monad_impl = maybe_m, .param1 = input1 };
+    const out = runDo(do_ctx);
+    try testing.expectEqual(47.14, out);
+}
+
 pub const ArrayListMonadImpl = struct {
     allocator: Allocator,
 
@@ -538,7 +538,7 @@ pub const ArrayListMonadImpl = struct {
 
     pub fn deinitFa(
         fa: anytype, // ArrayList(A)
-        comptime free_fn: fn (BaseType(@TypeOf(fa))) void,
+        comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
     ) void {
         for (fa.items) |item| {
             free_fn(item);
@@ -776,4 +776,59 @@ test "ArrayList Monad bind" {
     }.f);
     defer array_binded.deinit();
     try testing.expectEqualSlices(u32, &[_]u32{ 40, 90, 80, 180, 120, 270, 160, 360 }, array_binded.items);
+}
+
+test "runDo Arraylist" {
+    const input1: i32 = 42;
+
+    const allocator = testing.allocator;
+    const ArrayListMonad = Monad(ArrayListMonadImpl);
+    const maybe_m = ArrayListMonad.init(.{ .allocator = allocator });
+    const do_ctx = struct {
+        monad_impl: ArrayListMonadImpl,
+        param1: i32,
+
+        // intermediate variable
+        a: i32 = undefined,
+        b: u32 = undefined,
+
+        const Ctx = @This();
+        // the do context struct must has init function
+        pub fn init(impl: *ArrayListMonadImpl) ArrayListMonadImpl.MbType(i32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            const as = &([_]i32{ 17, ctx.param1 } ** 2);
+            var array = ArrayList(i32).init(impl.allocator);
+            try array.appendSlice(as);
+            return array;
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do1(impl: *ArrayListMonadImpl, a: i32) ArrayListMonadImpl.MbType(u32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            ctx.a = a;
+            return try impl.pure(@abs(a) + 2);
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do2(impl: *ArrayListMonadImpl, b: u32) ArrayListMonadImpl.MbType(f64) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            ctx.b = b;
+
+            const as = &[_]f64{
+                @floatFromInt(@abs(ctx.a) + b),
+                @as(f64, @floatFromInt(b)) + 3.14,
+            };
+            var array = ArrayList(f64).init(impl.allocator);
+            try array.appendSlice(as);
+            return array;
+        }
+    }{ .monad_impl = maybe_m, .param1 = input1 };
+    const out = try runDo(do_ctx);
+    defer out.deinit();
+    try testing.expectEqual(8, out.items.len);
+    try testing.expectEqualSlices(
+        f64,
+        &[_]f64{ 36, 22.14, 86, 47.14, 36, 22.14, 86, 47.14 },
+        out.items,
+    );
 }

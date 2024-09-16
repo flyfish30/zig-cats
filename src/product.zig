@@ -66,7 +66,7 @@ pub fn ProductFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
 
         pub fn deinitFa(
             fga: anytype, // (F(A), G(A))
-            comptime free_fn: fn (BaseType(@TypeOf(fga))) void,
+            comptime free_fn: *const fn (BaseType(@TypeOf(fga))) void,
         ) void {
             ImplF.deinitFa(fga[0], free_fn);
             ImplG.deinitFa(fga[1], free_fn);
@@ -128,7 +128,7 @@ pub fn ProductApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
 
         pub fn deinitFa(
             fga: anytype, // (F(A), G(A))
-            comptime free_fn: fn (BaseType(@TypeOf(fga))) void,
+            comptime free_fn: *const fn (BaseType(@TypeOf(fga))) void,
         ) void {
             SupImpl.deinitFa(fga, free_fn);
         }
