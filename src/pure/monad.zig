@@ -48,10 +48,10 @@ pub fn Monad(comptime MonadImpl: type) type {
                 comptime B: type,
                 // monad function: (a -> M b), ma: M a
                 ma: M(A),
-                f: *const fn (*InstanceImpl, A) M(B),
+                k: *const fn (*InstanceImpl, A) M(B),
             ) M(B) {
                 _ = ma;
-                _ = f;
+                _ = k;
             }
         }.bindFn);
 
@@ -173,10 +173,10 @@ pub const MaybeMonadImpl = struct {
         comptime B: type,
         // monad function: (a -> M b), ma: M a
         ma: F(A),
-        f: *const fn (A) F(B),
+        k: *const fn (A) F(B),
     ) F(B) {
         if (ma) |a| {
-            return f(a);
+            return k(a);
         }
         return null;
     }
@@ -264,26 +264,26 @@ test "Maybe Applicative pure and fapply" {
 test "Maybe Monad bind" {
     const MaybeMonad = Monad(MaybeMonadImpl);
 
-    const bind_fn = &struct {
-        fn f(x: f64) MaybeMonad.MbType(u32) {
+    const cont_fn = &struct {
+        fn k(x: f64) MaybeMonad.MbType(u32) {
             if (x == 3.14) {
                 return null;
             } else {
                 return @intFromFloat(@floor(x * 4.0));
             }
         }
-    }.f;
+    }.k;
 
     var maybe_a: ?f64 = null;
-    var maybe_b = MaybeMonad.bind(f64, u32, maybe_a, bind_fn);
+    var maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont_fn);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 3.14;
-    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, bind_fn);
+    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont_fn);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 8.0;
-    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, bind_fn);
+    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont_fn);
     try testing.expectEqual(32, maybe_b);
 }
 
@@ -491,14 +491,14 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             comptime B: type,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            f: *const fn (A) F(B),
+            k: *const fn (A) F(B),
         ) F(B) {
             const imap_lam = struct {
-                bind_fn: *const fn (A) F(B),
+                cont_fn: *const fn (A) F(B),
                 fn call(map_self: @This(), i: usize, a: A) B {
-                    return map_self.bind_fn(a)[i];
+                    return map_self.cont_fn(a)[i];
                 }
-            }{ .bind_fn = f };
+            }{ .cont_fn = k };
 
             return imap(A, B, imap_lam, ma);
         }
