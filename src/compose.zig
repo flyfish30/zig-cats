@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
+const maybe = @import("maybe.zig");
 
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
@@ -334,7 +335,7 @@ const mul_e_f64 = struct {
 
 const monad = @import("monad.zig");
 const ArrayListMonadImpl = monad.ArrayListMonadImpl;
-const MaybeMonadImpl = monad.MaybeMonadImpl;
+const MaybeMonadImpl = maybe.MaybeMonadImpl;
 
 const Maybe = base.Maybe;
 const ARRAY_LEN = 4;

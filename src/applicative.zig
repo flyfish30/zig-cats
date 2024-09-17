@@ -2,6 +2,7 @@ const std = @import("std");
 const base = @import("base.zig");
 const functor = @import("functor.zig");
 const monad = @import("monad.zig");
+const maybe = @import("maybe.zig");
 
 const TCtor = base.TCtor;
 
@@ -14,7 +15,7 @@ const isErrorUnionOrVal = base.isErrorUnionOrVal;
 
 const Functor = functor.Functor;
 
-pub const MaybeApplicativeImpl = monad.MaybeMonadImpl;
+pub const MaybeApplicativeImpl = maybe.MaybeMonadImpl;
 pub const ArrayListApplicativeImpl = monad.ArrayListMonadImpl;
 
 pub fn ApplicativeFxTypes(comptime F: TCtor, comptime E: type) type {

@@ -11,6 +11,8 @@ pub usingnamespace @import("compose.zig");
 pub usingnamespace @import("product.zig");
 pub usingnamespace @import("coproduct.zig");
 
+pub usingnamespace @import("maybe.zig");
+
 test {
     std.testing.refAllDecls(@This());
 }
