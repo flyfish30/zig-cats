@@ -20,36 +20,6 @@ const getDefaultFn = base.getDefaultFn;
 pub const MaybeFunctorImpl = applicative.MaybeApplicativeImpl;
 pub const ArrayFunctorImpl = applicative.ArrayApplicativeImpl;
 
-pub fn FunctorFxTypes(comptime F: TCtor) type {
-    return struct {
-        pub fn FaType(comptime K: MapFnKind, comptime MapFn: type) type {
-            if (comptime isMapRef(K)) {
-                // The fa paramerter of fmap function is also a reference.
-                return *F(std.meta.Child(MapFnInType(MapFn)));
-            } else {
-                return F(MapFnInType(MapFn));
-            }
-        }
-
-        pub fn FbType(comptime MapFn: type) type {
-            return F(MapFnRetType(MapFn));
-        }
-
-        pub fn FaLamType(comptime K: MapFnKind, comptime MapLam: type) type {
-            if (comptime isMapRef(K)) {
-                // The fa paramerter of fmapLam function is also a reference.
-                return *F(std.meta.Child(MapLamInType(MapLam)));
-            } else {
-                return F(MapLamInType(MapLam));
-            }
-        }
-
-        pub fn FbLamType(comptime MapLam: type) type {
-            return F(MapLamRetType(MapLam));
-        }
-    };
-}
-
 /// Functor typeclass like in Haskell.
 /// F is Constructor Type of Functor typeclass, such as Maybe, List.
 pub fn Functor(comptime FunctorImpl: type) type {

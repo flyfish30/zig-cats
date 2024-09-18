@@ -18,7 +18,7 @@ const ArrayList = std.ArrayList;
 pub const MaybeFunctorImpl = applicative.MaybeApplicativeImpl;
 pub const ArrayListFunctorImpl = applicative.ArrayListApplicativeImpl;
 
-pub fn FunctorFxTypes(comptime F: TCtor, comptime E: type) type {
+pub fn FunctorFxTypes(comptime F: TCtor, comptime E: ?type) type {
     return struct {
         pub fn FaType(comptime K: MapFnKind, comptime MapFn: type) type {
             if (comptime isMapRef(K)) {
@@ -31,11 +31,16 @@ pub fn FunctorFxTypes(comptime F: TCtor, comptime E: type) type {
 
         pub fn FbType(comptime MapFn: type) type {
             const info = @typeInfo(MapFnRetType(MapFn));
-            if (info != .ErrorUnion) {
-                return E!F(MapFnRetType(MapFn));
+            if (E == null) {
+                return F(MapFnRetType(MapFn));
             }
 
-            return (E || info.ErrorUnion.error_set)!F(info.ErrorUnion.payload);
+            const _E = E.?;
+            if (info != .ErrorUnion) {
+                return _E!F(MapFnRetType(MapFn));
+            }
+
+            return (_E || info.ErrorUnion.error_set)!F(info.ErrorUnion.payload);
         }
 
         pub fn FaLamType(comptime K: MapFnKind, comptime MapLam: type) type {
@@ -49,11 +54,16 @@ pub fn FunctorFxTypes(comptime F: TCtor, comptime E: type) type {
 
         pub fn FbLamType(comptime MapLam: type) type {
             const info = @typeInfo((MapLamRetType(MapLam)));
-            if (info != .ErrorUnion) {
-                return E!F(MapLamRetType(MapLam));
+            if (E == null) {
+                return F(MapLamRetType(MapLam));
             }
 
-            return (E || info.ErrorUnion.error_set)!F(info.ErrorUnion.payload);
+            const _E = E.?;
+            if (info != .ErrorUnion) {
+                return _E!F(MapLamRetType(MapLam));
+            }
+
+            return (_E || info.ErrorUnion.error_set)!F(info.ErrorUnion.payload);
         }
     };
 }

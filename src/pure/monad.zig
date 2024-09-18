@@ -32,25 +32,26 @@ pub fn Monad(comptime MonadImpl: type) type {
             }
         }.bindFn);
 
-        const BindLamType = @TypeOf(struct {
-            fn bindLam(
+        const BindWithCtxType = @TypeOf(struct {
+            fn bindWithCtx(
                 comptime A: type,
                 comptime B: type,
+                ctx: anytype,
                 // monad function: (a -> M b), ma: M a
                 ma: M(A),
-                klam: anytype, // a lambda with function *const fn(Self, A) M(B)
+                k_ctx: *const fn (@TypeOf(ctx), A) M(B),
             ) M(B) {
                 _ = ma;
-                _ = klam;
+                _ = k_ctx;
             }
-        }.bindLam);
+        }.bindWithCtx);
 
         pub fn init() void {
             if (@TypeOf(InstanceImpl.bind) != BindType) {
                 @compileError("Incorrect type of bind for Monad instance " ++ @typeName(InstanceImpl));
             }
-            if (@TypeOf(InstanceImpl.bindLam) != BindLamType) {
-                @compileError("Incorrect type of bindLam for Monad instance " ++ @typeName(InstanceImpl));
+            if (@TypeOf(InstanceImpl.bindWithCtx) != BindWithCtxType) {
+                @compileError("Incorrect type of bindWithCtx for Monad instance " ++ @typeName(InstanceImpl));
             }
         }
 
@@ -60,7 +61,7 @@ pub fn Monad(comptime MonadImpl: type) type {
         pub const fapply = ApplicativeSup.fapply;
         pub const fapplyLam = ApplicativeSup.fapplyLam;
         pub const bind = InstanceImpl.bind;
-        pub const bindLam = InstanceImpl.bindLam;
+        pub const bindWithCtx = InstanceImpl.bindWithCtx;
     };
 
     InstanceType.init();

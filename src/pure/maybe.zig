@@ -29,10 +29,10 @@ const Functor = functor.Functor;
 const Applicative = applicative.Applicative;
 const Monad = monad.Monad;
 
-const FunctorFxTypes = functor.FunctorFxTypes;
-const ApplicativeFxTypes = applicative.ApplicativeFxTypes;
-const MonadFxTypes = monad.MonadFxTypes;
-const runDo = monad.runDo;
+const impure_functor = @import("../functor.zig");
+const FunctorFxTypes = impure_functor.FunctorFxTypes;
+const impure_monad = @import("../monad.zig");
+const runDo = impure_monad.runDo;
 
 pub const MaybeMonadImpl = struct {
     const Self = @This();
@@ -44,15 +44,17 @@ pub const MaybeMonadImpl = struct {
     pub fn BaseType(comptime MaybeA: type) type {
         return std.meta.Child(MaybeA);
     }
-    pub const FxTypes = FunctorFxTypes(F);
+    pub const FxTypes = FunctorFxTypes(F, null);
     pub const FaType = FxTypes.FaType;
     pub const FbType = FxTypes.FbType;
     pub const FaLamType = FxTypes.FaLamType;
     pub const FbLamType = FxTypes.FbLamType;
 
+    pub const MbType = Maybe;
+
     pub fn deinitFa(
         fa: anytype, // Maybe(A)
-        comptime free_fn: fn (BaseType(@TypeOf(fa))) void,
+        comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
     ) void {
         if (fa) |a| {
             free_fn(a);
@@ -142,15 +144,16 @@ pub const MaybeMonadImpl = struct {
         return null;
     }
 
-    pub fn bindLam(
+    pub fn bindWithCtx(
         comptime A: type,
         comptime B: type,
+        ctx: anytype,
         // monad function: (a -> M b), ma: M a
         ma: F(A),
-        klam: anytype, // a lambda with function *const fn(Self, A) F(B)
+        k: *const fn (@TypeOf(ctx), A) F(B),
     ) F(B) {
         if (ma) |a| {
-            return klam.call(a);
+            return k(ctx, a);
         }
         return null;
     }
@@ -209,7 +212,7 @@ test "pure Maybe Applicative pure and fapply" {
 test "pure Maybe Monad bind" {
     const MaybeMonad = Monad(MaybeMonadImpl);
 
-    const cont_fn = &struct {
+    const cont1_f64 = &struct {
         fn k(x: f64) MaybeMonad.MbType(u32) {
             if (x == 3.14) {
                 return null;
@@ -219,39 +222,76 @@ test "pure Maybe Monad bind" {
         }
     }.k;
 
-    const cont_lam = struct {
+    const cont_ctx = struct {
         a: u32 = 7,
-        const Self = @This();
-        fn call(self: Self, x: f64) MaybeMonad.MbType(u32) {
+    }{};
+
+    const cont2_f64 = &struct {
+        fn k(ctx: @TypeOf(cont_ctx), x: f64) MaybeMonad.MbType(u32) {
             if (x == 3.14) {
                 return null;
             } else {
-                return @as(u32, @intFromFloat(@floor(x * 4.0))) + self.a;
+                return @as(u32, @intFromFloat(@floor(x * 4.0))) + ctx.a;
             }
         }
-    }{};
+    }.k;
 
     var maybe_a: ?f64 = null;
-    var maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont_fn);
+    var maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont1_f64);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 3.14;
-    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont_fn);
+    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont1_f64);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 8.0;
-    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont_fn);
+    maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont1_f64);
     try testing.expectEqual(32, maybe_b);
 
     maybe_a = null;
-    maybe_b = MaybeMonad.bindLam(f64, u32, maybe_a, cont_lam);
+    maybe_b = MaybeMonad.bindWithCtx(f64, u32, cont_ctx, maybe_a, cont2_f64);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 3.14;
-    maybe_b = MaybeMonad.bindLam(f64, u32, maybe_a, cont_lam);
+    maybe_b = MaybeMonad.bindWithCtx(f64, u32, cont_ctx, maybe_a, cont2_f64);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 8.0;
-    maybe_b = MaybeMonad.bindLam(f64, u32, maybe_a, cont_lam);
+    maybe_b = MaybeMonad.bindWithCtx(f64, u32, cont_ctx, maybe_a, cont2_f64);
     try testing.expectEqual(39, maybe_b);
+}
+
+test "runDo Maybe" {
+    const input1: i32 = 42;
+
+    const MaybeMonad = Monad(MaybeMonadImpl);
+    const do_ctx = struct {
+        param1: i32,
+
+        // intermediate variable
+        a: i32 = undefined,
+        b: u32 = undefined,
+
+        const Ctx = @This();
+        pub const MonadType = MaybeMonad;
+
+        // the do context struct must has init function
+        pub fn init(ctx: *Ctx) MaybeMonadImpl.MbType(i32) {
+            return ctx.param1;
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do1(ctx: *Ctx, a: i32) MaybeMonadImpl.MbType(u32) {
+            ctx.a = a;
+            return @abs(a) + 2;
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do2(ctx: *Ctx, b: u32) MaybeMonadImpl.MbType(f64) {
+            ctx.b = b;
+            return @as(f64, @floatFromInt(b)) + 3.14;
+        }
+    }{ .param1 = input1 };
+    const out = runDo(do_ctx);
+    try testing.expectEqual(47.14, out);
 }

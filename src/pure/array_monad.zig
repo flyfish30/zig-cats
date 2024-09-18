@@ -23,7 +23,8 @@ const Functor = functor.Functor;
 const Applicative = applicative.Applicative;
 const Monad = monad.Monad;
 
-const FunctorFxTypes = functor.FunctorFxTypes;
+const impure_functor = @import("../functor.zig");
+const FunctorFxTypes = impure_functor.FunctorFxTypes;
 
 const Maybe = base.Maybe;
 const Array = base.Array;
@@ -40,7 +41,7 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             return std.meta.Child(ArrayA);
         }
 
-        pub const FxTypes = FunctorFxTypes(F);
+        pub const FxTypes = FunctorFxTypes(F, null);
         pub const FaType = FxTypes.FaType;
         pub const FbType = FxTypes.FbType;
         pub const FaLamType = FxTypes.FaLamType;
@@ -68,7 +69,7 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
 
         pub fn deinitFa(
             fa: anytype, // Array(len)(A)
-            comptime free_fn: fn (BaseType(@TypeOf(fa))) void,
+            comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
         ) void {
             for (fa) |item| {
                 free_fn(item);
@@ -234,37 +235,40 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             ma: F(A),
             k: *const fn (A) F(B),
         ) F(B) {
-            return bindGeneric(A, B, .NormalMap, ma, k);
+            return bindGeneric(A, B, void, {}, ma, k);
         }
 
-        pub fn bindLam(
+        pub fn bindWithCtx(
             comptime A: type,
             comptime B: type,
+            ctx: anytype,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            klam: anytype, // a lambda with function *const fn(Self, A) F(B)
+            k_ctx: *const fn (@TypeOf(ctx), A) F(B),
         ) F(B) {
-            return bindGeneric(A, B, .LambdaMap, ma, klam);
+            return bindGeneric(A, B, @TypeOf(ctx), ctx, ma, k_ctx);
         }
 
         pub fn bindGeneric(
             comptime A: type,
             comptime B: type,
-            comptime M: FMapMode,
+            comptime Ctx: type,
+            ctx: Ctx,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k_fn_lam: anytype,
+            k_fn_ctx: if (Ctx == void) *const fn (A) F(B) else *const fn (Ctx, A) F(B),
         ) F(B) {
             const imap_lam = struct {
-                cont_fn_lam: @TypeOf(k_fn_lam),
+                cont_ctx: Ctx,
+                cont_fn_ctx: @TypeOf(k_fn_ctx),
                 fn call(map_self: @This(), i: usize, a: A) B {
-                    if (M == .NormalMap) {
-                        return map_self.cont_fn_lam(a)[i];
+                    if (Ctx == void) {
+                        return map_self.cont_fn_ctx(a)[i];
                     } else {
-                        return map_self.cont_fn_lam.call(a)[i];
+                        return map_self.cont_fn_ctx(map_self.cont_ctx, a)[i];
                     }
                 }
-            }{ .cont_fn_lam = k_fn_lam };
+            }{ .cont_ctx = ctx, .cont_fn_ctx = k_fn_ctx };
 
             return imap(A, B, imap_lam, ma);
         }
@@ -335,21 +339,23 @@ test "Array Monad bind" {
     }.f);
     try testing.expectEqualSlices(u32, &[_]u32{ 41, 182, 123, 364 }, &array_binded);
 
-    const array_c = ArrayMonad.bindLam(u32, f64, array_binded, struct {
+    const cont_ctx = struct {
         m: f64 = 3.14,
-        const Self = @This();
-        fn call(self: Self, a: u32) ArrayMonad.MbType(f64) {
+    }{};
+
+    const array_c = ArrayMonad.bindWithCtx(u32, f64, cont_ctx, array_binded, struct {
+        fn f(ctx: @TypeOf(cont_ctx), a: u32) ArrayMonad.MbType(f64) {
             var array_b: ArrayF(f64) = [_]f64{ 2, 4, 6, 8 };
             var j: usize = 0;
             while (j < array_b.len) : (j += 1) {
                 if ((j & 0x1) == 0) {
-                    array_b[j] += @as(f64, @floatFromInt(a)) * self.m;
+                    array_b[j] += @as(f64, @floatFromInt(a)) * ctx.m;
                 } else {
-                    array_b[j] += @as(f64, @floatFromInt(a)) + self.m;
+                    array_b[j] += @as(f64, @floatFromInt(a)) + ctx.m;
                 }
             }
             return array_b;
         }
-    }{});
+    }.f);
     try testing.expectEqualSlices(f64, &[_]f64{ 130.74, 189.14, 392.22, 375.14 }, &array_c);
 }
