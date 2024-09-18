@@ -141,6 +141,19 @@ pub const MaybeMonadImpl = struct {
         }
         return null;
     }
+
+    pub fn bindLam(
+        comptime A: type,
+        comptime B: type,
+        // monad function: (a -> M b), ma: M a
+        ma: F(A),
+        klam: anytype, // a lambda with function *const fn(Self, A) F(B)
+    ) F(B) {
+        if (ma) |a| {
+            return klam.call(a);
+        }
+        return null;
+    }
 };
 
 // These functions are used for unit test
@@ -206,6 +219,18 @@ test "pure Maybe Monad bind" {
         }
     }.k;
 
+    const cont_lam = struct {
+        a: u32 = 7,
+        const Self = @This();
+        fn call(self: Self, x: f64) MaybeMonad.MbType(u32) {
+            if (x == 3.14) {
+                return null;
+            } else {
+                return @as(u32, @intFromFloat(@floor(x * 4.0))) + self.a;
+            }
+        }
+    }{};
+
     var maybe_a: ?f64 = null;
     var maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont_fn);
     try testing.expectEqual(null, maybe_b);
@@ -217,4 +242,16 @@ test "pure Maybe Monad bind" {
     maybe_a = 8.0;
     maybe_b = MaybeMonad.bind(f64, u32, maybe_a, cont_fn);
     try testing.expectEqual(32, maybe_b);
+
+    maybe_a = null;
+    maybe_b = MaybeMonad.bindLam(f64, u32, maybe_a, cont_lam);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 3.14;
+    maybe_b = MaybeMonad.bindLam(f64, u32, maybe_a, cont_lam);
+    try testing.expectEqual(null, maybe_b);
+
+    maybe_a = 8.0;
+    maybe_b = MaybeMonad.bindLam(f64, u32, maybe_a, cont_lam);
+    try testing.expectEqual(39, maybe_b);
 }

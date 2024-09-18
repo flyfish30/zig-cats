@@ -82,7 +82,7 @@ pub fn Applicative(comptime ApplicativeImpl: type) type {
                 comptime A: type,
                 comptime B: type,
                 // applicative function: F (a -> b), fa: F a
-                flam: anytype, // a F(lambda) that present F(*const fn (A) B),
+                flam: anytype, // a F(lambda) with funtion F(*const fn (Self, A) B),
                 fa: F(A),
             ) AFbType(B) {
                 _ = instance;

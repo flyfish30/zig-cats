@@ -109,7 +109,7 @@ pub fn Functor(comptime FunctorImpl: type) type {
                 instance: *InstanceImpl,
                 comptime K: MapFnKind,
                 // f: a -> b, fa: F a
-                lam: anytype,
+                lam: anytype, // a lambda with funtion *const fn(Self, A) B
                 fa: FaLamType(K, @TypeOf(lam)),
             ) FbLamType(@TypeOf(lam)) {
                 _ = instance;

@@ -234,12 +234,37 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             ma: F(A),
             k: *const fn (A) F(B),
         ) F(B) {
+            return bindGeneric(A, B, .NormalMap, ma, k);
+        }
+
+        pub fn bindLam(
+            comptime A: type,
+            comptime B: type,
+            // monad function: (a -> M b), ma: M a
+            ma: F(A),
+            klam: anytype, // a lambda with function *const fn(Self, A) F(B)
+        ) F(B) {
+            return bindGeneric(A, B, .LambdaMap, ma, klam);
+        }
+
+        pub fn bindGeneric(
+            comptime A: type,
+            comptime B: type,
+            comptime M: FMapMode,
+            // monad function: (a -> M b), ma: M a
+            ma: F(A),
+            k_fn_lam: anytype,
+        ) F(B) {
             const imap_lam = struct {
-                cont_fn: *const fn (A) F(B),
+                cont_fn_lam: @TypeOf(k_fn_lam),
                 fn call(map_self: @This(), i: usize, a: A) B {
-                    return map_self.cont_fn(a)[i];
+                    if (M == .NormalMap) {
+                        return map_self.cont_fn_lam(a)[i];
+                    } else {
+                        return map_self.cont_fn_lam.call(a)[i];
+                    }
                 }
-            }{ .cont_fn = k };
+            }{ .cont_fn_lam = k_fn_lam };
 
             return imap(A, B, imap_lam, ma);
         }
@@ -296,17 +321,35 @@ test "Array Monad bind" {
     const array_a = ArrayF(f64){ 10, 20, 30, 40 };
     const array_binded = ArrayMonad.bind(f64, u32, array_a, struct {
         fn f(a: f64) ArrayMonad.MbType(u32) {
-            var array_b: ArrayF(u32) = undefined;
+            var array_b: ArrayF(u32) = [_]u32{ 1, 2, 3, 4 };
             var j: usize = 0;
             while (j < array_b.len) : (j += 1) {
                 if ((j & 0x1) == 0) {
-                    array_b[j] = @intFromFloat(@ceil(a * 4.0));
+                    array_b[j] += @intFromFloat(@ceil(a * 4.0));
                 } else {
-                    array_b[j] = @intFromFloat(@ceil(a * 9.0));
+                    array_b[j] += @intFromFloat(@ceil(a * 9.0));
                 }
             }
             return array_b;
         }
     }.f);
-    try testing.expectEqualSlices(u32, &[_]u32{ 40, 180, 120, 360 }, &array_binded);
+    try testing.expectEqualSlices(u32, &[_]u32{ 41, 182, 123, 364 }, &array_binded);
+
+    const array_c = ArrayMonad.bindLam(u32, f64, array_binded, struct {
+        m: f64 = 3.14,
+        const Self = @This();
+        fn call(self: Self, a: u32) ArrayMonad.MbType(f64) {
+            var array_b: ArrayF(f64) = [_]f64{ 2, 4, 6, 8 };
+            var j: usize = 0;
+            while (j < array_b.len) : (j += 1) {
+                if ((j & 0x1) == 0) {
+                    array_b[j] += @as(f64, @floatFromInt(a)) * self.m;
+                } else {
+                    array_b[j] += @as(f64, @floatFromInt(a)) + self.m;
+                }
+            }
+            return array_b;
+        }
+    }{});
+    try testing.expectEqualSlices(f64, &[_]f64{ 130.74, 189.14, 392.22, 375.14 }, &array_c);
 }
