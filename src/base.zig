@@ -151,8 +151,12 @@ pub fn Array(comptime len: usize) TCtor {
     }.ArrayType;
 }
 
+pub fn FreeTFn(comptime T: type) type {
+    return *const fn (T) void;
+}
+
 /// A empty free function, do nothing
-pub fn getFreeNothing(comptime T: type) *const fn (T) void {
+pub fn getFreeNothing(comptime T: type) FreeTFn(T) {
     return struct {
         fn freeT(a: T) void {
             _ = a;

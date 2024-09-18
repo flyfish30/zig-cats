@@ -3,20 +3,15 @@ const base = @import("base.zig");
 const functor = @import("functor.zig");
 const monad = @import("monad.zig");
 const maybe = @import("maybe.zig");
+const listm = @import("array_list_monad.zig");
 
 const TCtor = base.TCtor;
-
-const MapFnInType = base.MapFnInType;
-const MapFnRetType = base.MapFnRetType;
-const MapLamInType = base.MapLamInType;
-const MapLamRetType = base.MapLamRetType;
-
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 
 const Functor = functor.Functor;
 
 pub const MaybeApplicativeImpl = maybe.MaybeMonadImpl;
-pub const ArrayListApplicativeImpl = monad.ArrayListMonadImpl;
+pub const ArrayListApplicativeImpl = listm.ArrayListMonadImpl;
 
 pub fn ApplicativeFxTypes(comptime F: TCtor, comptime E: type) type {
     return struct {

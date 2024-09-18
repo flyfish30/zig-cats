@@ -6,3 +6,4 @@ pub usingnamespace @import("pure/product.zig");
 pub usingnamespace @import("pure/coproduct.zig");
 
 pub usingnamespace @import("pure/maybe.zig");
+pub usingnamespace @import("pure/array_monad.zig");

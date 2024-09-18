@@ -2,20 +2,14 @@ const std = @import("std");
 const base = @import("../base.zig");
 const functor = @import("functor.zig");
 const monad = @import("monad.zig");
+const maybe = @import("maybe.zig");
+const arraym = @import("array_monad.zig");
 
 const TCtor = base.TCtor;
-
-const MapFnInType = base.MapFnInType;
-const MapFnRetType = base.MapFnRetType;
-const MapLamInType = base.MapLamInType;
-const MapLamRetType = base.MapLamRetType;
-
-const isErrorUnionOrVal = base.isErrorUnionOrVal;
-
 const Functor = functor.Functor;
 
-pub const MaybeApplicativeImpl = monad.MaybeMonadImpl;
-pub const ArrayApplicativeImpl = monad.ArrayMonadImpl;
+pub const MaybeApplicativeImpl = maybe.MaybeMonadImpl;
+pub const ArrayApplicativeImpl = arraym.ArrayMonadImpl;
 
 /// Applicative Functor typeclass like in Haskell, it inherit from Functor.
 /// F is instance of Applicative Functor typeclass, such as Maybe, List

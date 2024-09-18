@@ -3,6 +3,8 @@ const base = @import("base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 const maybe = @import("maybe.zig");
+const listm = @import("array_list_monad.zig");
+const testu = @import("test_utils.zig");
 
 const testing = std.testing;
 const assert = std.debug.assert;
@@ -204,62 +206,15 @@ pub fn ProductApplicative(comptime ApplicativeF: type, comptime ApplicativeG: ty
 }
 
 // These functions are defined for unit test
-const add4 = struct {
-    fn f(a: u32) u32 {
-        return a + 4;
-    }
-}.f;
-
-const add10 = struct {
-    fn f(a: u32) u32 {
-        return a + 10;
-    }
-}.f;
-
-const mul2 = struct {
-    fn f(a: u32) u32 {
-        return a * 2;
-    }
-}.f;
-
-const mul3 = struct {
-    fn f(a: u32) u32 {
-        return a * 3;
-    }
-}.f;
-
-const add_pi_f32 = struct {
-    fn f(a: u32) f32 {
-        return @as(f32, @floatFromInt(a)) + 3.14;
-    }
-}.f;
-
-const add_pi_f64 = struct {
-    fn f(a: u32) f64 {
-        return @as(f64, @floatFromInt(a)) + 3.14;
-    }
-}.f;
-
-const mul_pi_f64 = struct {
-    fn f(a: u32) f64 {
-        return @as(f64, @floatFromInt(a)) * 3.14;
-    }
-}.f;
-
-const add_e_f64 = struct {
-    fn f(a: u32) f64 {
-        return @as(f64, @floatFromInt(a)) + 2.71828;
-    }
-}.f;
-
-const mul_e_f64 = struct {
-    fn f(a: u32) f64 {
-        return @as(f64, @floatFromInt(a)) * 2.71828;
-    }
-}.f;
+const add4 = testu.add4;
+const add10 = testu.add10;
+const mul2 = testu.mul2;
+const mul3 = testu.mul3;
+const add_pi_f64 = testu.add_pi_f64;
+const add_e_f64 = testu.add_e_f64;
 
 const monad = @import("monad.zig");
-const ArrayListMonadImpl = monad.ArrayListMonadImpl;
+const ArrayListMonadImpl = listm.ArrayListMonadImpl;
 const MaybeMonadImpl = maybe.MaybeMonadImpl;
 
 const Maybe = base.Maybe;

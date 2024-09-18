@@ -3,6 +3,7 @@ const base = @import("../base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 const maybe = @import("maybe.zig");
+const arraym = @import("array_monad.zig");
 
 const testing = std.testing;
 const assert = std.debug.assert;
@@ -253,7 +254,7 @@ const mul_e_f64 = struct {
 const monad = @import("monad.zig");
 const NatTrans = functor.NatTrans;
 const MaybeToArrayNatImpl = functor.MaybeToArrayNatImpl;
-const ArrayMonadImpl = monad.ArrayMonadImpl;
+const ArrayMonadImpl = arraym.ArrayMonadImpl;
 const MaybeMonadImpl = maybe.MaybeMonadImpl;
 
 const Maybe = base.Maybe;
