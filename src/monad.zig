@@ -90,24 +90,24 @@ pub fn runDo(ctx: anytype) DoRetType(@TypeOf(ctx)) {
         }
     }
 
-    if (!@hasDecl(CtxType, "init")) {
-        @compileError("The ctx for runDo must has init function!");
+    if (!@hasDecl(CtxType, "startDo")) {
+        @compileError("The ctx for runDo must has startDo function!");
     }
 
     const MonadType = if (is_pure) CtxType.MonadType else void;
     const ImplType = if (is_pure) MonadType.InstanceImpl else @TypeOf(ctx.monad_impl);
     // the first do step function
-    const init_fn_info = @typeInfo(@TypeOf(@field(CtxType, "init")));
-    if (init_fn_info.Fn.params.len != 1) {
+    const start_fn_info = @typeInfo(@TypeOf(@field(CtxType, "startDo")));
+    if (start_fn_info.Fn.params.len != 1) {
         @compileError("The first do step function must be only one parameters!");
     }
-    const init_m = if (is_pure)
+    const start_m = if (is_pure)
         // pure monad
-        CtxType.init(@constCast(&ctx))
+        CtxType.startDo(@constCast(&ctx))
     else
         // impure monad
-        try CtxType.init(@constCast(&ctx.monad_impl));
-    const MT = @TypeOf(init_m);
+        try CtxType.startDo(@constCast(&ctx.monad_impl));
+    const MT = @TypeOf(start_m);
     const has_err, const _MT = comptime isErrorUnionOrVal(MT);
     _ = has_err;
     const T = ImplType.BaseType(_MT);
@@ -116,7 +116,7 @@ pub fn runDo(ctx: anytype) DoRetType(@TypeOf(ctx)) {
     comptime var i = info.Struct.decls.len;
     comptime var isLastDoFn = true;
     const ImplOrCtxType = MonadImplOrCtxType(is_pure, CtxType);
-    // A composed continuation of do step functions for bind init_m
+    // A composed continuation of do step functions for bind start_m
     comptime var k: ?*const fn (*ImplOrCtxType, T) MR = null;
     inline while (i > 0) : (i -= 1) {
         const decl = info.Struct.decls[i - 1];
@@ -145,15 +145,15 @@ pub fn runDo(ctx: anytype) DoRetType(@TypeOf(ctx)) {
     const R = ImplType.BaseType(_MR);
     if (k) |_k| {
         // free intermediate monad for avoid memory leak
-        defer ImplType.deinitFa(init_m, base.getFreeNothing(T));
+        defer ImplType.deinitFa(start_m, base.getFreeNothing(T));
         const final_k: *const fn (*ImplOrCtxType, T) MR = @ptrCast(_k);
         if (is_pure) {
-            return MonadType.bindWithCtx(T, R, @constCast(&ctx), init_m, final_k);
+            return MonadType.bindWithCtx(T, R, @constCast(&ctx), start_m, final_k);
         } else {
-            return try @constCast(&ctx.monad_impl).bind(T, R, init_m, final_k);
+            return try @constCast(&ctx.monad_impl).bind(T, R, start_m, final_k);
         }
     } else {
-        return init_m;
+        return start_m;
     }
 }
 

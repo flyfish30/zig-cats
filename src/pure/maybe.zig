@@ -266,6 +266,9 @@ test "runDo Maybe" {
 
     const MaybeMonad = Monad(MaybeMonadImpl);
     const do_ctx = struct {
+        // In pure Monad, it is must to define MonadType for support do syntax.
+        pub const MonadType = MaybeMonad;
+
         param1: i32,
 
         // intermediate variable
@@ -273,10 +276,8 @@ test "runDo Maybe" {
         b: u32 = undefined,
 
         const Ctx = @This();
-        pub const MonadType = MaybeMonad;
-
-        // the do context struct must has init function
-        pub fn init(ctx: *Ctx) MaybeMonadImpl.MbType(i32) {
+        // the do context struct must has startDo function
+        pub fn startDo(ctx: *Ctx) MaybeMonadImpl.MbType(i32) {
             return ctx.param1;
         }
 
@@ -289,9 +290,41 @@ test "runDo Maybe" {
         // the name of other do step function must be starts with "do" string
         pub fn do2(ctx: *Ctx, b: u32) MaybeMonadImpl.MbType(f64) {
             ctx.b = b;
-            return @as(f64, @floatFromInt(b)) + 3.14;
+            return @as(f64, @floatFromInt(b + @abs(ctx.a))) + 3.14;
         }
     }{ .param1 = input1 };
     const out = runDo(do_ctx);
+    try testing.expectEqual(89.14, out);
+}
+
+test "comptime runDo Maybe" {
+    const input1: i32 = 42;
+
+    const MaybeMonad = Monad(MaybeMonadImpl);
+    const do_ctx = struct {
+        // In pure Monad, it is must to define MonadType for support do syntax.
+        pub const MonadType = MaybeMonad;
+
+        param1: i32,
+
+        const Ctx = @This();
+        // the do context struct must has startDo function
+        pub fn startDo(ctx: *Ctx) MaybeMonadImpl.MbType(i32) {
+            return ctx.param1;
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do1(ctx: *Ctx, a: i32) MaybeMonadImpl.MbType(u32) {
+            _ = ctx;
+            return @abs(a) + 2;
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do2(ctx: *Ctx, b: u32) MaybeMonadImpl.MbType(f64) {
+            _ = ctx;
+            return @as(f64, @floatFromInt(b)) + 3.14;
+        }
+    }{ .param1 = input1 };
+    const out = comptime runDo(do_ctx);
     try testing.expectEqual(47.14, out);
 }

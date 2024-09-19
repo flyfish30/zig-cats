@@ -315,6 +315,7 @@ test "runDo Arraylist" {
     const ArrayListMonad = Monad(ArrayListMonadImpl);
     const arraylist_m = ArrayListMonad.init(.{ .allocator = allocator });
     const do_ctx = struct {
+        // In impure Monad, it is must to define monad_impl for support do syntax.
         monad_impl: ArrayListMonadImpl,
         param1: i32,
 
@@ -323,8 +324,8 @@ test "runDo Arraylist" {
         b: u32 = undefined,
 
         const Ctx = @This();
-        // the do context struct must has init function
-        pub fn init(impl: *ArrayListMonadImpl) ArrayListMonadImpl.MbType(i32) {
+        // the do context struct must has startDo function
+        pub fn startDo(impl: *ArrayListMonadImpl) ArrayListMonadImpl.MbType(i32) {
             const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             const as = &([_]i32{ 17, ctx.param1 } ** 2);
             var array = ArrayList(i32).init(impl.allocator);

@@ -270,6 +270,7 @@ test "runDo Maybe" {
     const MaybeMonad = Monad(MaybeMonadImpl);
     const maybe_m = MaybeMonad.init(.{ .none = {} });
     const do_ctx = struct {
+        // In impure Monad, it is must to define monad_impl for support do syntax.
         monad_impl: MaybeMonadImpl,
         param1: i32,
 
@@ -278,8 +279,8 @@ test "runDo Maybe" {
         b: u32 = undefined,
 
         const Ctx = @This();
-        // the do context struct must has init function
-        pub fn init(impl: *MaybeMonadImpl) MaybeMonadImpl.MbType(i32) {
+        // the do context struct must has startDo function
+        pub fn startDo(impl: *MaybeMonadImpl) MaybeMonadImpl.MbType(i32) {
             const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             return ctx.param1;
         }

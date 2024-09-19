@@ -25,6 +25,8 @@ const Monad = monad.Monad;
 
 const impure_functor = @import("../functor.zig");
 const FunctorFxTypes = impure_functor.FunctorFxTypes;
+const impure_monad = @import("../monad.zig");
+const runDo = impure_monad.runDo;
 
 const Maybe = base.Maybe;
 const Array = base.Array;
@@ -46,6 +48,8 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
         pub const FbType = FxTypes.FbType;
         pub const FaLamType = FxTypes.FaLamType;
         pub const FbLamType = FxTypes.FbLamType;
+
+        pub const MbType = F;
 
         fn FaFnOrLamType(
             comptime K: MapFnKind,
@@ -244,9 +248,9 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             ctx: anytype,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k_ctx: *const fn (@TypeOf(ctx), A) F(B),
+            k: *const fn (@TypeOf(ctx), A) F(B),
         ) F(B) {
-            return bindGeneric(A, B, @TypeOf(ctx), ctx, ma, k_ctx);
+            return bindGeneric(A, B, @TypeOf(ctx), ctx, ma, k);
         }
 
         pub fn bindGeneric(
@@ -256,19 +260,19 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             ctx: Ctx,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k_fn_ctx: if (Ctx == void) *const fn (A) F(B) else *const fn (Ctx, A) F(B),
+            k: if (Ctx == void) *const fn (A) F(B) else *const fn (Ctx, A) F(B),
         ) F(B) {
             const imap_lam = struct {
                 cont_ctx: Ctx,
-                cont_fn_ctx: @TypeOf(k_fn_ctx),
+                cont_fn: @TypeOf(k),
                 fn call(map_self: @This(), i: usize, a: A) B {
                     if (Ctx == void) {
-                        return map_self.cont_fn_ctx(a)[i];
+                        return map_self.cont_fn(a)[i];
                     } else {
-                        return map_self.cont_fn_ctx(map_self.cont_ctx, a)[i];
+                        return map_self.cont_fn(map_self.cont_ctx, a)[i];
                     }
                 }
-            }{ .cont_ctx = ctx, .cont_fn_ctx = k_fn_ctx };
+            }{ .cont_ctx = ctx, .cont_fn = k };
 
             return imap(A, B, imap_lam, ma);
         }
@@ -358,4 +362,97 @@ test "Array Monad bind" {
         }
     }.f);
     try testing.expectEqualSlices(f64, &[_]f64{ 130.74, 189.14, 392.22, 375.14 }, &array_c);
+}
+
+test "runDo Array" {
+    const input1: i32 = 42;
+
+    const ArrayMonad = Monad(ArrayMonadImpl(ARRAY_LEN));
+    const do_ctx = struct {
+        // In pure Monad, it is must to define MonadType for support do syntax.
+        pub const MonadType = ArrayMonad;
+
+        param1: i32,
+
+        // intermediate variable
+        a: i32 = undefined,
+        b: u32 = undefined,
+
+        const Ctx = @This();
+        // the do context struct must has startDo function
+        pub fn startDo(ctx: *Ctx) ArrayMonad.InstanceImpl.MbType(i32) {
+            const array = [_]i32{ 17, ctx.param1 } ** 2;
+            return array;
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do1(ctx: *Ctx, a: i32) ArrayMonad.InstanceImpl.MbType(u32) {
+            ctx.a = a;
+            const tmp = @abs(a);
+            return [_]u32{ tmp + 2, tmp * 2, tmp * 3, tmp + 4 };
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do2(ctx: *Ctx, b: u32) ArrayMonad.InstanceImpl.MbType(f64) {
+            ctx.b = b;
+
+            const array = [_]f64{
+                @floatFromInt(@abs(ctx.a) + b),
+                @as(f64, @floatFromInt(b)) + 3.14,
+                @floatFromInt(@abs(ctx.a) * b),
+                @as(f64, @floatFromInt(b)) * 3.14,
+            };
+            return array;
+        }
+    }{ .param1 = input1 };
+    const out = runDo(do_ctx);
+    try testing.expectEqualSlices(
+        f64,
+        &[_]f64{ 36, 87.14, 867, 144.44 },
+        &out,
+    );
+}
+
+test "comptime runDo Array" {
+    const input1: i32 = 42;
+
+    const ArrayMonad = Monad(ArrayMonadImpl(ARRAY_LEN));
+    const do_ctx = struct {
+        // In pure Monad, it is must to define MonadType for support do syntax.
+        pub const MonadType = ArrayMonad;
+
+        param1: i32,
+
+        const Ctx = @This();
+        // the do context struct must has startDo function
+        pub fn startDo(ctx: *Ctx) ArrayMonad.InstanceImpl.MbType(i32) {
+            const array = [_]i32{ 17, ctx.param1 } ** 2;
+            return array;
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do1(ctx: *Ctx, a: i32) ArrayMonad.InstanceImpl.MbType(u32) {
+            _ = ctx;
+            const tmp = @abs(a);
+            return [_]u32{ tmp + 2, tmp * 2, tmp * 3, tmp + 4 };
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do2(ctx: *Ctx, b: u32) ArrayMonad.InstanceImpl.MbType(f64) {
+            _ = ctx;
+            const array = [_]f64{
+                @floatFromInt(17 + b),
+                @as(f64, @floatFromInt(b)) + 3.14,
+                @floatFromInt(17 * b),
+                @as(f64, @floatFromInt(b)) * 3.14,
+            };
+            return array;
+        }
+    }{ .param1 = input1 };
+    const out = comptime runDo(do_ctx);
+    try testing.expectEqualSlices(
+        f64,
+        &[_]f64{ 36, 87.14, 867, 144.44 },
+        &out,
+    );
 }
