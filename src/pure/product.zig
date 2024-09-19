@@ -2,7 +2,7 @@ const std = @import("std");
 const base = @import("../base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
-const maybe = @import("maybe.zig");
+const maybe = @import("../maybe.zig");
 const arraym = @import("array_monad.zig");
 const testu = @import("../test_utils.zig");
 
@@ -176,7 +176,7 @@ const mul_e_f64 = testu.mul_e_f64;
 
 const monad = @import("monad.zig");
 const ArrayMonadImpl = arraym.ArrayMonadImpl;
-const MaybeMonadImpl = maybe.MaybeMonadImpl;
+const MaybeMonadImpl = maybe.PureMaybeMonadImpl;
 
 const Maybe = base.Maybe;
 const ARRAY_LEN = 4;

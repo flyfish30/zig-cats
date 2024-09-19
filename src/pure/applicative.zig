@@ -2,13 +2,13 @@ const std = @import("std");
 const base = @import("../base.zig");
 const functor = @import("functor.zig");
 const monad = @import("monad.zig");
-const maybe = @import("maybe.zig");
+const maybe = @import("../maybe.zig");
 const arraym = @import("array_monad.zig");
 
 const TCtor = base.TCtor;
 const Functor = functor.Functor;
 
-pub const MaybeApplicativeImpl = maybe.MaybeMonadImpl;
+pub const MaybeApplicativeImpl = maybe.PureMaybeMonadImpl;
 pub const ArrayApplicativeImpl = arraym.ArrayMonadImpl;
 
 /// Applicative Functor typeclass like in Haskell, it inherit from Functor.

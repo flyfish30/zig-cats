@@ -14,7 +14,7 @@ const CoproductFG = pure_zcats.CoproductFG;
 const CoproductApplicative = pure_zcats.CoproductApplicative;
 
 const Maybe = zcats.Maybe;
-const MaybeMonadImpl = pure_zcats.MaybeMonadImpl;
+const MaybeMonadImpl = zcats.PureMaybeMonadImpl;
 const Array = zcats.Array;
 const ArrayMonadImpl = pure_zcats.ArrayMonadImpl;
 const MaybeToArrayNatImpl = pure_zcats.MaybeToArrayNatImpl;

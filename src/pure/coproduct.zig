@@ -2,7 +2,7 @@ const std = @import("std");
 const base = @import("../base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
-const maybe = @import("maybe.zig");
+const maybe = @import("../maybe.zig");
 const arraym = @import("array_monad.zig");
 const testu = @import("../test_utils.zig");
 
@@ -213,7 +213,7 @@ const monad = @import("monad.zig");
 const NatTrans = functor.NatTrans;
 const MaybeToArrayNatImpl = functor.MaybeToArrayNatImpl;
 const ArrayMonadImpl = arraym.ArrayMonadImpl;
-const MaybeMonadImpl = maybe.MaybeMonadImpl;
+const MaybeMonadImpl = maybe.PureMaybeMonadImpl;
 
 const Maybe = base.Maybe;
 const Array = base.Array;
