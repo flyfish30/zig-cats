@@ -23,6 +23,7 @@ pub fn Monad(comptime MonadImpl: type) type {
     const has_sup_impl = @hasField(MonadImpl, "applicative_sup");
 
     return struct {
+        // TODO: like std.io.Reader interface, add "monad_ctx: MonadCtx" field in it.
         const Self = @This();
         pub const InstanceImpl = MonadImpl;
         const ApplicativeSup = if (has_sup_impl)

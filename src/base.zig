@@ -100,6 +100,11 @@ pub const FMapMode = enum {
     LambdaMap,
 };
 
+/// A identity function as unit of endofunctions
+fn identity(a: anytype) @TypeOf(a) {
+    return a;
+}
+
 /// Check the type E whether it is a ErrorUnion, if true then return a under
 /// type of ErrorUnion, else just return type E.
 pub fn isErrorUnionOrVal(comptime E: type) struct { bool, type } {
@@ -162,4 +167,10 @@ pub fn getFreeNothing(comptime T: type) FreeTFn(T) {
             _ = a;
         }
     }.freeT;
+}
+
+/// A empty free function, do nothing
+pub fn freeNothing(a: anytype) void {
+    _ = a;
+    return;
 }

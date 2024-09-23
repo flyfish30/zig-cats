@@ -13,6 +13,7 @@ pub usingnamespace @import("coproduct.zig");
 
 pub usingnamespace @import("maybe.zig");
 pub usingnamespace @import("array_list_monad.zig");
+pub usingnamespace @import("state.zig");
 
 test {
     std.testing.refAllDecls(@This());
