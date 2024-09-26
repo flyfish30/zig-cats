@@ -150,10 +150,10 @@ pub fn Maybe(comptime A: type) type {
 
 pub fn Array(comptime len: usize) TCtor {
     return struct {
-        fn ArrayType(comptime A: type) type {
+        fn ArrayF(comptime A: type) type {
             return [len]A;
         }
-    }.ArrayType;
+    }.ArrayF;
 }
 
 pub fn FreeTFn(comptime T: type) type {

@@ -223,9 +223,7 @@ pub const ArrayListMonadImpl = struct {
         for (ma.items) |a| {
             const tmp_mb = try k(self, a);
             defer tmp_mb.deinit();
-            for (tmp_mb.items) |b| {
-                try mb.append(b);
-            }
+            try mb.appendSlice(tmp_mb.items);
         }
         return mb;
     }
@@ -314,8 +312,8 @@ test "runDo Arraylist" {
     const allocator = testing.allocator;
     const ArrayListMonad = Monad(ArrayListMonadImpl);
     const arraylist_m = ArrayListMonad.init(.{ .allocator = allocator });
-    const do_ctx = struct {
-        // In impure Monad, it is must to define monad_impl for support do syntax.
+    var do_ctx = struct {
+        // It is must to define monad_impl for support do syntax.
         monad_impl: ArrayListMonadImpl,
         param1: i32,
 
@@ -324,6 +322,8 @@ test "runDo Arraylist" {
         b: u32 = undefined,
 
         const Ctx = @This();
+        pub const is_pure = false;
+
         // the do context struct must has startDo function
         pub fn startDo(impl: *ArrayListMonadImpl) ArrayListMonadImpl.MbType(i32) {
             const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
@@ -354,7 +354,7 @@ test "runDo Arraylist" {
             return array;
         }
     }{ .monad_impl = arraylist_m, .param1 = input1 };
-    const out = try runDo(do_ctx);
+    const out = try runDo(&do_ctx);
     defer out.deinit();
     try testing.expectEqual(8, out.items.len);
     try testing.expectEqualSlices(

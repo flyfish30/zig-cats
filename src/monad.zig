@@ -68,61 +68,62 @@ pub fn Monad(comptime MonadImpl: type) type {
     };
 }
 
+fn GetPointerChild(comptime P: type) type {
+    if (@typeInfo(P) != .Pointer) {
+        @compileError("The type P must be a Pointer type!");
+    }
+    return std.meta.Child(P);
+}
+
 /// The do syntax for monad action, user pass a struct that include input parameters
 /// and step functions of monad. The function finally return a monad value.
 /// The name of do step function must be starts with "do" string.
-/// The ctx parameter is a struct value inputed by user.
-pub fn runDo(ctx: anytype) DoRetType(@TypeOf(ctx)) {
-    comptime var is_pure: bool = false;
-    const CtxType = @TypeOf(ctx);
-    const info = comptime @typeInfo(CtxType);
+/// The ctx_p parameter is pointer of a DoCtx value inputed by user.
+pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
+    const DoCtx = GetPointerChild(@TypeOf(ctx_p));
+    const info = comptime @typeInfo(DoCtx);
     if (info != .Struct) {
         @compileError("The ctx for runDo must be a struct!");
     }
 
-    if (!@hasField(CtxType, "monad_impl")) {
-        if (!@hasDecl(CtxType, "MonadType")) {
-            @compileError("The ctx for runDo must has monad_impl field or MonadType declaration!");
-        }
-        is_pure = true;
-    } else {
-        if (@hasDecl(CtxType, "MonadType")) {
-            @compileError("The ctx for runDo must not has both monad_impl field and MonadType declaration!");
-        }
+    if (!@hasField(DoCtx, "monad_impl")) {
+        @compileError("The ctx for runDo must has monad_impl field!");
     }
 
-    if (!@hasDecl(CtxType, "startDo")) {
+    if (!@hasDecl(DoCtx, "startDo")) {
         @compileError("The ctx for runDo must has startDo function!");
     }
 
-    const MonadType = if (is_pure) CtxType.MonadType else void;
-    const ImplType = if (is_pure) MonadType.InstanceImpl else @TypeOf(ctx.monad_impl);
+    const MonadImpl = MonadImplType(DoCtx);
     // the first do step function
-    const start_fn_info = @typeInfo(@TypeOf(@field(CtxType, "startDo")));
+    const start_fn_info = @typeInfo(@TypeOf(@field(DoCtx, "startDo")));
     if (start_fn_info.Fn.params.len != 1) {
         @compileError("The first do step function must be only one parameters!");
     }
+
+    const is_pure = DoCtx.is_pure;
+    var impl_p = @constCast(&ctx_p.monad_impl);
+    _ = &impl_p;
     const start_m = if (is_pure)
         // pure monad
-        CtxType.startDo(@constCast(&ctx))
+        DoCtx.startDo(impl_p)
     else
         // impure monad
-        try CtxType.startDo(@constCast(&ctx.monad_impl));
+        try DoCtx.startDo(impl_p);
     const MT = @TypeOf(start_m);
     const has_err, const _MT = comptime isErrorUnionOrVal(MT);
     _ = has_err;
-    const T = ImplType.BaseType(_MT);
+    const T = MonadImpl.BaseType(_MT);
 
     comptime var MR = MT;
     comptime var i = info.Struct.decls.len;
     comptime var isLastDoFn = true;
-    const ImplOrCtxType = MonadImplOrCtxType(is_pure, CtxType);
     // A composed continuation of do step functions for bind start_m
-    comptime var k: ?*const fn (*ImplOrCtxType, T) MR = null;
+    comptime var k: ?*const fn (*MonadImpl, T) MR = null;
     inline while (i > 0) : (i -= 1) {
         const decl = info.Struct.decls[i - 1];
         if (comptime std.mem.startsWith(u8, decl.name, "do")) {
-            const fn_info = @typeInfo(@TypeOf(@field(CtxType, decl.name)));
+            const fn_info = @typeInfo(@TypeOf(@field(DoCtx, decl.name)));
             if (fn_info.Fn.params.len != 2) {
                 @compileError("The do step function must be only two parameters!");
             }
@@ -135,31 +136,31 @@ pub fn runDo(ctx: anytype) DoRetType(@TypeOf(ctx)) {
 
             const has_err_b, const _MB = comptime isErrorUnionOrVal(MB);
             _ = has_err_b;
-            const B = ImplType.BaseType(_MB);
-            const curr_k: ?*const fn (*ImplOrCtxType, B) MR = @ptrCast(k);
-            k = comptime @ptrCast(mkDoContFn(CtxType, is_pure, A, MB, decl.name, curr_k));
+            const B = MonadImpl.BaseType(_MB);
+            const curr_k: ?*const fn (*MonadImpl, B) MR = @ptrCast(k);
+            k = comptime @ptrCast(mkDoContFn(DoCtx, is_pure, A, MB, decl.name, curr_k));
         }
     }
 
     const has_err_r, const _MR = comptime isErrorUnionOrVal(MR);
     _ = has_err_r;
-    const R = ImplType.BaseType(_MR);
+    const R = MonadImpl.BaseType(_MR);
     if (k) |_k| {
         // free intermediate monad for avoid memory leak
-        defer ImplType.deinitFa(start_m, base.getFreeNothing(T));
-        const final_k: *const fn (*ImplOrCtxType, T) MR = @ptrCast(_k);
+        defer MonadImpl.deinitFa(start_m, base.getFreeNothing(T));
+        const final_k: *const fn (*MonadImpl, T) MR = @ptrCast(_k);
         if (is_pure) {
-            return MonadType.bindWithCtx(T, R, @constCast(&ctx), start_m, final_k);
+            return MonadImpl.bindWithCtx(T, R, impl_p, start_m, final_k);
         } else {
-            return try @constCast(&ctx.monad_impl).bind(T, R, start_m, final_k);
+            return try impl_p.bind(T, R, start_m, final_k);
         }
     } else {
         return start_m;
     }
 }
 
-fn DoRetType(comptime CtxType: type) type {
-    const info = comptime @typeInfo(CtxType);
+fn DoRetType(comptime DoCtx: type) type {
+    const info = comptime @typeInfo(DoCtx);
     if (info != .Struct) {
         @compileError("The ctx for runDo must be a struct!");
     }
@@ -168,11 +169,11 @@ fn DoRetType(comptime CtxType: type) type {
     const MR = inline while (i > 0) : (i -= 1) {
         const decl = info.Struct.decls[i - 1];
         if (comptime std.mem.startsWith(u8, decl.name, "do")) {
-            const fn_info = @typeInfo(@TypeOf(@field(CtxType, decl.name)));
+            const fn_info = @typeInfo(@TypeOf(@field(DoCtx, decl.name)));
             break fn_info.Fn.return_type.?;
         }
     } else blk: {
-        const fn_info = @typeInfo(@TypeOf(@field(CtxType, "init")));
+        const fn_info = @typeInfo(@TypeOf(@field(DoCtx, "startDo")));
         break :blk fn_info.Fn.return_type.?;
     };
     return MR;
@@ -185,57 +186,55 @@ fn ContRetType(comptime K: type) type {
     return MR;
 }
 
-fn MonadImplOrCtxType(comptime is_pure: bool, comptime CtxType: type) type {
-    return if (is_pure)
-        // pure monad
-        CtxType
-    else
-        // impure monad
-        std.meta.FieldType(CtxType, .monad_impl);
+fn MonadImplType(comptime DoCtx: type) type {
+    return std.meta.FieldType(DoCtx, .monad_impl);
 }
 
 fn mkDoContFn(
-    comptime CtxType: type,
+    comptime DoCtx: type,
     comptime is_pure: bool,
     comptime A: type,
     comptime MB: type,
     comptime fn_name: [:0]const u8,
     comptime k: anytype, // k is a optional of continuation function
-) *const fn (*MonadImplOrCtxType(is_pure, CtxType), A) ContRetType(@TypeOf(k)) {
-    const ImplOrCtxType = MonadImplOrCtxType(is_pure, CtxType);
-    const ImplType = if (is_pure) CtxType.MonadType.InstanceImpl else ImplOrCtxType;
+) *const fn (*MonadImplType(DoCtx), A) ContRetType(@TypeOf(k)) {
+    const MonadImpl = MonadImplType(DoCtx);
     const MR = ContRetType(@TypeOf(k));
     const has_err_r, const _MR = comptime isErrorUnionOrVal(MR);
     _ = has_err_r;
-    const R = ImplType.BaseType(_MR);
+    const R = MonadImpl.BaseType(_MR);
     const do_cont = struct {
-        fn doCont(impl_or_ctx: *ImplOrCtxType, a: A) MR {
+        fn doCont(impl: *MonadImpl, a: A) MR {
             const has_err1, const _MB = comptime isErrorUnionOrVal(MB);
             _ = has_err1;
-            const B = ImplType.BaseType(_MB);
+            const B = MonadImpl.BaseType(_MB);
 
             const mb = if (is_pure)
                 // pure monad
                 @call(
                     .auto,
-                    @field(CtxType, fn_name),
-                    .{ @constCast(impl_or_ctx), a },
+                    @field(DoCtx, fn_name),
+                    .{ @constCast(impl), a },
                 )
-            else
-                // pure monad
-                try @call(
+            else blk_f: {
+                // impure monad
+                // const ctx: *DoCtx = @alignCast(@fieldParentPtr("monad_impl", impl));
+                // std.debug.print("call {s} ctx: {any}\n", .{ fn_name, ctx.* });
+                // defer std.debug.print("after call {s} ctx: {any}\n", .{ fn_name, ctx.* });
+                break :blk_f try @call(
                     .auto,
-                    @field(CtxType, fn_name),
-                    .{ @constCast(impl_or_ctx), a },
+                    @field(DoCtx, fn_name),
+                    .{ @constCast(impl), a },
                 );
+            };
 
             if (k) |_k| {
                 // free intermediate monad for avoid memory leak
-                defer ImplType.deinitFa(mb, base.getFreeNothing(B));
+                defer MonadImpl.deinitFa(mb, base.getFreeNothing(B));
                 if (is_pure) {
-                    return CtxType.MonadType.bindWithCtx(B, R, impl_or_ctx, mb, _k);
+                    return MonadImpl.bindWithCtx(B, R, impl, mb, _k);
                 } else {
-                    return try @constCast(impl_or_ctx).bind(B, R, mb, _k);
+                    return try @constCast(impl).bind(B, R, mb, _k);
                 }
             } else {
                 return mb;
@@ -243,5 +242,5 @@ fn mkDoContFn(
         }
     }.doCont;
 
-    return comptime do_cont;
+    return do_cont;
 }

@@ -367,11 +367,12 @@ test "Array Monad bind" {
 test "runDo Array" {
     const input1: i32 = 42;
 
-    const ArrayMonad = Monad(ArrayMonadImpl(ARRAY_LEN));
-    const do_ctx = struct {
-        // In pure Monad, it is must to define MonadType for support do syntax.
-        pub const MonadType = ArrayMonad;
-
+    const ArrayFImpl = ArrayMonadImpl(ARRAY_LEN);
+    const ArrayMonad = Monad(ArrayFImpl);
+    _ = ArrayMonad;
+    var do_ctx = struct {
+        // It is must to define monad_impl for support do syntax.
+        monad_impl: ArrayFImpl = .{},
         param1: i32,
 
         // intermediate variable
@@ -379,21 +380,26 @@ test "runDo Array" {
         b: u32 = undefined,
 
         const Ctx = @This();
+        pub const is_pure = true;
+
         // the do context struct must has startDo function
-        pub fn startDo(ctx: *Ctx) ArrayMonad.InstanceImpl.MbType(i32) {
+        pub fn startDo(impl: *ArrayFImpl) ArrayFImpl.MbType(i32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             const array = [_]i32{ 17, ctx.param1 } ** 2;
             return array;
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do1(ctx: *Ctx, a: i32) ArrayMonad.InstanceImpl.MbType(u32) {
+        pub fn do1(impl: *ArrayFImpl, a: i32) ArrayFImpl.MbType(u32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             ctx.a = a;
             const tmp = @abs(a);
             return [_]u32{ tmp + 2, tmp * 2, tmp * 3, tmp + 4 };
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do2(ctx: *Ctx, b: u32) ArrayMonad.InstanceImpl.MbType(f64) {
+        pub fn do2(impl: *ArrayFImpl, b: u32) ArrayFImpl.MbType(f64) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             ctx.b = b;
 
             const array = [_]f64{
@@ -405,7 +411,7 @@ test "runDo Array" {
             return array;
         }
     }{ .param1 = input1 };
-    const out = runDo(do_ctx);
+    const out = runDo(&do_ctx);
     try testing.expectEqualSlices(
         f64,
         &[_]f64{ 36, 87.14, 867, 144.44 },
@@ -416,30 +422,34 @@ test "runDo Array" {
 test "comptime runDo Array" {
     const input1: i32 = 42;
 
-    const ArrayMonad = Monad(ArrayMonadImpl(ARRAY_LEN));
-    const do_ctx = struct {
-        // In pure Monad, it is must to define MonadType for support do syntax.
-        pub const MonadType = ArrayMonad;
-
+    const ArrayFImpl = ArrayMonadImpl(ARRAY_LEN);
+    const ArrayMonad = Monad(ArrayFImpl);
+    _ = ArrayMonad;
+    comptime var do_ctx = struct {
+        // It is must to define monad_impl for support do syntax.
+        monad_impl: ArrayFImpl = .{},
         param1: i32,
 
         const Ctx = @This();
+        pub const is_pure = true;
+
         // the do context struct must has startDo function
-        pub fn startDo(ctx: *Ctx) ArrayMonad.InstanceImpl.MbType(i32) {
+        pub fn startDo(impl: *ArrayFImpl) ArrayFImpl.MbType(i32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             const array = [_]i32{ 17, ctx.param1 } ** 2;
             return array;
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do1(ctx: *Ctx, a: i32) ArrayMonad.InstanceImpl.MbType(u32) {
-            _ = ctx;
+        pub fn do1(impl: *ArrayFImpl, a: i32) ArrayFImpl.MbType(u32) {
+            _ = impl;
             const tmp = @abs(a);
             return [_]u32{ tmp + 2, tmp * 2, tmp * 3, tmp + 4 };
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do2(ctx: *Ctx, b: u32) ArrayMonad.InstanceImpl.MbType(f64) {
-            _ = ctx;
+        pub fn do2(impl: *ArrayFImpl, b: u32) ArrayFImpl.MbType(f64) {
+            _ = impl;
             const array = [_]f64{
                 @floatFromInt(17 + b),
                 @as(f64, @floatFromInt(b)) + 3.14,
@@ -449,7 +459,7 @@ test "comptime runDo Array" {
             return array;
         }
     }{ .param1 = input1 };
-    const out = comptime runDo(do_ctx);
+    const out = comptime runDo(&do_ctx);
     try testing.expectEqualSlices(
         f64,
         &[_]f64{ 36, 87.14, 867, 144.44 },

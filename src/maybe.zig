@@ -192,6 +192,8 @@ pub const MaybeMonadImpl = struct {
 };
 
 pub const PureMaybeMonadImpl = struct {
+    none: void = {},
+
     const Self = @This();
 
     /// Constructor Type for Functor, Applicative, Monad, ...
@@ -402,8 +404,8 @@ test "runDo Maybe" {
 
     const MaybeMonad = Monad(MaybeMonadImpl);
     const maybe_m = MaybeMonad.init(.{ .none = {} });
-    const do_ctx = struct {
-        // In impure Monad, it is must to define monad_impl for support do syntax.
+    var do_ctx = struct {
+        // It is must to define monad_impl for support do syntax.
         monad_impl: MaybeMonadImpl,
         param1: i32,
 
@@ -412,6 +414,8 @@ test "runDo Maybe" {
         b: u32 = undefined,
 
         const Ctx = @This();
+        pub const is_pure = false;
+
         // the do context struct must has startDo function
         pub fn startDo(impl: *MaybeMonadImpl) MaybeMonadImpl.MbType(i32) {
             const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
@@ -432,7 +436,7 @@ test "runDo Maybe" {
             return @as(f64, @floatFromInt(b)) + 3.14;
         }
     }{ .monad_impl = maybe_m, .param1 = input1 };
-    const out = runDo(do_ctx);
+    const out = runDo(&do_ctx);
     try testing.expectEqual(47.14, out);
 }
 
@@ -535,10 +539,10 @@ test "runDo pure Maybe" {
     const input1: i32 = 42;
 
     const MaybeMonad = PureMonad(PureMaybeMonadImpl);
-    const do_ctx = struct {
-        // In pure Monad, it is must to define MonadType for support do syntax.
-        pub const MonadType = MaybeMonad;
-
+    _ = MaybeMonad;
+    var do_ctx = struct {
+        // It is must to define monad_impl for support do syntax.
+        monad_impl: PureMaybeMonadImpl = .{},
         param1: i32,
 
         // intermediate variable
@@ -546,24 +550,29 @@ test "runDo pure Maybe" {
         b: u32 = undefined,
 
         const Ctx = @This();
+        pub const is_pure = true;
+
         // the do context struct must has startDo function
-        pub fn startDo(ctx: *Ctx) PureMaybeMonadImpl.MbType(i32) {
+        pub fn startDo(impl: *PureMaybeMonadImpl) PureMaybeMonadImpl.MbType(i32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             return ctx.param1;
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do1(ctx: *Ctx, a: i32) PureMaybeMonadImpl.MbType(u32) {
+        pub fn do1(impl: *PureMaybeMonadImpl, a: i32) PureMaybeMonadImpl.MbType(u32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             ctx.a = a;
             return @abs(a) + 2;
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do2(ctx: *Ctx, b: u32) PureMaybeMonadImpl.MbType(f64) {
+        pub fn do2(impl: *PureMaybeMonadImpl, b: u32) PureMaybeMonadImpl.MbType(f64) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             ctx.b = b;
             return @as(f64, @floatFromInt(b + @abs(ctx.a))) + 3.14;
         }
     }{ .param1 = input1 };
-    const out = runDo(do_ctx);
+    const out = runDo(&do_ctx);
     try testing.expectEqual(89.14, out);
 }
 
@@ -571,30 +580,35 @@ test "comptime runDo pure Maybe" {
     const input1: i32 = 42;
 
     const MaybeMonad = PureMonad(PureMaybeMonadImpl);
-    const do_ctx = struct {
-        // In pure Monad, it is must to define MonadType for support do syntax.
-        pub const MonadType = MaybeMonad;
-
+    _ = MaybeMonad;
+    comptime var do_ctx = struct {
+        // It is must to define monad_impl for support do syntax.
+        monad_impl: PureMaybeMonadImpl = .{},
         param1: i32,
 
         const Ctx = @This();
+        pub const is_pure = true;
+
         // the do context struct must has startDo function
-        pub fn startDo(ctx: *Ctx) PureMaybeMonadImpl.MbType(i32) {
+        pub fn startDo(impl: *PureMaybeMonadImpl) PureMaybeMonadImpl.MbType(i32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             return ctx.param1;
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do1(ctx: *Ctx, a: i32) PureMaybeMonadImpl.MbType(u32) {
+        pub fn do1(impl: *PureMaybeMonadImpl, a: i32) PureMaybeMonadImpl.MbType(u32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             _ = ctx;
             return @abs(a) + 2;
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do2(ctx: *Ctx, b: u32) PureMaybeMonadImpl.MbType(f64) {
+        pub fn do2(impl: *PureMaybeMonadImpl, b: u32) PureMaybeMonadImpl.MbType(f64) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             _ = ctx;
             return @as(f64, @floatFromInt(b)) + 3.14;
         }
     }{ .param1 = input1 };
-    const out = comptime runDo(do_ctx);
+    const out = comptime runDo(&do_ctx);
     try testing.expectEqual(47.14, out);
 }
