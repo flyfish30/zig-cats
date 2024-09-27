@@ -4,6 +4,13 @@ const std = @import("std");
 /// A single-argument type function for type constructor
 pub const TCtor = fn (comptime type) type;
 
+pub fn GetPointerChild(comptime P: type) type {
+    if (@typeInfo(P) != .Pointer) {
+        @compileError("The type P must be a Pointer type!");
+    }
+    return std.meta.Child(P);
+}
+
 pub fn MapFnInType(comptime MapFn: type) type {
     const len = @typeInfo(MapFn).Fn.params.len;
 

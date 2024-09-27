@@ -72,15 +72,17 @@ pub fn StateContext(comptime cfg: anytype) type {
             return struct {
                 fn StateF(comptime A: type) type {
                     return struct {
+                        ref_count: u32,
                         // translate action lambda for State
                         trans_lam: TransLam,
-                        trans_info: TransCtxInfo,
 
                         const Self = @This();
                         pub const StateS = S;
                         pub const StateA = A;
                         pub const TransLam = struct {
-                            trans_ctx: ?*anyopaque = null,
+                            // the parent struct that include state and trans_ctx
+                            state_parent: *anyopaque,
+                            free_parent: *const fn (self: *TransLam) void,
                             trans_fn: *const fn (self: *TransLam, s: S) RetType,
 
                             const RetType = Error!struct { A, S };
@@ -91,38 +93,25 @@ pub fn StateContext(comptime cfg: anytype) type {
                         };
                         pub const free_s = ctx_cfg.free_s;
 
-                        pub fn deinit(state_self: *Self) void {
-                            const trans_info = state_self.trans_info;
-                            if (state_self.trans_lam.trans_ctx) |trans_ctx| {
-                                const len = trans_info.ctx_size;
-                                const aligns = comptime [_]u8{ 1, 2, 4, 8, 16, 32, 64, 128 };
-                                inline for (aligns) |a| {
-                                    if (trans_info.ctx_align == a) {
-                                        const slice: []align(a) u8 = @as(
-                                            [*]align(a) u8,
-                                            @alignCast(@ptrCast(trans_ctx)),
-                                        )[0..len];
-                                        ctx_cfg.allocator.free(slice);
-                                        break;
-                                    }
-                                } else {
-                                    @panic("The alignment of struct TransCtx must is 1, 2, 4, 8, 16, 32, 64, 128\n");
-                                }
+                        pub fn strongRef(state_self: *Self) *Self {
+                            state_self.ref_count += 1;
+                            return state_self;
+                        }
+
+                        pub fn strongUnref(state_self: *Self) bool {
+                            if (state_self.ref_count > 1) {
+                                state_self.ref_count -= 1;
+                                return false;
                             }
-                            state_self.trans_info = mkTransCtxInfo(void, .NormalTrans);
+                            state_self.ref_count = 0;
+                            // free the parent struct of state struct
+                            state_self.trans_lam.free_parent(&state_self.trans_lam);
+                            return true;
                         }
 
                         pub inline fn runState(state_self: *Self, s: S) Error!struct { A, S } {
                             const trans_lam = state_self.trans_lam;
                             return @constCast(&trans_lam).call(s);
-                        }
-
-                        pub inline fn evalState(state_self: *Self, s: S) Error!A {
-                            return (try state_self.runState(s))[0];
-                        }
-
-                        pub inline fn execState(state_self: *Self, s: S) Error!S {
-                            return (try state_self.runState(s))[1];
                         }
                     };
                 }
@@ -133,80 +122,113 @@ pub fn StateContext(comptime cfg: anytype) type {
             return StateCurrying(S)(A);
         }
 
-        pub fn mkConstantState(comptime S: type, comptime A: type, s: S, a: A) State(S, A) {
+        pub fn mkConstantState(comptime S: type, comptime A: type, s: S, a: A) Error!*State(S, A) {
             const TransCtx = struct {
-                local_s: S,
-                local_a: a,
+                local_s: ?S,
+                local_a: A,
             };
+
+            const ConstStateType = struct {
+                state: State(S, A),
+                trans_ctx: TransCtx,
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, A).TransLam) void {
+                    const state_parent: *ConstStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    if (state_parent.trans_ctx.local_s) |local_s| {
+                        ctx_cfg.free_s(ctx_cfg.allocator, local_s);
+                    }
+                    ctx_cfg.allocator.destroy(state_parent);
+                }
+            }.freeParent;
 
             const trans_fn = struct {
                 const RetType = Error!struct { A, S };
                 fn f(trans_lam: *State(S, A).TransLam, input_s: S) RetType {
                     ctx_cfg.free_s(ctx_cfg.allocator, input_s);
-                    const trans_ctx: *TransCtx = @alignCast(@ptrCast(trans_lam.trans_ctx));
-                    return .{ trans_ctx.local_a, trans_ctx.local_s };
+                    const state_parent: *ConstStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    const trans_ctx: *TransCtx = &state_parent.trans_ctx;
+                    defer trans_ctx.local_s = null;
+                    return .{ trans_ctx.local_a, trans_ctx.local_s.? };
                 }
             }.f;
 
-            const trans_ctx = try ctx_cfg.allocator.create(TransCtx);
-            trans_ctx.local_s = s;
-            trans_ctx.local_a = a;
-            return .{
-                .trans_lam = .{
-                    .trans_fn = @constCast(&trans_fn),
-                    .trans_ctx = @ptrCast(trans_ctx),
-                },
-                .trans_info = mkTransCtxInfo(void, .ConstantTrans),
-            };
+            var const_state = try ctx_cfg.allocator.create(ConstStateType);
+            const_state.state.ref_count = 1;
+            const_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            const_state.state.trans_lam.free_parent = free_parent;
+            const_state.state.trans_lam.state_parent = @ptrCast(const_state);
+            const_state.trans_ctx.local_s = s;
+            const_state.trans_ctx.local_a = a;
+            return &const_state.state;
         }
 
-        pub fn get(comptime S: type) State(S, S) {
+        pub fn get(comptime S: type) Error!*State(S, S) {
+            const GetStateType = struct {
+                state: State(S, S),
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, S).TransLam) void {
+                    const state_parent: *GetStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    ctx_cfg.allocator.destroy(state_parent);
+                }
+            }.freeParent;
+
             const trans_fn = struct {
                 const RetType = Error!struct { S, S };
                 fn f(trans_lam: *State(S, S).TransLam, s: S) RetType {
                     _ = trans_lam;
-                    std.debug.print("get input_s: {any}\n", .{s});
                     return .{ try ctx_cfg.clone_s(s), s };
                 }
             }.f;
 
-            return .{
-                .trans_lam = .{ .trans_fn = @constCast(&trans_fn) },
-                .trans_info = mkTransCtxInfo(void, .NormalTrans),
-            };
+            var get_state = try ctx_cfg.allocator.create(GetStateType);
+            get_state.state.ref_count = 1;
+            get_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            get_state.state.trans_lam.free_parent = @constCast(&free_parent);
+            get_state.state.trans_lam.state_parent = @ptrCast(get_state);
+            return &get_state.state;
         }
 
-        pub fn put(comptime S: type, s: S) Error!State(S, void) {
+        pub fn put(comptime S: type, s: S) Error!*State(S, void) {
             const TransCtx = struct {
-                local_s: S,
+                local_s: ?S,
             };
+
+            const PutStateType = struct {
+                state: State(S, void),
+                trans_ctx: TransCtx,
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, void).TransLam) void {
+                    const state_parent: *PutStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    if (state_parent.trans_ctx.local_s) |local_s| {
+                        ctx_cfg.free_s(ctx_cfg.allocator, local_s);
+                    }
+                    ctx_cfg.allocator.destroy(state_parent);
+                }
+            }.freeParent;
 
             const trans_fn = struct {
                 const RetType = Error!struct { void, S };
                 fn f(trans_lam: *State(S, void).TransLam, input_s: S) RetType {
-                    std.debug.print("put free input_s: {any}\n", .{input_s});
                     ctx_cfg.free_s(ctx_cfg.allocator, input_s);
-                    const trans_ctx: *TransCtx = @alignCast(@ptrCast(trans_lam.trans_ctx));
-                    if (S == ArrayList(i32)) {
-                        std.debug.print("put load local_s.items({*})\n", .{trans_ctx.local_s.items});
-                    }
-                    std.debug.print("put load local_s({*}): {any}\n", .{ &trans_ctx.local_s, trans_ctx.local_s });
-                    return .{ {}, trans_ctx.local_s };
+                    const state_parent: *PutStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    const trans_ctx: *TransCtx = &state_parent.trans_ctx;
+                    defer trans_ctx.local_s = null;
+                    return .{ {}, trans_ctx.local_s.? };
                 }
             }.f;
-            const trans_ctx = try ctx_cfg.allocator.create(TransCtx);
-            trans_ctx.local_s = s;
-            if (S == ArrayList(i32)) {
-                std.debug.print("put store local_s.items({*})\n", .{trans_ctx.local_s.items});
-            }
-            std.debug.print("put store local_s({*}): {any}\n", .{ &trans_ctx.local_s, trans_ctx.local_s });
-            return .{
-                .trans_lam = .{
-                    .trans_fn = @constCast(&trans_fn),
-                    .trans_ctx = @ptrCast(trans_ctx),
-                },
-                .trans_info = mkTransCtxInfo(TransCtx, .PutTrans),
-            };
+            var put_state = try ctx_cfg.allocator.create(PutStateType);
+            put_state.state.ref_count = 1;
+            put_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            put_state.state.trans_lam.free_parent = @constCast(&free_parent);
+            put_state.state.trans_lam.state_parent = @ptrCast(put_state);
+            put_state.trans_ctx.local_s = s;
+            return &put_state.state;
         }
     };
 }
@@ -292,15 +314,11 @@ test "get s from (State s a)" {
     const allocator = testing.allocator;
     const DefaultCtx = StateContext(comptime getDefaultCfg(i32, allocator));
     // const StateF = DefaultState.StateCurrying(i32);
-    const state = DefaultCtx.get(i32);
-    defer @constCast(&state).deinit();
-    var res_a, var res_s = try @constCast(&state).runState(42);
+    var state = try DefaultCtx.get(i32);
+    defer _ = state.strongUnref();
+    const res_a, const res_s = try state.runState(42);
     try testing.expectEqual(42, res_a);
     try testing.expectEqual(42, res_s);
-    res_a = try @constCast(&state).evalState(17);
-    res_s = try @constCast(&state).execState(-13);
-    try testing.expectEqual(17, res_a);
-    try testing.expectEqual(-13, res_s);
 }
 
 test "put s to (State s a)" {
@@ -308,12 +326,8 @@ test "put s to (State s a)" {
     const DefaultCtx = StateContext(comptime getDefaultCfg(i32, allocator));
     // const StateF = DefaultState.StateCurrying(i32);
     const state = try DefaultCtx.put(i32, 42);
-    defer @constCast(&state).deinit();
-    var res_a, var res_s = try @constCast(&state).runState(314);
-    try testing.expectEqual({}, res_a);
-    try testing.expectEqual(42, res_s);
-    res_a = try @constCast(&state).evalState(17);
-    res_s = try @constCast(&state).execState(-13);
+    defer _ = state.strongUnref();
+    const res_a, const res_s = try state.runState(314);
     try testing.expectEqual({}, res_a);
     try testing.expectEqual(42, res_s);
 }
@@ -330,11 +344,13 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         const State = Ctx.State;
 
         /// Constructor Type for Functor, Applicative, Monad, ...
-        pub const F = Ctx.StateCurrying(S);
+        pub fn F(comptime A: type) type {
+            return *Ctx.State(S, A);
+        }
 
         /// Get base type of F(A), it is must just is A.
-        pub fn BaseType(comptime StateType: type) type {
-            return StateType.StateA;
+        pub fn BaseType(comptime PState: type) type {
+            return std.meta.Child(PState).StateA;
         }
 
         pub const Error = Allocator.Error || cfg.error_set;
@@ -356,7 +372,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
         ) void {
             _ = free_fn;
-            @constCast(&fa).deinit();
+            _ = fa.strongUnref();
         }
 
         fn TransFnRetType(
@@ -383,17 +399,29 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
                 // a postfix map function, type is fn (A) B
                 map_fn: *const fn (A) B,
                 // a local temporary state value for fa
-                local_state: State(S, A),
+                local_state: *State(S, A),
             };
+
+            const FmapStateType = struct {
+                state: State(S, _B),
+                trans_ctx: TransCtx,
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, _B).TransLam) void {
+                    const state_parent: *FmapStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    ctx_cfg.allocator.destroy(state_parent);
+                }
+            }.freeParent;
 
             const trans_fn = struct {
                 const RetType = TransFnRetType(S, B);
                 fn f(trans_lam: *State(S, _B).TransLam, input_s: S) RetType {
-                    const trans_ctx: *TransCtx = @alignCast(@ptrCast(trans_lam.trans_ctx));
-                    std.debug.print("fmap input_s: {any}\n", .{input_s});
+                    const state_parent: *FmapStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    const trans_ctx: *TransCtx = &state_parent.trans_ctx;
                     const a, const s = try trans_ctx.local_state.runState(input_s);
+                    _ = trans_ctx.local_state.strongUnref();
                     const b = trans_ctx.map_fn(a);
-                    std.debug.print("fmap output_s: {any}\n", .{s});
                     if (has_err) {
                         return .{ try b, s };
                     } else {
@@ -402,16 +430,14 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
                 }
             }.f;
 
-            const trans_ctx = try ctx_cfg.allocator.create(TransCtx);
-            trans_ctx.map_fn = map_fn;
-            trans_ctx.local_state = fa;
-            return .{
-                .trans_lam = .{
-                    .trans_fn = @constCast(&trans_fn),
-                    .trans_ctx = @ptrCast(trans_ctx),
-                },
-                .trans_info = mkTransCtxInfo(TransCtx, .FmapTrans),
-            };
+            var fmap_state = try ctx_cfg.allocator.create(FmapStateType);
+            fmap_state.state.ref_count = 1;
+            fmap_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            fmap_state.state.trans_lam.free_parent = @constCast(&free_parent);
+            fmap_state.state.trans_lam.state_parent = @ptrCast(fmap_state);
+            fmap_state.trans_ctx.map_fn = map_fn;
+            fmap_state.trans_ctx.local_state = fa.strongRef();
+            return &fmap_state.state;
         }
 
         pub fn fmapLam(
@@ -428,17 +454,29 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
                 // a postfix map function, type is fn (A) B
                 map_lam: @TypeOf(map_lam),
                 // a local temporary state value for fa
-                local_state: State(S, A),
+                local_state: *State(S, A),
             };
+
+            const FmapLamStateType = struct {
+                state: State(S, _B),
+                trans_ctx: TransCtx,
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, _B).TransLam) void {
+                    const state_parent: *FmapLamStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    ctx_cfg.allocator.destroy(state_parent);
+                }
+            }.freeParent;
 
             const trans_fn = struct {
                 const RetType = TransFnRetType(S, B);
                 fn f(trans_lam: *State(S, _B).TransLam, input_s: S) RetType {
-                    const trans_ctx: *TransCtx = @alignCast(@ptrCast(trans_lam.trans_ctx));
-                    std.debug.print("fmapLam input_s: {any}\n", .{input_s});
+                    const state_parent: *FmapLamStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    const trans_ctx: *TransCtx = &state_parent.trans_ctx;
                     const a, const s = try trans_ctx.local_state.runState(input_s);
+                    _ = trans_ctx.local_state.strongUnref();
                     const b = trans_ctx.map_lam.call(a);
-                    std.debug.print("fmapLam output_s: {any}\n", .{s});
                     if (has_err) {
                         return .{ try b, s };
                     } else {
@@ -447,16 +485,14 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
                 }
             }.f;
 
-            const trans_ctx = try ctx_cfg.allocator.create(TransCtx);
-            trans_ctx.map_lam = map_lam;
-            trans_ctx.local_state = fa;
-            return .{
-                .trans_lam = .{
-                    .trans_fn = @constCast(&trans_fn),
-                    .trans_ctx = @ptrCast(trans_ctx),
-                },
-                .trans_info = mkTransCtxInfo(TransCtx, .FmapTrans),
-            };
+            var fmaplam_state = try ctx_cfg.allocator.create(FmapLamStateType);
+            fmaplam_state.state.ref_count = 1;
+            fmaplam_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            fmaplam_state.state.trans_lam.free_parent = @constCast(&free_parent);
+            fmaplam_state.state.trans_lam.state_parent = @ptrCast(fmaplam_state);
+            fmaplam_state.trans_ctx.map_lam = map_lam;
+            fmaplam_state.trans_ctx.local_state = fa.strongRef();
+            return &fmaplam_state.state;
         }
 
         pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
@@ -470,23 +506,34 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
                 local_a: _A,
             };
 
+            const PureStateType = struct {
+                state: State(S, _A),
+                trans_ctx: TransCtx,
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, _A).TransLam) void {
+                    const state_parent: *PureStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    ctx_cfg.allocator.destroy(state_parent);
+                }
+            }.freeParent;
+
             const trans_fn = struct {
                 const RetType = TransFnRetType(S, A);
                 fn f(trans_lam: *State(S, _A).TransLam, input_s: S) RetType {
-                    const trans_ctx: *TransCtx = @alignCast(@ptrCast(trans_lam.trans_ctx));
+                    const state_parent: *PureStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    const trans_ctx: *TransCtx = &state_parent.trans_ctx;
                     return .{ trans_ctx.local_a, input_s };
                 }
             }.f;
 
-            const trans_ctx = try ctx_cfg.allocator.create(TransCtx);
-            trans_ctx.local_a = _a;
-            return .{
-                .trans_lam = .{
-                    .trans_fn = @constCast(&trans_fn),
-                    .trans_ctx = @ptrCast(trans_ctx),
-                },
-                .trans_info = mkTransCtxInfo(TransCtx, .PureTrans),
-            };
+            var pure_state = try ctx_cfg.allocator.create(PureStateType);
+            pure_state.state.ref_count = 1;
+            pure_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            pure_state.state.trans_lam.free_parent = @constCast(&free_parent);
+            pure_state.state.trans_lam.state_parent = @ptrCast(pure_state);
+            pure_state.trans_ctx.local_a = _a;
+            return &pure_state.state;
         }
 
         pub fn fapply(
@@ -501,17 +548,32 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             const TransCtx = struct {
                 // a local temporary state function with type: fn (A) B
-                local_state_f: State(S, *const fn (A) B),
+                local_state_f: *State(S, *const fn (A) B),
                 // a local temporary state value for fa
-                local_state: State(S, A),
+                local_state: *State(S, A),
             };
+
+            const FapplyStateType = struct {
+                state: State(S, _B),
+                trans_ctx: TransCtx,
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, _B).TransLam) void {
+                    const state_parent: *FapplyStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    ctx_cfg.allocator.destroy(state_parent);
+                }
+            }.freeParent;
 
             const trans_fn = struct {
                 const RetType = TransFnRetType(S, B);
                 fn f(trans_lam: *State(S, _B).TransLam, input_s: S) RetType {
-                    const trans_ctx: *TransCtx = @alignCast(@ptrCast(trans_lam.trans_ctx));
+                    const state_parent: *FapplyStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    const trans_ctx: *TransCtx = &state_parent.trans_ctx;
                     const af, const s1 = try trans_ctx.local_state_f.runState(input_s);
+                    _ = trans_ctx.local_state_f.strongUnref();
                     const a, const s2 = try trans_ctx.local_state.runState(s1);
+                    _ = trans_ctx.local_state.strongUnref();
                     const b = af(a);
                     if (has_err) {
                         return .{ try b, s2 };
@@ -521,16 +583,14 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
                 }
             }.f;
 
-            const trans_ctx = try ctx_cfg.allocator.create(TransCtx);
-            trans_ctx.local_state_f = ff;
-            trans_ctx.local_state = fa;
-            return .{
-                .trans_lam = .{
-                    .trans_fn = @constCast(&trans_fn),
-                    .trans_ctx = @ptrCast(trans_ctx),
-                },
-                .trans_info = mkTransCtxInfo(TransCtx, .FapplyTrans),
-            };
+            var fapply_state = try ctx_cfg.allocator.create(FapplyStateType);
+            fapply_state.state.ref_count = 1;
+            fapply_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            fapply_state.state.trans_lam.free_parent = @constCast(&free_parent);
+            fapply_state.state.trans_lam.state_parent = @ptrCast(fapply_state);
+            fapply_state.trans_ctx.local_state_f = ff.strongRef();
+            fapply_state.trans_ctx.local_state = fa.strongRef();
+            return &fapply_state.state;
         }
 
         pub fn fapplyLam(
@@ -545,17 +605,32 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             const TransCtx = struct {
                 // a local temporary state function with type: fn (A) B
-                local_state_lam: @TypeOf(flam),
+                local_state_flam: @TypeOf(flam),
                 // a local temporary state value for fa
-                local_state: State(S, A),
+                local_state: *State(S, A),
             };
+
+            const FapplyLamStateType = struct {
+                state: State(S, _B),
+                trans_ctx: TransCtx,
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, _B).TransLam) void {
+                    const state_parent: *FapplyLamStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    ctx_cfg.allocator.destroy(state_parent);
+                }
+            }.freeParent;
 
             const trans_fn = struct {
                 const RetType = TransFnRetType(S, B);
                 fn f(trans_lam: *State(S, _B).TransLam, input_s: S) RetType {
-                    const trans_ctx: *TransCtx = @alignCast(@ptrCast(trans_lam.trans_ctx));
-                    const alam, const s1 = try trans_ctx.local_state_lam.runState(input_s);
+                    const state_parent: *FapplyLamStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    const trans_ctx: *TransCtx = &state_parent.trans_ctx;
+                    const alam, const s1 = try trans_ctx.local_state_flam.runState(input_s);
+                    _ = trans_ctx.local_state_flam.strongUnref();
                     const a, const s2 = try trans_ctx.local_state.runState(s1);
+                    _ = trans_ctx.local_state.strongUnref();
                     const b = @constCast(&alam).call(a);
                     if (has_err) {
                         return .{ try b, s2 };
@@ -565,16 +640,14 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
                 }
             }.f;
 
-            const trans_ctx = try ctx_cfg.allocator.create(TransCtx);
-            trans_ctx.local_state_lam = flam;
-            trans_ctx.local_state = fa;
-            return .{
-                .trans_lam = .{
-                    .trans_fn = @constCast(&trans_fn),
-                    .trans_ctx = @ptrCast(trans_ctx),
-                },
-                .trans_info = mkTransCtxInfo(TransCtx, .FapplyTrans),
-            };
+            var fapplylam_state = try ctx_cfg.allocator.create(FapplyLamStateType);
+            fapplylam_state.state.ref_count = 1;
+            fapplylam_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            fapplylam_state.state.trans_lam.free_parent = @constCast(&free_parent);
+            fapplylam_state.state.trans_lam.state_parent = @ptrCast(fapplylam_state);
+            fapplylam_state.trans_ctx.local_state_flam = flam.strongRef();
+            fapplylam_state.trans_ctx.local_state = fa.strongRef();
+            return &fapplylam_state.state;
         }
 
         pub fn bind(
@@ -585,43 +658,52 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             ma: F(A),
             k: *const fn (*Self, A) MbType(B),
         ) MbType(B) {
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = has_err;
             const TransCtx = struct {
                 // a pointer of state monad instance
                 monad_impl: *Self,
                 // a local temporary state value for ma
-                local_state: State(S, A),
+                local_state: *State(S, A),
                 // a local temporary continuation function of bind function
                 local_k: @TypeOf(k),
             };
 
+            const BindStateType = struct {
+                state: State(S, _B),
+                trans_ctx: TransCtx,
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, B).TransLam) void {
+                    const state_parent: *BindStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    ctx_cfg.allocator.destroy(state_parent);
+                }
+            }.freeParent;
+
             const trans_fn = struct {
                 const RetType = TransFnRetType(S, B);
                 fn f(trans_lam: *State(S, B).TransLam, input_s: S) RetType {
-                    const trans_ctx: *TransCtx = @alignCast(@ptrCast(trans_lam.trans_ctx));
-                    std.debug.print("bind input_s: {any}\n", .{input_s});
+                    const state_parent: *BindStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    const trans_ctx: *TransCtx = &state_parent.trans_ctx;
                     const a, const s = try trans_ctx.local_state.runState(input_s);
-                    std.debug.print("bind run ma output_s: {any}\n", .{s});
+                    _ = trans_ctx.local_state.strongUnref();
                     const state = try trans_ctx.local_k(trans_ctx.monad_impl, a);
-                    defer @constCast(&state).deinit();
-                    var out_a, var out_s = try @constCast(&state).runState(s);
-                    _ = &out_a;
-                    _ = &out_s;
-                    std.debug.print("bind run (k a) output_s: {any}\n", .{out_s});
+                    const out_a, const out_s = try state.runState(s);
+                    _ = state.strongUnref();
                     return .{ out_a, out_s };
                 }
             }.f;
 
-            const trans_ctx = try ctx_cfg.allocator.create(TransCtx);
-            trans_ctx.monad_impl = self;
-            trans_ctx.local_state = ma;
-            trans_ctx.local_k = k;
-            return .{
-                .trans_lam = .{
-                    .trans_fn = @constCast(&trans_fn),
-                    .trans_ctx = @ptrCast(trans_ctx),
-                },
-                .trans_info = mkTransCtxInfo(TransCtx, .BindTrans),
-            };
+            var bind_state = try ctx_cfg.allocator.create(BindStateType);
+            bind_state.state.ref_count = 1;
+            bind_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            bind_state.state.trans_lam.free_parent = @constCast(&free_parent);
+            bind_state.state.trans_lam.state_parent = @ptrCast(bind_state);
+            bind_state.trans_ctx.monad_impl = self;
+            bind_state.trans_ctx.local_state = ma.strongRef();
+            bind_state.trans_ctx.local_k = k;
+            return &bind_state.state;
         }
     };
 }
@@ -645,26 +727,21 @@ test "State(s, a) Functor fmap" {
 
     // test fmap
     // const StateF = DefaultState.StateCurrying(u32);
-    const state_a = DefaultCtx.get(u32);
-    defer @constCast(&state_a).deinit();
+    var state_a = try DefaultCtx.get(u32);
+    defer _ = state_a.strongUnref();
     var state_b = try state_functor.fmap(.NewValMap, add_pi_f64, state_a);
-    defer @constCast(&state_b).deinit();
-    var res_a, var res_s = try @constCast(&state_b).runState(42);
+    var res_a, var res_s = try state_b.runState(42);
+    defer _ = state_b.strongUnref();
     try testing.expectEqual(45.14, res_a);
     try testing.expectEqual(42, res_s);
-    res_a = try @constCast(&state_b).evalState(17);
-    res_s = try @constCast(&state_b).execState(17);
-    try testing.expectEqual(20.14, res_a);
-    try testing.expectEqual(17, res_s);
 
     // test fmapLam
     const add_x_f64_lam = Add_x_f64_Lam{ ._x = 3.14 };
-    const state_u32 = try state_functor.fmap(.NewValMap, add10, state_a);
-    defer @constCast(&state_u32).deinit();
-    state_b.deinit();
-    state_b = try state_functor.fmapLam(.NewValMap, add_x_f64_lam, state_u32);
-    defer @constCast(&state_b).deinit();
-    res_a, res_s = try @constCast(&state_b).runState(42);
+    var state_u32 = try state_functor.fmap(.NewValMap, add10, state_a);
+    defer _ = state_u32.strongUnref();
+    var state_c = try state_functor.fmapLam(.NewValMap, add_x_f64_lam, state_u32);
+    defer _ = state_c.strongUnref();
+    res_a, res_s = try state_c.runState(42);
     try testing.expectEqual(55.14, res_a);
     try testing.expectEqual(42, res_s);
 
@@ -675,9 +752,9 @@ test "State(s, a) Functor fmap" {
     const ArrayStFunctor = Functor(StateMonadImpl(array_cfg, ArrayListU32));
     var array_st_functor = ArrayStFunctor.init(.{ .allocator = allocator });
 
-    const array_st_a = ArrayStCtx.get(ArrayListU32);
-    defer @constCast(&array_st_a).deinit();
-    const array_st_b = try array_st_functor.fmapLam(.NewValMap, struct {
+    var array_st_a = try ArrayStCtx.get(ArrayListU32);
+    defer _ = array_st_a.strongUnref();
+    var array_st_b = try array_st_functor.fmapLam(.NewValMap, struct {
         allocator: Allocator,
         const Self = @This();
         pub fn call(self: *Self, a: ArrayListU32) Allocator.Error!ArrayListU32 {
@@ -689,11 +766,11 @@ test "State(s, a) Functor fmap" {
             return array_b;
         }
     }{ .allocator = allocator }, array_st_a);
-    defer @constCast(&array_st_b).deinit();
+    defer _ = array_st_b.strongUnref();
 
     var array_s = ArrayListU32.init(allocator);
     try array_s.appendSlice(&[_]u32{ 2, 5, 7, 8 });
-    const res1_a, const res1_s = try @constCast(&array_st_b).runState(array_s);
+    const res1_a, const res1_s = try array_st_b.runState(array_s);
     defer res1_a.deinit();
     try testing.expectEqualSlices(u32, &[_]u32{ 2, 6, 9, 11 }, res1_a.items);
     try testing.expectEqualSlices(u32, &[_]u32{ 2, 5, 7, 8 }, res1_s.items);
@@ -708,8 +785,8 @@ test "State(s, a) Functor fmap" {
             return @as(f64, @floatFromInt(res_u32)) + 3.14;
         }
     }.f, array_st_b);
-    defer @constCast(&array_st_c).deinit();
-    const res2_a, const res2_s = try @constCast(&array_st_c).runState(array_s);
+    defer _ = array_st_c.strongUnref();
+    const res2_a, const res2_s = try array_st_c.runState(array_s);
     defer res2_s.deinit();
     try testing.expectEqual(31.14, res2_a);
     try testing.expectEqualSlices(u32, &[_]u32{ 2, 5, 7, 8 }, res2_s.items);
@@ -724,28 +801,28 @@ test "State(s, a) Applicative pure and fapply" {
     const StateApplicative = Applicative(StateMonadImpl(default_cfg, u32));
     var state_applicative = StateApplicative.init(.{ .allocator = allocator });
 
-    const state_a = try state_applicative.pure(@as(u32, 13));
-    defer @constCast(&state_a).deinit();
-    const pured_a, const pured_s = try @constCast(&state_a).runState(42);
+    var state_a = try state_applicative.pure(@as(u32, 13));
+    defer _ = state_a.strongUnref();
+    const pured_a, const pured_s = try state_a.runState(42);
     try testing.expectEqual(13, pured_a);
     try testing.expectEqual(42, pured_s);
 
     // the comptime function must be a const function pointer
     const add_pi_f64_p: *const @TypeOf(add_pi_f64) = add_pi_f64;
-    const state_f = try state_applicative.pure(add_pi_f64_p);
-    defer @constCast(&state_f).deinit();
+    var state_f = try state_applicative.pure(add_pi_f64_p);
+    defer _ = state_f.strongUnref();
     var state_b = try state_applicative.fapply(u32, f64, state_f, state_a);
-    var res1_a, var res1_s = try @constCast(&state_b).runState(42);
+    defer _ = state_b.strongUnref();
+    var res1_a, var res1_s = try state_b.runState(42);
     try testing.expectEqual(16.14, res1_a);
     try testing.expectEqual(42, res1_s);
 
     const add_x_f64_lam = Add_x_f64_Lam{ ._x = 3.14 };
-    const state_lam = try state_applicative.pure(add_x_f64_lam);
-    defer @constCast(&state_lam).deinit();
-    state_b.deinit();
-    state_b = try state_applicative.fapplyLam(u32, f64, state_lam, state_a);
-    defer @constCast(&state_b).deinit();
-    res1_a, res1_s = try @constCast(&state_b).runState(42);
+    var state_lam = try state_applicative.pure(add_x_f64_lam);
+    defer _ = state_lam.strongUnref();
+    var state_c = try state_applicative.fapplyLam(u32, f64, state_lam, state_a);
+    defer _ = state_c.strongUnref();
+    res1_a, res1_s = try state_c.runState(42);
     try testing.expectEqual(16.14, res1_a);
     try testing.expectEqual(42, res1_s);
 }
@@ -758,22 +835,22 @@ test "State(s, a) Monad bind" {
     const StateMonad = Monad(StateMonadImpl(default_cfg, u32));
     var state_monad = StateMonad.init(.{ .allocator = allocator });
 
-    const state_a = try state_monad.pure(@as(u32, 13));
-    defer @constCast(&state_a).deinit();
-    const pured_a, const pured_s = try @constCast(&state_a).runState(42);
+    var state_a = try state_monad.pure(@as(u32, 13));
+    defer _ = state_a.strongUnref();
+    const pured_a, const pured_s = try state_a.runState(42);
     try testing.expectEqual(13, pured_a);
     try testing.expectEqual(42, pured_s);
 
-    const state_binded = try state_monad.bind(u32, f64, state_a, struct {
+    var state_binded = try state_monad.bind(u32, f64, state_a, struct {
         fn f(inst: *@TypeOf(state_monad), a: u32) StateMonad.MbType(f64) {
-            const state_b = DefaultCtx.get(u32);
-            defer @constCast(&state_b).deinit();
+            var state_b = try DefaultCtx.get(u32);
+            defer _ = state_b.strongUnref();
             const add_x_f64_lam = Add_x_f64_Lam{ ._x = @floatFromInt(a) };
             return inst.fmapLam(.NewValMap, add_x_f64_lam, state_b);
         }
     }.f);
-    defer @constCast(&state_binded).deinit();
-    const res1_a, const res1_s = try @constCast(&state_binded).runState(42);
+    defer _ = state_binded.strongUnref();
+    const res1_a, const res1_s = try state_binded.runState(42);
     try testing.expectEqual(55.0, res1_a);
     try testing.expectEqual(42, res1_s);
 }
@@ -798,14 +875,16 @@ test "runDo Arraylist" {
         param1: i32,
 
         // intermediate variable
-        as: ArrayList(i32) = undefined,
+        as: ?ArrayList(i32) = null,
         b: u32 = undefined,
 
         const Ctx = @This();
         pub const is_pure = false;
 
         fn deinit(ctx: Ctx) void {
-            ctx.as.deinit();
+            if (ctx.as) |as| {
+                as.deinit();
+            }
         }
 
         // the do context struct must has startDo function
@@ -825,60 +904,56 @@ test "runDo Arraylist" {
                 }
             }.f, as);
             _ = &array_s;
-            std.debug.print("do1 array_s: {any}\n", .{array_s});
-            const state_a = try ArrayStCtx.put(ArrayList(i32), array_s);
-            // defer @constCast(&state_a).deinit();
+            var state_a = try ArrayStCtx.put(ArrayList(i32), array_s);
+            defer _ = state_a.strongUnref();
             var state_c = impl.fmap(.NewValMap, struct {
                 fn f(in: void) u32 {
                     _ = in;
                     return 37;
                 }
             }.f, state_a);
-            std.debug.print("do1 state_c: {any}\n", .{state_c});
             _ = &state_c;
             return state_c;
         }
 
         // the name of other do step function must be starts with "do" string
-        // pub fn do2(impl: *ArrayStImpl, b: u32) ArrayStImpl.MbType(void) {
-        //     const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
-        //     ctx.b = b;
+        pub fn do2(impl: *ArrayStImpl, b: u32) ArrayStImpl.MbType(f64) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            ctx.b = b;
 
-        //     // const array = try ctx.arrayl_monad.fmapLam(.InplaceMap, struct {
-        //     //     local_b: u32,
-        //     //     const Self = @This();
-        //     //     pub fn call(self: *const Self, in: i32) i32 {
-        //     //         return in + @as(i32, @intCast(self.local_b));
-        //     //     }
-        //     // }{ .local_b = b }, ctx.as);
-        //     std.debug.print("runDo do2 ctx.as: {any}\n", .{ctx.as});
-        //     return ArrayStCtx.put(ArrayList(i32), ctx.as);
-        //     // const state_a = try ArrayStCtx.put(ArrayList(i32), array);
-        //     // defer @constCast(&state_a).deinit();
-        //     // return impl.fmap(.NewValMap, struct {
-        //     //     fn f(in: void) f64 {
-        //     //         _ = in;
-        //     //         return 2.71828;
-        //     //     }
-        //     // }.f, state_a);
-        // }
+            const array = try ctx.arrayl_monad.fmapLam(.InplaceMap, struct {
+                local_b: u32,
+                const Self = @This();
+                pub fn call(self: *const Self, in: i32) i32 {
+                    return in + @as(i32, @intCast(self.local_b));
+                }
+            }{ .local_b = b }, ctx.as.?);
+            // The InplaceMap kind of fmap will consume the ctx.as
+            ctx.as = null;
+            return ArrayStCtx.mkConstantState(ArrayList(i32), f64, array, 2.71828);
+            // const state_a = try ArrayStCtx.put(ArrayList(i32), array);
+            // defer _ = state_a.strongUnref();
+            // return impl.fmap(.NewValMap, struct {
+            //     fn f(in: void) f64 {
+            //         _ = in;
+            //         return 2.71828;
+            //     }
+            // }.f, state_a);
+        }
     }{ .monad_impl = state_monad, .arrayl_monad = arraylist_m, .param1 = input1 };
     defer do_ctx.deinit();
-    const out = try runDo(&do_ctx);
-    defer @constCast(&out).deinit();
+    var out = try runDo(&do_ctx);
+    defer _ = out.strongUnref();
 
     const as = &([_]i32{ 17, 42 } ** 2);
     var array = ArrayList(i32).init(allocator);
     try array.appendSlice(as);
-    const res_a, const res_s = try @constCast(&out).runState(array);
+    const res_a, const res_s = try out.runState(array);
     defer res_s.deinit();
-    // try testing.expectEqual(2.71828, res_a);
-    try testing.expectEqual(37, res_a);
-    // try testing.expectEqual({}, res_a);
-    std.debug.print("test runDo res_s: {any}\n", .{res_s});
+    try testing.expectEqual(2.71828, res_a);
     try testing.expectEqualSlices(
         i32,
-        &[_]i32{ 19, 44, 19, 44 },
+        &[_]i32{ 54, 79, 54, 79 },
         res_s.items,
     );
 }

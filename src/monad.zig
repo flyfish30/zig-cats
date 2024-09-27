@@ -68,12 +68,7 @@ pub fn Monad(comptime MonadImpl: type) type {
     };
 }
 
-fn GetPointerChild(comptime P: type) type {
-    if (@typeInfo(P) != .Pointer) {
-        @compileError("The type P must be a Pointer type!");
-    }
-    return std.meta.Child(P);
-}
+const GetPointerChild = base.GetPointerChild;
 
 /// The do syntax for monad action, user pass a struct that include input parameters
 /// and step functions of monad. The function finally return a monad value.
@@ -216,17 +211,13 @@ fn mkDoContFn(
                     @field(DoCtx, fn_name),
                     .{ @constCast(impl), a },
                 )
-            else blk_f: {
+            else
                 // impure monad
-                // const ctx: *DoCtx = @alignCast(@fieldParentPtr("monad_impl", impl));
-                // std.debug.print("call {s} ctx: {any}\n", .{ fn_name, ctx.* });
-                // defer std.debug.print("after call {s} ctx: {any}\n", .{ fn_name, ctx.* });
-                break :blk_f try @call(
+                try @call(
                     .auto,
                     @field(DoCtx, fn_name),
                     .{ @constCast(impl), a },
                 );
-            };
 
             if (k) |_k| {
                 // free intermediate monad for avoid memory leak
