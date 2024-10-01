@@ -1,4 +1,5 @@
-//! Definition State struct, these is a instance of Functor|Applicative|Monad typeclass.
+//! Definition of State struct, these is a instance of Functor|Applicative|Monad
+//! typeclass.
 
 const std = @import("std");
 const base = @import("base.zig");
@@ -67,7 +68,7 @@ pub fn StateContext(comptime cfg: anytype) type {
         pub const ctx_cfg = cfg;
         const Error = ctx_cfg.error_set;
 
-        // the currying function of State function
+        // the currying form of State function
         pub fn StateCurrying(comptime S: type) TCtor {
             return struct {
                 fn StateF(comptime A: type) type {
@@ -109,6 +110,10 @@ pub fn StateContext(comptime cfg: anytype) type {
                             return true;
                         }
 
+                        /// This function run the function trans_fn in State(S, A) state,
+                        /// and return result of trans_fn.
+                        /// The parameter s is initial value of S for runState, this
+                        /// functin should consume parameter s.
                         pub inline fn runState(state_self: *Self, s: S) Error!struct { A, S } {
                             const trans_lam = state_self.trans_lam;
                             return @constCast(&trans_lam).call(s);
@@ -118,6 +123,7 @@ pub fn StateContext(comptime cfg: anytype) type {
             }.StateF;
         }
 
+        /// The State(S, A) is just a wrapper of lambda function with type S -> (A, S).
         pub fn State(comptime S: type, comptime A: type) type {
             return StateCurrying(S)(A);
         }
@@ -930,15 +936,15 @@ test "runDo Arraylist" {
             }{ .local_b = b }, ctx.as.?);
             // The InplaceMap kind of fmap will consume the ctx.as
             ctx.as = null;
-            return ArrayStCtx.mkConstantState(ArrayList(i32), f64, array, 2.71828);
-            // const state_a = try ArrayStCtx.put(ArrayList(i32), array);
-            // defer _ = state_a.strongUnref();
-            // return impl.fmap(.NewValMap, struct {
-            //     fn f(in: void) f64 {
-            //         _ = in;
-            //         return 2.71828;
-            //     }
-            // }.f, state_a);
+            // return ArrayStCtx.mkConstantState(ArrayList(i32), f64, array, 2.71828);
+            const state_a = try ArrayStCtx.put(ArrayList(i32), array);
+            defer _ = state_a.strongUnref();
+            return impl.fmap(.NewValMap, struct {
+                fn f(in: void) f64 {
+                    _ = in;
+                    return 2.71828;
+                }
+            }.f, state_a);
         }
     }{ .monad_impl = state_monad, .arrayl_monad = arraylist_m, .param1 = input1 };
     defer do_ctx.deinit();

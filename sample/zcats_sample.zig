@@ -1,5 +1,6 @@
 const std = @import("std");
 const zcats = @import("zcats");
+const calc = @import("calc_sample.zig");
 
 const Allocator = std.mem.Allocator;
 const Functor = zcats.Functor;
@@ -25,6 +26,7 @@ pub fn runZCatsSamples() !void {
     try composeSample();
     try productSample();
     try coproductSample();
+    try calc.calcSample();
 }
 
 fn maybeSample() !void {

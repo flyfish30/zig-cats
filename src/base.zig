@@ -2,7 +2,7 @@
 const std = @import("std");
 
 /// A single-argument type function for type constructor
-pub const TCtor = fn (comptime type) type;
+pub const TCtor = *const fn (comptime type) type;
 
 pub fn GetPointerChild(comptime P: type) type {
     if (@typeInfo(P) != .Pointer) {
