@@ -133,7 +133,7 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
             _ = has_err_b;
             const B = MonadImpl.BaseType(_MB);
             const curr_k: ?*const fn (*MonadImpl, B) MR = @ptrCast(k);
-            k = comptime @ptrCast(mkDoContFn(DoCtx, is_pure, A, MB, decl.name, curr_k));
+            k = comptime @ptrCast(mkDoContFn(DoCtx, A, MB, decl.name, curr_k));
         }
     }
 
@@ -187,7 +187,6 @@ fn MonadImplType(comptime DoCtx: type) type {
 
 fn mkDoContFn(
     comptime DoCtx: type,
-    comptime is_pure: bool,
     comptime A: type,
     comptime MB: type,
     comptime fn_name: [:0]const u8,
@@ -198,6 +197,7 @@ fn mkDoContFn(
     const has_err_r, const _MR = comptime isErrorUnionOrVal(MR);
     _ = has_err_r;
     const R = MonadImpl.BaseType(_MR);
+    const is_pure = DoCtx.is_pure;
     const do_cont = struct {
         fn doCont(impl: *MonadImpl, a: A) MR {
             const has_err1, const _MB = comptime isErrorUnionOrVal(MB);

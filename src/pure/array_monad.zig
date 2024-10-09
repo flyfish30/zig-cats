@@ -99,7 +99,7 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             return fmapGeneric(K, .LambdaMap, map_lam, fa);
         }
 
-        pub fn fmapGeneric(
+        fn fmapGeneric(
             comptime K: MapFnKind,
             comptime M: FMapMode,
             fn_or_lam: anytype,

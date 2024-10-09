@@ -170,7 +170,7 @@ pub fn NatTrans(
 
         const FTransType = @TypeOf(struct {
             fn transFn(
-                instance: *InstanceImpl,
+                instance: InstanceImpl,
                 comptime A: type,
                 fa: F(A),
             ) Error!G(A) {
@@ -181,7 +181,9 @@ pub fn NatTrans(
 
         pub fn init(instance: InstanceImpl) InstanceImpl {
             if (@TypeOf(InstanceImpl.trans) != FTransType) {
-                @compileError("Incorrect type of fmap for NatTrans instance " ++ @typeName(InstanceImpl));
+                @compileLog("Impl trans type: " ++ @typeName(@TypeOf(InstanceImpl.trans)));
+                @compileLog("FTransType: " ++ @typeName(FTransType));
+                @compileError("Incorrect type of trans for NatTrans instance: " ++ @typeName(InstanceImpl));
             }
             return instance;
         }
@@ -193,9 +195,9 @@ pub const MaybeToArrayListNatImpl = struct {
 
     const Self = @This();
 
-    const F = Maybe;
-    const G = ArrayList;
-    const Error = Functor(ArrayListFunctorImpl).Error;
+    pub const F = Maybe;
+    pub const G = ArrayList;
+    pub const Error = Functor(ArrayListFunctorImpl).Error;
 
     pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
         if (fa) |a| {
@@ -212,9 +214,9 @@ pub const MaybeToArrayListNatImpl = struct {
 pub const ArrayListToMaybeNatImpl = struct {
     const Self = @This();
 
-    const F = ArrayList;
-    const G = Maybe;
-    const Error = Functor(MaybeFunctorImpl).Error;
+    pub const F = ArrayList;
+    pub const G = Maybe;
+    pub const Error = Functor(MaybeFunctorImpl).Error;
 
     pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
         _ = self;

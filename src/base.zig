@@ -1,5 +1,8 @@
 //! All base types and functions for zig-cats
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+// pub usingnamespace @import("base_types.zig");
 
 /// A single-argument type function for type constructor
 pub const TCtor = *const fn (comptime type) type;
@@ -140,6 +143,16 @@ pub fn castInplaceValue(comptime T: type, val: anytype) T {
     }
 }
 
+pub fn defaultVal(comptime T: type) T {
+    const info_a = @typeInfo(T);
+    if (info_a == .Fn) {
+        return getDefaultFn(T);
+    } else if (info_a == .Pointer and @typeInfo(std.meta.Child(T)) == .Fn) {
+        return getDefaultFn(std.meta.Child(T));
+    }
+    return std.mem.zeroes(T);
+}
+
 pub fn getDefaultFn(comptime Fn: type) fn (MapFnInType(Fn)) MapFnRetType(Fn) {
     return struct {
         const A = MapFnInType(Fn);
@@ -180,4 +193,73 @@ pub fn getFreeNothing(comptime T: type) FreeTFn(T) {
 pub fn freeNothing(a: anytype) void {
     _ = a;
     return;
+}
+
+/// Clone a constructed data or referance a pointer
+pub fn copyOrCloneOrRef(a: anytype) !@TypeOf(a) {
+    const T = @TypeOf(a);
+    const info = @typeInfo(T);
+    switch (info) {
+        .Struct, .Enum, .Union, .Opaque => {
+            if (@hasDecl(T, "clone")) {
+                return a.clone();
+            }
+        },
+        .Pointer => {
+            const Child = info.Pointer.child;
+            const c_info = @typeInfo(Child);
+            if (info.Pointer.size != .One) {
+                @compileError("deinitOrUnref only for pointer that has only one element!");
+            }
+            switch (c_info) {
+                .Struct, .Enum, .Union, .Opaque => {
+                    if (@hasDecl(T, "strongRef")) {
+                        return a.strongRef();
+                    }
+                },
+                else => {},
+            }
+        },
+        else => {},
+    }
+
+    return a;
+}
+
+/// get a normal deinit or unreference function for free some memory
+pub fn getDeinitOrUnref(comptime T: type) FreeTFn(T) {
+    return struct {
+        fn freeT(a: T) void {
+            deinitOrUnref(a);
+        }
+    }.freeT;
+}
+
+/// Deinit a constructed data or unreferance a pointer
+pub fn deinitOrUnref(a: anytype) void {
+    const T = @TypeOf(a);
+    const info = @typeInfo(T);
+    switch (info) {
+        .Struct, .Enum, .Union, .Opaque => {
+            if (@hasDecl(T, "deinit")) {
+                a.deinit();
+            }
+        },
+        .Pointer => {
+            const Child = info.Pointer.child;
+            const c_info = @typeInfo(Child);
+            if (info.Pointer.size != .One) {
+                @compileError("deinitOrUnref only for pointer that has only one element!");
+            }
+            switch (c_info) {
+                .Struct, .Enum, .Union, .Opaque => {
+                    if (@hasDecl(T, "strongUnref")) {
+                        _ = a.strongUnref();
+                    }
+                },
+                else => {},
+            }
+        },
+        else => {},
+    }
 }

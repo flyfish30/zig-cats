@@ -38,31 +38,6 @@ const ApplicativeFxTypes = applicative.ApplicativeFxTypes;
 const MonadFxTypes = monad.MonadFxTypes;
 const runDo = monad.runDo;
 
-const TransCtxKind = enum(u8) {
-    NormalTrans,
-    ConstantTrans,
-    PutTrans,
-    FmapTrans,
-    PureTrans,
-    FapplyTrans,
-    BindTrans,
-};
-
-const TransCtxInfo = struct {
-    ctx_size: CtxSizeType,
-    ctx_kind: TransCtxKind,
-    ctx_align: CtxAlignType,
-
-    const CtxSizeType = u16;
-    const CtxAlignType = u8;
-};
-
-fn mkTransCtxInfo(comptime Ctx: type, comptime K: TransCtxKind) TransCtxInfo {
-    comptime assert(@sizeOf(Ctx) < std.math.maxInt(TransCtxInfo.CtxSizeType));
-    comptime assert(@alignOf(Ctx) < std.math.maxInt(TransCtxInfo.CtxAlignType));
-    return .{ .ctx_size = @sizeOf(Ctx), .ctx_kind = K, .ctx_align = @alignOf(Ctx) };
-}
-
 pub fn StateContext(comptime cfg: anytype) type {
     return struct {
         pub const ctx_cfg = cfg;
@@ -664,8 +639,6 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             ma: F(A),
             k: *const fn (*Self, A) MbType(B),
         ) MbType(B) {
-            const has_err, const _B = comptime isErrorUnionOrVal(B);
-            _ = has_err;
             const TransCtx = struct {
                 // a pointer of state monad instance
                 monad_impl: *Self,
@@ -676,7 +649,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             };
 
             const BindStateType = struct {
-                state: State(S, _B),
+                state: State(S, B),
                 trans_ctx: TransCtx,
             };
 
@@ -962,4 +935,361 @@ test "runDo Arraylist" {
         &[_]i32{ 54, 79, 54, 79 },
         res_s.items,
     );
+}
+
+pub fn MWriter(comptime W: type) TCtor {
+    return struct {
+        fn MWriterF(comptime A: type) type {
+            return struct {
+                a: A,
+                w: W,
+
+                const Self = @This();
+                const BaseType = A;
+
+                pub fn deinit(self: Self) void {
+                    base.deinitOrUnref(self.w);
+                }
+            };
+        }
+    }.MWriterF;
+}
+
+pub fn tell(w: anytype) MWriter(@TypeOf(w))(void) {
+    return .{ .a = {}, .w = w };
+}
+
+pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
+    return struct {
+        monoid_impl: MonoidImpl,
+
+        const Self = @This();
+
+        /// Constructor Type for Functor, Applicative, Monad, ...
+        pub const F = MWriter(W);
+
+        /// Get base type of FreeMonad(F, A), it is must just is A.
+        pub fn BaseType(comptime WriterWA: type) type {
+            return WriterWA.BaseType;
+        }
+
+        pub const Error = Allocator.Error;
+
+        pub const FxTypes = FunctorFxTypes(F, Error);
+        pub const FaType = FxTypes.FaType;
+        pub const FbType = FxTypes.FbType;
+        pub const FaLamType = FxTypes.FaLamType;
+        pub const FbLamType = FxTypes.FbLamType;
+
+        const AFxTypes = ApplicativeFxTypes(F, Error);
+        pub const APaType = AFxTypes.APaType;
+        pub const AFbType = AFxTypes.AFbType;
+
+        pub const MbType = MonadFxTypes(F, Error).MbType;
+
+        fn FaFnOrLamType(
+            comptime K: MapFnKind,
+            comptime M: FMapMode,
+            comptime FnOrLam: type,
+        ) type {
+            if (M == .NormalMap) {
+                return FaType(K, FnOrLam);
+            } else {
+                return FaLamType(K, FnOrLam);
+            }
+        }
+
+        fn FbFnOrLamType(comptime M: FMapMode, comptime FnOrLam: type) type {
+            if (M == .NormalMap) {
+                return FbType(FnOrLam);
+            } else {
+                return FbLamType(FnOrLam);
+            }
+        }
+
+        pub fn deinitFa(
+            fa: anytype, // FreeMonad(F, A)
+            comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
+        ) void {
+            free_fn(fa.a);
+            fa.deinit();
+        }
+
+        pub fn fmap(
+            self: *Self,
+            comptime K: MapFnKind,
+            map_fn: anytype,
+            fa: FaType(K, @TypeOf(map_fn)),
+        ) FbType(@TypeOf(map_fn)) {
+            _ = self;
+            const B = MapFnRetType(@TypeOf(map_fn));
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+
+            const b = if (comptime isMapRef(K)) map_fn(&(fa.*.a)) else map_fn(fa.a);
+            const _b = if (has_err) try b else b;
+            if (isInplaceMap(K)) {
+                base.deinitOrUnref(fa.a);
+                return .{ .a = _b, .w = fa.w };
+            } else {
+                return .{ .a = _b, .w = try base.copyOrCloneOrRef(fa.w) };
+            }
+        }
+
+        pub fn fmapLam(
+            self: *Self,
+            comptime K: MapFnKind,
+            map_lam: anytype,
+            fa: FaLamType(K, @TypeOf(map_lam)),
+        ) FbLamType(@TypeOf(map_lam)) {
+            _ = self;
+            const B = MapLamRetType(@TypeOf(map_lam));
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+
+            const b = if (comptime isMapRef(K)) map_lam(@constCast(&(fa.*.a))) else map_lam(fa.a);
+            const _b = if (has_err) try b else b;
+            if (isInplaceMap(K)) {
+                base.deinitOrUnref(fa.a);
+                return .{ .a = _b, .w = fa.w };
+            } else {
+                return .{ .a = _b, .w = try base.copyOrCloneOrRef(fa.w) };
+            }
+        }
+
+        pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+            const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
+            _ = _A;
+            const _a = if (has_err) try a else a;
+            return .{ .a = _a, .w = try self.monoid_impl.mempty() };
+        }
+
+        pub fn fapply(
+            self: *Self,
+            comptime A: type,
+            comptime B: type,
+            // applicative function: F (a -> b), fa: F a
+            ff: F(*const fn (A) B),
+            fa: F(A),
+        ) AFbType(B) {
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+            const f = ff.a;
+            const _b = if (has_err) try f(fa.a) else f(fa.a);
+            return .{ .a = _b, .w = try self.monoid_impl.mappend(ff.w, fa.w) };
+        }
+
+        pub fn fapplyLam(
+            self: *Self,
+            comptime A: type,
+            comptime B: type,
+            // applicative function: F (a -> b), fa: F a
+            flam: anytype, // a F(lambda) that present F(*const fn (A) B),
+            fa: F(A),
+        ) AFbType(B) {
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+            const lam = flam.a;
+            const _b = if (has_err) try lam.call(fa.a) else lam.call(fa.a);
+            return .{ .a = _b, .w = try self.monoid_impl.mappend(flam.w, fa.w) };
+        }
+        pub fn bind(
+            self: *Self,
+            comptime A: type,
+            comptime B: type,
+            // monad function: (a -> M b), ma: M a
+            ma: F(A),
+            k: *const fn (*Self, A) MbType(B),
+        ) MbType(B) {
+            const mb = try k(ma.a);
+            return .{ .a = mb.a, .w = try self.monoid_impl.mappend(ma.w, mb.w) };
+        }
+
+        pub fn join(
+            self: *Self,
+            comptime A: type,
+            mma: F(F(A)),
+        ) MbType(A) {
+            return .{ .a = mma.a.a, .w = try self.monoid_impl.mappend(mma.w, mma.a.w) };
+        }
+    };
+}
+
+/// The type is just MWriter(W, Maybe(A))
+pub fn MWriterMaybe(comptime W: type) TCtor {
+    return struct {
+        fn MWriterMaybeF(comptime A: type) type {
+            return struct {
+                a: Maybe(A),
+                w: W,
+
+                const Self = @This();
+                const BaseType = A;
+
+                pub fn deinit(self: Self) void {
+                    base.deinitOrUnref(self.w);
+                }
+            };
+        }
+    }.MWriterMaybeF;
+}
+
+pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
+    return struct {
+        monoid_impl: MonoidImpl,
+
+        const Self = @This();
+
+        /// Constructor Type for Functor, Applicative, Monad, ...
+        pub const F = MWriterMaybe(W);
+
+        /// Get base type of FreeMonad(F, A), it is must just is A.
+        pub fn BaseType(comptime WriterWA: type) type {
+            return WriterWA.BaseType;
+        }
+
+        pub const Error = Allocator.Error;
+
+        pub const FxTypes = FunctorFxTypes(F, Error);
+        pub const FaType = FxTypes.FaType;
+        pub const FbType = FxTypes.FbType;
+        pub const FaLamType = FxTypes.FaLamType;
+        pub const FbLamType = FxTypes.FbLamType;
+
+        const AFxTypes = ApplicativeFxTypes(F, Error);
+        pub const APaType = AFxTypes.APaType;
+        pub const AFbType = AFxTypes.AFbType;
+
+        pub const MbType = MonadFxTypes(F, Error).MbType;
+
+        pub fn deinitFa(
+            fa: anytype, // FreeMonad(F, A)
+            comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
+        ) void {
+            if (fa.a) |_a| {
+                free_fn(_a);
+            }
+            fa.deinit();
+        }
+
+        pub fn fmap(
+            self: *Self,
+            comptime K: MapFnKind,
+            map_fn: anytype,
+            fa: FaType(K, @TypeOf(map_fn)),
+        ) FbType(@TypeOf(map_fn)) {
+            _ = self;
+            const B = MapFnRetType(@TypeOf(map_fn));
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+
+            const _b = if (fa.a != null) blk_t: {
+                const b = if (comptime isMapRef(K)) map_fn(&(fa.*.?.a)) else map_fn(fa.?.a);
+                break :blk_t if (has_err) try b else b;
+            } else null;
+            if (isInplaceMap(K)) {
+                if (fa.a) |_a| {
+                    base.deinitOrUnref(_a);
+                }
+                return .{ .a = _b, .w = fa.w };
+            } else {
+                return .{ .a = _b, .w = try base.copyOrCloneOrRef(fa.w) };
+            }
+        }
+
+        pub fn fmapLam(
+            self: *Self,
+            comptime K: MapFnKind,
+            map_lam: anytype,
+            fa: FaLamType(K, @TypeOf(map_lam)),
+        ) FbLamType(@TypeOf(map_lam)) {
+            _ = self;
+            const B = MapLamRetType(@TypeOf(map_lam));
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+
+            const _b = if (fa.a != null) blk_t: {
+                const b = if (comptime isMapRef(K))
+                    map_lam.call(@constCast(&(fa.*.?.a)))
+                else
+                    map_lam.call(fa.?.a);
+                break :blk_t if (has_err) try b else b;
+            } else null;
+            if (isInplaceMap(K)) {
+                if (fa.a) |_a| {
+                    base.deinitOrUnref(_a);
+                }
+                return .{ .a = _b, .w = fa.w };
+            } else {
+                return .{ .a = _b, .w = try base.copyOrCloneOrRef(fa.w) };
+            }
+        }
+
+        pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+            const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
+            _ = _A;
+            const _a = if (has_err) try a else a;
+            return .{ .a = _a, .w = try self.monoid_impl.mempty() };
+        }
+
+        pub fn fapply(
+            self: *Self,
+            comptime A: type,
+            comptime B: type,
+            // applicative function: F (a -> b), fa: F a
+            ff: F(*const fn (A) B),
+            fa: F(A),
+        ) AFbType(B) {
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+            const f = ff.a;
+            const _b = if (fa.a) |_a| blk_t: {
+                break :blk_t if (has_err) try f(_a) else f(_a);
+            } else null;
+            return .{ .a = _b, .w = try self.monoid_impl.mappend(ff.w, fa.w) };
+        }
+
+        pub fn fapplyLam(
+            self: *Self,
+            comptime A: type,
+            comptime B: type,
+            // applicative function: F (a -> b), fa: F a
+            flam: anytype, // a F(lambda) that present F(*const fn (A) B),
+            fa: F(A),
+        ) AFbType(B) {
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+            const lam = flam.a;
+            const _b = if (fa.a) |_a| blk_t: {
+                break :blk_t if (has_err) try lam.call(_a) else lam.call(_a);
+            } else null;
+            return .{ .a = _b, .w = try self.monoid_impl.mappend(flam.w, fa.w) };
+        }
+        pub fn bind(
+            self: *Self,
+            comptime A: type,
+            comptime B: type,
+            // monad function: (a -> M b), ma: M a
+            ma: F(A),
+            k: *const fn (*Self, A) MbType(B),
+        ) MbType(B) {
+            const mb = if (ma.a) |_a|
+                try k(self, _a)
+            else
+                .{ .a = null, .w = self.monoid_impl.mempty() };
+            return .{ .a = mb.a, .w = try self.monoid_impl.mappend(ma.w, mb.w) };
+        }
+
+        pub fn join(
+            self: *Self,
+            comptime A: type,
+            mma: F(F(A)),
+        ) MbType(A) {
+            if (mma.a) |_ma| {
+                return .{ .a = _ma.a, .w = try self.monoid_impl.mappend(mma.w, _ma.w) };
+            } else {
+                return .{ .a = null, .w = try base.copyOrCloneOrRef(mma.w) };
+            }
+        }
+    };
 }

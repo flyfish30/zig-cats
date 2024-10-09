@@ -227,6 +227,19 @@ pub const ArrayListMonadImpl = struct {
         }
         return mb;
     }
+
+    pub fn join(
+        self: *Self,
+        comptime A: type,
+        mma: F(F(A)),
+    ) MbType(A) {
+        var res_ma = ArrayList(A).init(self.allocator);
+        for (mma.items) |ma| {
+            if (ma.items.len > 0)
+                try res_ma.appendSlice(ma.items);
+        }
+        return res_ma;
+    }
 };
 
 // These functions are defined for unit test
