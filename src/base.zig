@@ -15,17 +15,20 @@ pub fn GetPointerChild(comptime P: type) type {
 }
 
 pub fn MapFnInType(comptime MapFn: type) type {
-    const len = @typeInfo(MapFn).Fn.params.len;
+    const _MapFn = if (@typeInfo(MapFn) == .Pointer) std.meta.Child(MapFn) else MapFn;
+    const info = @typeInfo(_MapFn);
+    const len = info.Fn.params.len;
 
     if (len != 1) {
         @compileError("The map function must has only one parameter!");
     }
 
-    return @typeInfo(MapFn).Fn.params[0].type.?;
+    return info.Fn.params[0].type.?;
 }
 
 pub fn MapFnRetType(comptime MapFn: type) type {
-    const R = @typeInfo(MapFn).Fn.return_type.?;
+    const _MapFn = if (@typeInfo(MapFn) == .Pointer) std.meta.Child(MapFn) else MapFn;
+    const R = @typeInfo(_MapFn).Fn.return_type.?;
 
     if (R == noreturn) {
         @compileError("The return type of map function must not be noreturn!");

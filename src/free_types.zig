@@ -102,8 +102,8 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                     if (self == .pure_m) {
                         var flist = try ArrayList(ValCtor).initCapacity(allocator, DEFAULT_LEN);
                         flist.appendAssumeCapacity(f);
-                        var new_pure_m = try allocator.create(Self);
-                        new_pure_m.pure_m = self.pure_m;
+                        const new_pure_m = try allocator.create(Self);
+                        new_pure_m.* = .{ .pure_m = self.pure_m };
                         return .{ .free_m = .{ new_pure_m, flist } };
                     } else {
                         var flist = self.free_m[1];
@@ -270,8 +270,8 @@ pub fn GetValCtors(
 /// All value constructors for Maybe Functor
 fn MaybeCtorDefs(comptime A: type) type {
     return struct {
-        pub const Nothing: *const fn () Maybe(A) = nothingFn;
-        pub const Just: *const fn (A) Maybe(A) = justFn;
+        pub const Nothing = &nothingFn;
+        pub const Just = &justFn;
 
         // Value constructor functions for Maybe
         fn nothingFn() Maybe(A) {
@@ -546,14 +546,14 @@ pub fn FreeMonadImpl(comptime FunF: TCtor) type {
             const map_fn = ff.free_m[0].pure_m;
             if (fa == .pure_m) {
                 const b = map_fn(fa.pure_m);
-                const _b: _B = if (has_err) try b else b;
-                const new_pure_m = try self.allocator.create(Self);
+                const _b = if (has_err) try b else b;
+                const new_pure_m = try self.allocator.create(F(_B));
                 new_pure_m.* = .{ .pure_m = _b };
                 return .{ .free_m = .{ new_pure_m, try ff.free_m[1].clone() } };
             } else {
-                const b = map_fn(fa.free_m[0].pure_m.*);
-                const _b: _B = if (has_err) try b else b;
-                const new_pure_m = try self.allocator.create(Self);
+                const b = map_fn(fa.free_m[0].pure_m);
+                const _b = if (has_err) try b else b;
+                const new_pure_m = try self.allocator.create(F(_B));
                 new_pure_m.* = .{ .pure_m = _b };
                 const len = fa.free_m[1].items.len + ff.free_m[1].items.len;
                 var flist = try @TypeOf(fa.free_m[1]).initCapacity(self.allocator, len);
@@ -574,20 +574,20 @@ pub fn FreeMonadImpl(comptime FunF: TCtor) type {
             const has_err, const _B = comptime isErrorUnionOrVal(B);
 
             if (flam == .pure_m) {
-                return try self.fmap(.NewValMap, flam.pure_m, fa);
+                return try self.fmapLam(.NewValMap, flam.pure_m, fa);
             }
 
             const map_lam = flam.free_m[0].pure_m;
             if (fa == .pure_m) {
                 const b = map_lam.call(fa.pure_m);
-                const _b: _B = if (has_err) try b else b;
-                const new_pure_m = try self.allocator.create(Self);
+                const _b = if (has_err) try b else b;
+                const new_pure_m = try self.allocator.create(F(_B));
                 new_pure_m.* = .{ .pure_m = _b };
-                return .{ .free_m = .{ new_pure_m, flam.free_m[1] } };
+                return .{ .free_m = .{ new_pure_m, try flam.free_m[1].clone() } };
             } else {
-                const b = map_lam.call(fa.free_m[0].pure_m.*);
-                const _b: _B = if (has_err) try b else b;
-                const new_pure_m = try self.allocator.create(Self);
+                const b = map_lam.call(fa.free_m[0].pure_m);
+                const _b = if (has_err) try b else b;
+                const new_pure_m = try self.allocator.create(F(_B));
                 new_pure_m.* = .{ .pure_m = _b };
                 const len = fa.free_m[1].items.len + flam.free_m[1].items.len;
                 var flist = try @TypeOf(fa.free_m[1]).initCapacity(self.allocator, len);
@@ -605,27 +605,51 @@ pub fn FreeMonadImpl(comptime FunF: TCtor) type {
             k: *const fn (*Self, A) MbType(B),
         ) MbType(B) {
             if (ma == .pure_m) {
-                return try k(ma.pure_m);
+                return try k(self, ma.pure_m);
             }
 
-            const freem = try k(ma.free_m[0].pure.*);
+            const freem = try k(self, ma.free_m[0].pure_m);
             if (freem == .pure_m) {
-                const new_pure_m = try self.allocator.create(Self);
+                const new_pure_m = try self.allocator.create(F(B));
                 new_pure_m.* = .{ .pure_m = freem.pure_m };
-                return .{ .free_m = .{ new_pure_m, ma.free_m[1] } };
+                return .{ .free_m = .{ new_pure_m, try ma.free_m[1].clone() } };
             } else {
-                const flist = try freem.free_m[1].appendSlices(ma.free_m[1].items);
-                freem.free_m[1].deinit();
-                return .{ .free_m = .{ freem[0], flist } };
+                var flist = freem.free_m[1];
+                try flist.appendSlice(ma.free_m[1].items);
+                return .{ .free_m = .{ freem.free_m[0], flist } };
             }
+        }
+
+        pub fn join(
+            self: *Self,
+            comptime A: type,
+            mma: F(F(A)),
+        ) MbType(A) {
+            if (mma == .pure_m) {
+                return mma.pure_m;
+            }
+
+            // mma.free_m[0] is a pointer of pure(FreeMonad(F, A)), so the
+            // mma.free_m[0].pure_m is FreeMonad(F, A).
+            if (mma.free_m[0].pure_m == .pure_m) {
+                // mma.free_m[0].pure_m is a pure value of FreeMonad(F, A).
+                const new_pure_m = try self.allocator.create(F(A));
+                new_pure_m.* = .{ .pure_m = mma.free_m[0].pure_m.pure_m };
+                return .{ .free_m = .{ new_pure_m, try mma.free_m[1].clone() } };
+            }
+
+            // mma.free_m[0].pure_m is a impure value of FreeMonad(F, A).
+            var flist = mma.free_m[0].pure_m.free_m[1];
+            try flist.appendSlice(mma.free_m[1].items);
+            return .{ .free_m = .{ mma.free_m[0].pure_m.free_m[0], flist } };
         }
     };
 }
 
 // These functions are defined for unit test
 const add10 = testu.add10;
-const add_pi_f64 = testu.add_pi_f64;
-const mul_pi_f64 = testu.mul_pi_f64;
+const add_pi_f64 = &testu.add_pi_f64;
+const mul_pi_f64 = &testu.mul_pi_f64;
 
 const Add_x_f64_Lam = testu.Add_x_f64_Lam;
 
@@ -633,7 +657,13 @@ test "FreeMonad(F, A) fmap" {
     const allocator = testing.allocator;
     const FreeMFunctor = Functor(FreeMonadImpl(Maybe));
     var freem_functor = FreeMFunctor.init(.{ .allocator = allocator });
-    _ = &freem_functor;
+
+    const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+    const ShowMonad = Monad(ShowMonadImpl);
+    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
+    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
 
     var a: u32 = 42;
     _ = &a;
@@ -641,6 +671,10 @@ test "FreeMonad(F, A) fmap" {
     const pure_freem = FreeMonad(Maybe, u32).pureM(@as(u32, 42));
     const pure_freem1 = try freem_functor.fmap(.NewValMap, add_pi_f64, pure_freem);
     try testing.expectEqual(45.14, pure_freem1.iter(maybeToA(f64)));
+    const show_writer = try pure_freem1.foldFree(nat_maybe_show, show_monad);
+    defer show_writer.deinit();
+    try testing.expectEqual(45.14, show_writer.a);
+    try testing.expectEqualSlices(u8, "", show_writer.w.items);
 
     const MaybeCtorEnum = std.meta.DeclEnum(MaybeCtorDefs(u32));
     // const Nothing: u16 = @intFromEnum(MaybeCtorEnum.Nothing);
@@ -652,11 +686,246 @@ test "FreeMonad(F, A) fmap" {
     const free_maybe1 = try freem_functor.fmap(.NewValMap, add10, free_maybe);
     defer free_maybe1.deinit();
     try testing.expectEqual(52, free_maybe1.iter(maybeToA(u32)));
+    const show1_writer = try free_maybe1.foldFree(nat_maybe_show, show_monad);
+    defer show1_writer.deinit();
+    try testing.expectEqual(52, show1_writer.a);
+    try testing.expectEqualSlices(u8, "Just Just ", show1_writer.w.items);
 
     const add_x_f64_lam = Add_x_f64_Lam{ ._x = 3.14 };
     const free_maybe2 = try freem_functor.fmapLam(.NewValMap, add_x_f64_lam, free_maybe1);
     defer free_maybe2.deinit();
     try testing.expectEqual(55.14, free_maybe2.iter(maybeToA(f64)));
+    const show2_writer = try free_maybe2.foldFree(nat_maybe_show, show_monad);
+    defer show2_writer.deinit();
+    try testing.expectEqual(55.14, show2_writer.a);
+    try testing.expectEqualSlices(u8, "Just Just ", show2_writer.w.items);
+}
+
+test "FreeMonad(F, A) pure and fapply" {
+    const allocator = testing.allocator;
+    const FreeMApplicative = Applicative(FreeMonadImpl(Maybe));
+    var freem_applicative = FreeMApplicative.init(.{ .allocator = allocator });
+
+    const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+    const ShowMonad = Monad(ShowMonadImpl);
+    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
+    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+
+    var a: u32 = 42;
+    _ = &a;
+    const MaybeCtorEnum = std.meta.DeclEnum(MaybeCtorDefs(u32));
+    const Nothing: u16 = @intFromEnum(MaybeCtorEnum.Nothing);
+    const Just: u16 = @intFromEnum(MaybeCtorEnum.Just);
+    const ValCtor = comptime FreeMonad(Maybe, u32).ValCtor;
+    const just_fns1 = &[_]ValCtor{ Just, Just };
+
+    const pure_freem = FreeMonad(Maybe, u32).pureM(@as(u32, 33));
+    const purem_fn = try freem_applicative.pure(add_pi_f64);
+    var freem_fn = try purem_fn.appendValFn(allocator, Just);
+    defer freem_fn.deinit();
+    const applied_purem = try freem_applicative.fapply(u32, f64, freem_fn, pure_freem);
+    defer applied_purem.deinit();
+    try testing.expectEqual(36.14, applied_purem.iter(maybeToA(f64)));
+    const show_writer = try applied_purem.foldFree(nat_maybe_show, show_monad);
+    defer show_writer.deinit();
+    try testing.expectEqual(36.14, show_writer.a);
+    try testing.expectEqualSlices(u8, "Just ", show_writer.w.items);
+
+    const freem_a = try FreeMonad(Maybe, u32).freeM(allocator, 42, @constCast(just_fns1));
+    defer freem_a.deinit();
+    const applied_freem = try freem_applicative.fapply(u32, f64, freem_fn, freem_a);
+    defer applied_freem.deinit();
+    try testing.expectEqual(45.14, applied_freem.iter(maybeToA(f64)));
+    const show1_writer = try applied_freem.foldFree(nat_maybe_show, show_monad);
+    defer show1_writer.deinit();
+    try testing.expectEqual(45.14, show1_writer.a);
+    try testing.expectEqualSlices(u8, "Just Just Just ", show1_writer.w.items);
+
+    const applied_purem1 = try freem_applicative.fapply(u32, f64, purem_fn, freem_a);
+    defer applied_purem1.deinit();
+    try testing.expectEqual(45.14, applied_purem1.iter(maybeToA(f64)));
+    const show1_purem = try applied_purem1.foldFree(nat_maybe_show, show_monad);
+    defer show1_purem.deinit();
+    try testing.expectEqual(45.14, show1_purem.a);
+    try testing.expectEqualSlices(u8, "Just Just ", show1_purem.w.items);
+
+    const add_x_f64_lam = Add_x_f64_Lam{ ._x = 3.14 };
+    var freem_lam = try freem_applicative.pure(add_x_f64_lam);
+    defer freem_lam.deinit();
+    const just_fns2 = &[_]ValCtor{ Just, Nothing, Just };
+    freem_lam = try freem_lam.appendValFns(allocator, @constCast(just_fns2));
+    const applied_freem1 = try freem_applicative.fapplyLam(u32, f64, freem_lam, freem_a);
+    defer applied_freem1.deinit();
+    try testing.expectEqual(0, applied_freem1.iter(maybeToA(f64)));
+    const show2_writer = try applied_freem1.foldFree(nat_maybe_show, show_monad);
+    defer show2_writer.deinit();
+    try testing.expectEqual(null, show2_writer.a);
+    try testing.expectEqualSlices(u8, "Just ", show2_writer.w.items);
+}
+
+test "FreeMonad(F, A) bind" {
+    const allocator = testing.allocator;
+    const FreeMMonad = Monad(FreeMonadImpl(Maybe));
+    var freem_monad = FreeMMonad.init(.{ .allocator = allocator });
+
+    const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+    const ShowMonad = Monad(ShowMonadImpl);
+    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
+    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+
+    const MaybeCtorEnum = std.meta.DeclEnum(MaybeCtorDefs(u32));
+    const Nothing: u16 = @intFromEnum(MaybeCtorEnum.Nothing);
+    const Just: u16 = @intFromEnum(MaybeCtorEnum.Just);
+    const ValCtor = comptime FreeMonad(Maybe, u32).ValCtor;
+    const just_fns1 = &[_]ValCtor{ Just, Just };
+
+    const pure_freem = FreeMonad(Maybe, u32).pureM(@as(u32, 1));
+    const freem_a = try FreeMonad(Maybe, u32).freeM(allocator, 2, @constCast(just_fns1));
+    defer freem_a.deinit();
+    const freem_b = try FreeMonad(Maybe, u32).freeM(allocator, 3, @constCast(just_fns1));
+    defer freem_b.deinit();
+    const freem_c = try FreeMonad(Maybe, u32).freeM(allocator, 8, @constCast(just_fns1));
+    defer freem_c.deinit();
+
+    const k_u32 = struct {
+        fn f(self: *FreeMonadImpl(Maybe), a: u32) !FreeMonad(Maybe, f64) {
+            const _a = if (a > 3) 0 else a;
+            const just_array = switch (_a) {
+                0 => &[_]u16{},
+                1 => &[_]u16{Just},
+                2 => &[_]u16{ Just, Just },
+                3 => &[_]u16{ Just, Nothing, Just },
+                else => @panic("The _a is not greater than 3"),
+            };
+            const b = @as(f64, @floatFromInt(a)) + 3.14;
+
+            const freem_k = if (just_array.len > 0)
+                try FreeMonad(Maybe, f64).freeM(allocator, b, @constCast(just_array))
+            else
+                try self.pure(b);
+            return freem_k;
+        }
+    }.f;
+
+    const purem_binded = try freem_monad.bind(u32, f64, pure_freem, k_u32);
+    defer purem_binded.deinit();
+    const show_writer = try purem_binded.foldFree(nat_maybe_show, show_monad);
+    defer show_writer.deinit();
+    try testing.expectApproxEqRel(4.14, show_writer.a.?, std.math.floatEps(f64));
+    try testing.expectEqualSlices(u8, "Just ", show_writer.w.items);
+
+    const freem_binded = try freem_monad.bind(u32, f64, freem_a, k_u32);
+    defer freem_binded.deinit();
+    const show1_writer = try freem_binded.foldFree(nat_maybe_show, show_monad);
+    defer show1_writer.deinit();
+    try testing.expectApproxEqRel(5.14, show1_writer.a.?, std.math.floatEps(f64));
+    try testing.expectEqualSlices(u8, "Just Just Just Just ", show1_writer.w.items);
+
+    const freem_binded2 = try freem_monad.bind(u32, f64, freem_b, k_u32);
+    defer freem_binded2.deinit();
+    try testing.expectEqual(0, freem_binded2.iter(maybeToA(f64)));
+    const show2_writer = try freem_binded2.foldFree(nat_maybe_show, show_monad);
+    defer show2_writer.deinit();
+    try testing.expectEqual(null, show2_writer.a);
+    try testing.expectEqualSlices(u8, "Just Just Just ", show2_writer.w.items);
+
+    const freem_binded3 = try freem_monad.bind(u32, f64, freem_c, k_u32);
+    defer freem_binded3.deinit();
+    const show3_writer = try freem_binded3.foldFree(nat_maybe_show, show_monad);
+    defer show3_writer.deinit();
+    try testing.expectApproxEqRel(11.14, show3_writer.a.?, std.math.floatEps(f64));
+    try testing.expectEqualSlices(u8, "Just Just ", show3_writer.w.items);
+}
+
+test "FreeMonad(F, A) join" {
+    const allocator = testing.allocator;
+    const FreeMMonad = Monad(FreeMonadImpl(Maybe));
+    var freem_monad = FreeMMonad.init(.{ .allocator = allocator });
+
+    const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+    const ShowMonad = Monad(ShowMonadImpl);
+    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
+    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+
+    const MaybeCtorEnum = std.meta.DeclEnum(MaybeCtorDefs(u32));
+    const Nothing: u16 = @intFromEnum(MaybeCtorEnum.Nothing);
+    const Just: u16 = @intFromEnum(MaybeCtorEnum.Just);
+    const ValCtor = comptime FreeMonad(Maybe, u32).ValCtor;
+    const just_fns1 = &[_]ValCtor{ Just, Just };
+
+    const pure_freem = FreeMonad(Maybe, u32).pureM(@as(u32, 1));
+    const freem_a = try FreeMonad(Maybe, u32).freeM(allocator, 2, @constCast(just_fns1));
+    defer freem_a.deinit();
+    const freem_b = try FreeMonad(Maybe, u32).freeM(allocator, 3, @constCast(just_fns1));
+    defer freem_b.deinit();
+    const freem_c = try FreeMonad(Maybe, u32).freeM(allocator, 8, @constCast(just_fns1));
+    defer freem_c.deinit();
+
+    const k_u32 = struct {
+        allocator: Allocator,
+
+        const Self = @This();
+        pub fn call(self: *const Self, a: u32) !FreeMonad(Maybe, f64) {
+            const _a = if (a > 3) 0 else a;
+            const just_array = switch (_a) {
+                0 => &[_]u16{},
+                1 => &[_]u16{Just},
+                2 => &[_]u16{ Just, Just },
+                3 => &[_]u16{ Just, Nothing, Just },
+                else => @panic("The _a is not greater than 3"),
+            };
+            const b = @as(f64, @floatFromInt(a)) + 3.14;
+
+            const freem_k = if (just_array.len > 0)
+                try FreeMonad(Maybe, f64).freeM(self.allocator, b, @constCast(just_array))
+            else
+                FreeMonad(Maybe, f64).pureM(b);
+            return freem_k;
+        }
+    }{ .allocator = allocator };
+
+    const pure_mma = try freem_monad.fmapLam(.NewValMap, k_u32, pure_freem);
+    defer pure_mma.deinit();
+    const purem_joined = try freem_monad.join(f64, pure_mma);
+    defer purem_joined.deinit();
+    const show_writer = try purem_joined.foldFree(nat_maybe_show, show_monad);
+    defer show_writer.deinit();
+    try testing.expectApproxEqRel(4.14, show_writer.a.?, std.math.floatEps(f64));
+    try testing.expectEqualSlices(u8, "Just ", show_writer.w.items);
+
+    const impure_mma = try freem_monad.fmapLam(.NewValMap, k_u32, freem_a);
+    defer impure_mma.deinit();
+    const freem_joined = try freem_monad.join(f64, impure_mma);
+    defer freem_joined.deinit();
+    const show1_writer = try freem_joined.foldFree(nat_maybe_show, show_monad);
+    defer show1_writer.deinit();
+    try testing.expectApproxEqRel(5.14, show1_writer.a.?, std.math.floatEps(f64));
+    try testing.expectEqualSlices(u8, "Just Just Just Just ", show1_writer.w.items);
+
+    const impure_mma2 = try freem_monad.fmapLam(.NewValMap, k_u32, freem_b);
+    defer impure_mma2.deinit();
+    const freem_joined2 = try freem_monad.join(f64, impure_mma2);
+    defer freem_joined2.deinit();
+    try testing.expectEqual(0, freem_joined2.iter(maybeToA(f64)));
+    const show2_writer = try freem_joined2.foldFree(nat_maybe_show, show_monad);
+    defer show2_writer.deinit();
+    try testing.expectEqual(null, show2_writer.a);
+    try testing.expectEqualSlices(u8, "Just Just Just ", show2_writer.w.items);
+
+    const impure_mma3 = try freem_monad.fmapLam(.NewValMap, k_u32, freem_c);
+    defer impure_mma3.deinit();
+    const freem_joined3 = try freem_monad.join(f64, impure_mma3);
+    defer freem_joined3.deinit();
+    const show3_writer = try freem_joined3.foldFree(nat_maybe_show, show_monad);
+    defer show3_writer.deinit();
+    try testing.expectApproxEqRel(11.14, show3_writer.a.?, std.math.floatEps(f64));
+    try testing.expectEqualSlices(u8, "Just Just ", show3_writer.w.items);
 }
 
 fn List(comptime A: type) type {
@@ -671,8 +940,8 @@ fn List(comptime A: type) type {
 
 fn ListCtorDefs(comptime A: type) type {
     return struct {
-        pub const Nil: *const fn () List(A) = NilLam;
-        pub const Cons: *const fn (A) List(A) = ConsLam;
+        pub const Nil = &NilLam;
+        pub const Cons = &ConsLam;
 
         // Value constructor functions for Maybe
         const NilLam = struct {
