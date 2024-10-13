@@ -88,7 +88,7 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                     op_lam: AnyOpLam,
                 };
                 // TODO: use static hashmap to get key-value relation of F and CtorDefs
-                const f_op_ctors = GetOpCtors(A, GetCtorDefs(F, A));
+                const f_op_ctors = GetOpCtors(F, A);
 
                 pub fn deinit(self: Self) void {
                     if (self == .free_m) {
@@ -198,8 +198,7 @@ pub fn FreeM(comptime F: TCtor) TCtor {
 
                     var acc_m = try @constCast(&m_impl).pure(self.free_m[0].pure_m);
                     for (self.free_m[1].items) |op_info| {
-                        const CtorDefs = GetCtorDefs(F, A);
-                        const fm_op_ctors = GetOpCtors(MImpl.F(A), CtorDefs);
+                        const fm_op_ctors = GetOpCtors(F, MImpl.F(A));
                         const val_ctor_info = fm_op_ctors[op_info.op_e];
                         const f_acc_m = val_ctor_info.callValCtorFn(
                             op_info.op_lam,
@@ -216,35 +215,34 @@ pub fn FreeM(comptime F: TCtor) TCtor {
     }.FreeF;
 }
 
-const DefsFnType = *const fn (comptime type) type;
-fn GetCtorDefs(comptime F: TCtor, comptime A: type) DefsFnType {
+fn GetCtorDefs(comptime F: TCtor, comptime A: type) type {
     comptime {
         switch (@typeInfo(F(A))) {
             .Struct, .Enum, .Union, .Opaque => {
-                if (@hasDecl(F(A), "ValCtorDefs")) {
-                    return F(A).ValCtorDefs;
+                if (@hasDecl(F(A), "OpCtorDefs")) {
+                    return F(A).OpCtorDefs;
                 }
             },
             else => {},
         }
 
-        const mapCtorDefs = std.StaticStringMap(DefsFnType).initComptime(.{
-            .{ @typeName(Maybe(A)), MaybeCtorDefs },
+        const mapCtorDefs = std.StaticStringMap(type).initComptime(.{
+            .{ @typeName(Maybe(A)), MaybeCtorDefs(A) },
         });
 
         const ctor_defs = mapCtorDefs.get(@typeName(F(A)));
         if (ctor_defs == null) {
-            @compileError("The user customered Functor must has ValCtorDefs!");
+            @compileError("The user customered Functor must has OpCtorDefs!");
         }
         return ctor_defs.?;
     }
 }
 
-fn OpCtorsType(comptime A: type, comptime DefsFn: DefsFnType) type {
-    const ValCtorDefs = DefsFn(A);
-    const CtorEnum = std.meta.DeclEnum(ValCtorDefs);
+fn OpCtorsType(comptime F: TCtor, comptime A: type) type {
+    const OpCtorDefs = GetCtorDefs(F, A);
+    const CtorEnum = std.meta.DeclEnum(OpCtorDefs);
     const enum_fields = std.meta.fields(CtorEnum);
-    return [enum_fields.len]OpCtorInfo(A, CtorEnum, ValCtorDefs);
+    return [enum_fields.len]OpCtorInfo(A, CtorEnum, OpCtorDefs);
 }
 
 fn OpCtorInfo(
@@ -294,18 +292,17 @@ fn OpCtorInfo(
 }
 
 pub fn GetOpCtors(
+    comptime F: TCtor,
     comptime A: type,
-    comptime DefsFn: DefsFnType,
-) OpCtorsType(A, DefsFn) {
-    const ValCtorDefs = DefsFn(A);
-    const CtorEnum = std.meta.DeclEnum(ValCtorDefs);
+) OpCtorsType(F, A) {
+    const OpCtorDefs = GetCtorDefs(F, A);
+    const CtorEnum = std.meta.DeclEnum(OpCtorDefs);
     const enum_fields = std.meta.fields(CtorEnum);
 
-    //     const ValCtors = OpCtorsType(A, DefsFn);
-    var op_ctors: [enum_fields.len]OpCtorInfo(A, CtorEnum, ValCtorDefs) = undefined;
+    var op_ctors: [enum_fields.len]OpCtorInfo(A, CtorEnum, OpCtorDefs) = undefined;
     inline for (enum_fields, 0..) |field, i| {
         const name = field.name;
-        const OpLam = @field(ValCtorDefs, name);
+        const OpLam = @field(OpCtorDefs, name);
         const fn_info = @typeInfo(@TypeOf(OpLam.call));
         const params_len = fn_info.Fn.params.len;
         const ctor_e = @as(CtorEnum, @enumFromInt(i));
@@ -1070,36 +1067,11 @@ test "FreeMonad(F, A) join" {
     try testing.expectEqualSlices(u8, "Just Just ", show3_writer.w.items);
 }
 
+const List = std.SinglyLinkedList;
+
 pub fn ListCfg(comptime cfg: anytype) type {
     const Error = cfg.error_set;
     return struct {
-        pub fn List(comptime A: type) type {
-            return union(enum) {
-                nil: void,
-                cons: struct { A, *Self },
-
-                const Self = @This();
-                const ValCtorDefs = ListCtorDefs(A);
-
-                pub fn deinit(self: Self) void {
-                    if (self == .nil) return;
-                    base.deinitOrUnref(self.cons[1]);
-                    cfg.allocator.destroy(self.cons[1]);
-                }
-
-                pub fn clone(self: Self) Self {
-                    if (self == .nil) return self;
-
-                    const succ_list = try cfg.allocator.create(Self);
-                    succ_list.* = self.cons[1].clone();
-                    return .{ .cons = .{
-                        base.copyOrCloneOrRef(self.cons[0]),
-                        succ_list,
-                    } };
-                }
-            };
-        }
-
         fn ListCtorDefs(comptime A: type) type {
             return struct {
                 pub const Nil = NilLam;
@@ -1121,39 +1093,140 @@ pub fn ListCfg(comptime cfg: anytype) type {
 
                     pub fn call(self: Self) List(A) {
                         _ = self;
-                        return .{ .nil = {} };
+                        return .{ .first = null };
                     }
                 };
 
                 const ConsLam = extern struct {
-                    lam_ctx: *ConsLamCtx,
+                    len: u64,
 
                     const Self = @This();
-                    const ConsLamCtx = struct {
-                        list: List(A),
+                    const ConsLamCtx = []A;
 
-                        const CtxSelf = @This();
-                        pub fn deinit(self: CtxSelf) void {
-                            self.list.deinit();
-                        }
-                    };
-                    pub fn build(list: List(A)) !Self {
-                        const cons_ctx = try cfg.allocator.create(List(A));
-                        cons_ctx.* = list;
-                        return .{ .lam_ctx = cons_ctx };
+                    pub fn build(len: u64) !Self {
+                        return .{ .len = len };
                     }
 
                     pub fn deinit(self: Self) void {
-                        self.lam_ctx.deinit();
+                        _ = self;
                     }
 
-                    pub fn call(self: *Self, a: A) Error!List(A) {
-                        const succ_list = try cfg.allocator.create(Self);
-                        succ_list.* = self.lam_ctx.list.clone();
-                        return .{ .cons = .{ a, succ_list } };
+                    pub fn call(self: *Self, as: []A) Error!List(A) {
+                        assert(self.len == as.len);
+                        var list: List(A) = .{ .first = null };
+                        for (as) |a| {
+                            const node = try cfg.allocator.create(List(A).Node);
+                            node.* = .{ .next = null, .data = a };
+                            list.prepend(node);
+                        }
+                        return list;
                     }
                 };
             };
         }
     };
 }
+
+pub const ListCtxCfg =
+    struct {
+    allocator: Allocator,
+    error_set: type,
+};
+
+fn getDefaultListCfg(allocator: Allocator) ListCtxCfg {
+    return .{
+        .allocator = allocator,
+        .error_set = Allocator.Error,
+    };
+}
+
+const ArrayListFunctorImpl = arraym.ArrayListMonadImpl;
+
+pub const ListShowtNatImpl = struct {
+    allocator: Allocator,
+
+    const Self = @This();
+
+    pub const F = List;
+    pub const G = MWriterMaybe(ArrayList(u8));
+    pub const Error = Allocator.Error;
+
+    pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+        var array = ArrayList(u8).init(self.allocator);
+        if (fa.first) |first| {
+            try array.appendSlice("[ ");
+            const first_len = std.fmt.count("{any}", .{fa.first.data});
+            try array.ensureUnusedCapacity(first_len);
+            const first_buf = array.unusedCapacitySlice();
+            std.fmt.bufPrint(first_buf, "{any}", .{fa.first.data});
+
+            var next = first.next;
+            while (next) |node| {
+                const len = std.fmt.count(", {any}", .{fa.first.data});
+                try array.ensureUnusedCapacity(len);
+                const buf = array.unusedCapacitySlice();
+                std.fmt.bufPrint(buf, ", {any}", .{fa.first.data});
+                next = node.next;
+            }
+            try array.appendSlice(" ]");
+            return .{ .a = first.data, .w = array };
+        } else {
+            // return empty ArrayList
+            try array.appendSlice("[]");
+            return .{ .a = @as(Maybe(A), null), .w = array };
+        }
+    }
+};
+
+fn listToA(comptime A: type) *const fn (a: List(A)) A {
+    return struct {
+        fn iterFn(a: List(A)) A {
+            if (a.first) |first| {
+                return first.data;
+            } else return 0;
+        }
+    }.iterFn;
+}
+
+// test "FreeMonad(List, A) fmap" {
+//     const allocator = testing.allocator;
+//     const FreeMFunctor = Functor(FreeMonadImpl(List));
+//     var freem_functor = FreeMFunctor.init(.{ .allocator = allocator });
+//
+//     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+//     const ShowMonad = Monad(ShowMonadImpl);
+//     const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+//     const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+//     const NatListToShow = NatTrans(ListShowtNatImpl);
+//     const nat_list_show = NatListToShow.init(.{ .allocator = allocator });
+//
+//     var a: u32 = 42;
+//     _ = &a;
+//     // const pure_freem = .{ .pure_m = a };
+//     const pure_freem = FreeMonad(List, u32).pureM(@as(u32, 42));
+//     const pure_freem1 = try freem_functor.fmap(.NewValMap, add_pi_f64, pure_freem);
+//     try testing.expectEqual(45.14, pure_freem1.iter(listToA(f64)));
+//     const show_writer = try pure_freem1.foldFree(nat_list_show, show_monad);
+//     defer show_writer.deinit();
+//     try testing.expectEqual(45.14, show_writer.a);
+//     try testing.expectEqualSlices(u8, "", show_writer.w.items);
+//
+//     const MaybeCtorEnum = std.meta.DeclEnum(MaybeCtorDefs(u32));
+//     const Just: u16 = @intFromEnum(MaybeCtorEnum.Just);
+//     const buildJust = MaybeCtorDefs(u32).Just.build;
+//     // const Nothing: u16 = @intFromEnum(MaybeCtorEnum.Nothing);
+//     const FOpInfo = comptime FreeMonad(List, u32).FOpInfo;
+//     const just_fns2 = &[_]FOpInfo{
+//         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
+//         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
+//     };
+//     const free_maybe = try pure_freem.appendValFns(allocator, @constCast(just_fns2));
+//     defer free_maybe.deinit();
+//     const free_maybe1 = try freem_functor.fmap(.NewValMap, add10, free_maybe);
+//     defer free_maybe1.deinit();
+//     try testing.expectEqual(52, free_maybe1.iter(listToA(u32)));
+//     const show1_writer = try free_maybe1.foldFree(nat_list_show, show_monad);
+//     defer show1_writer.deinit();
+//     try testing.expectEqual(52, show1_writer.a);
+//     try testing.expectEqualSlices(u8, "Just Just ", show1_writer.w.items);
+// }
