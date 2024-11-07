@@ -116,7 +116,7 @@ pub fn Functor(comptime FunctorImpl: type) type {
         /// Typeclass function for map with lambda
         const FMapLamType = @TypeOf(struct {
             fn fmapLam(
-                instance: *InstanceImpl,
+                instance: *const InstanceImpl,
                 comptime K: MapFnKind,
                 // f: a -> b, fa: F a
                 lam: anytype, // a lambda with funtion *const fn(Self, A) B

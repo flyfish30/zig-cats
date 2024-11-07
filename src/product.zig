@@ -88,7 +88,7 @@ pub fn ProductFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fmapLam(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_lam: anytype,
             fga: FaLamType(K, @TypeOf(map_lam)),

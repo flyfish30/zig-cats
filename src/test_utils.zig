@@ -58,3 +58,26 @@ pub const Add_x_f64_Lam = struct {
         return @as(f64, @floatFromInt(a)) + self._x;
     }
 };
+
+pub const Div_x_u32_Lam = struct {
+    _x: u32,
+    const Self = @This();
+    pub fn call(self: *const Self, a: f64) u32 {
+        const a_u32: u32 = @intFromFloat(a);
+        return @divFloor(a_u32, self._x);
+    }
+};
+
+pub const Point3_offset_u32_Lam = struct {
+    _point: Point3D,
+    const Self = @This();
+    const Point3D = struct { f64, f64, f64 };
+    pub fn call(self: *const Self, offset: u32) Point3D {
+        const offset_float: f64 = @floatFromInt(offset);
+        return .{
+            self._point[0] + offset_float,
+            self._point[1] + offset_float,
+            self._point[2] + offset_float,
+        };
+    }
+};

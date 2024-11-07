@@ -104,7 +104,7 @@ pub const MaybeMonadImpl = struct {
     }
 
     pub fn fmapLam(
-        self: *Self,
+        self: *const Self,
         comptime K: MapFnKind,
         map_lam: anytype,
         fa: FaLamType(K, @TypeOf(map_lam)),

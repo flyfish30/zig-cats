@@ -6,6 +6,7 @@ const base = @import("base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 const monad = @import("monad.zig");
+const freetypes = @import("free_types.zig");
 const arraym = @import("array_list_monad.zig");
 const testu = @import("test_utils.zig");
 
@@ -29,6 +30,7 @@ const isInplaceMap = base.isInplaceMap;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 
 const Functor = functor.Functor;
+const NatTrans = functor.NatTrans;
 const Applicative = applicative.Applicative;
 const Monad = monad.Monad;
 const ArrayListMonadImpl = arraym.ArrayListMonadImpl;
@@ -46,7 +48,7 @@ pub fn StateContext(comptime cfg: anytype) type {
         // the currying form of State function
         pub fn StateCurrying(comptime S: type) TCtor {
             return struct {
-                fn StateF(comptime A: type) type {
+                fn StateTCtor(comptime A: type) type {
                     return struct {
                         ref_count: u32,
                         // translate action lambda for State
@@ -95,7 +97,7 @@ pub fn StateContext(comptime cfg: anytype) type {
                         }
                     };
                 }
-            }.StateF;
+            }.StateTCtor;
         }
 
         /// The State(S, A) is just a wrapper of lambda function with type S -> (A, S).
@@ -294,7 +296,6 @@ fn getDeinitCfg(comptime T: type, allocator: Allocator) StateCtxCfg(T) {
 test "get s from (State s a)" {
     const allocator = testing.allocator;
     const DefaultCtx = StateContext(comptime getDefaultCfg(i32, allocator));
-    // const StateF = DefaultState.StateCurrying(i32);
     var state = try DefaultCtx.get(i32);
     defer _ = state.strongUnref();
     const res_a, const res_s = try state.runState(42);
@@ -305,7 +306,6 @@ test "get s from (State s a)" {
 test "put s to (State s a)" {
     const allocator = testing.allocator;
     const DefaultCtx = StateContext(comptime getDefaultCfg(i32, allocator));
-    // const StateF = DefaultState.StateCurrying(i32);
     const state = try DefaultCtx.put(i32, 42);
     defer _ = state.strongUnref();
     const res_a, const res_s = try state.runState(314);
@@ -422,7 +422,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         }
 
         pub fn fmapLam(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_lam: anytype,
             fa: FaLamType(K, @TypeOf(map_lam)),
@@ -705,7 +705,6 @@ test "State(s, a) Functor fmap" {
     var state_functor = StateFunctor.init(.{ .allocator = allocator });
 
     // test fmap
-    // const StateF = DefaultState.StateCurrying(u32);
     var state_a = try DefaultCtx.get(u32);
     defer _ = state_a.strongUnref();
     var state_b = try state_functor.fmap(.NewValMap, add_pi_f64, state_a);
@@ -937,7 +936,346 @@ test "runDo Arraylist" {
     );
 }
 
-pub fn MWriter(comptime W: type) TCtor {
+/// Define the StateF for construct Free (StateF S) A
+pub fn StateF(comptime cfg: anytype, comptime S: type) TCtor {
+    return struct {
+        fn StateSA(comptime A: type) type {
+            return union(enum) {
+                get: GetLamType,
+                put: struct { S, A },
+
+                const Self = @This();
+                const GetLamType = base.ComposableLam(cfg, S, Error!A);
+                pub const BaseType = A;
+                pub const Error = FreeMonad(StateSA, A).Error;
+                pub const ExistentialType = S;
+                pub const OpCtorDefs = StateFCtorDefs(cfg, S, A);
+                pub const StateS = S;
+                pub const StateA = A;
+
+                pub fn stateGet(get_fn: *const fn (S) Error!A) Error!Self {
+                    return .{ .get = try GetLamType.initByFn(get_fn) };
+                }
+
+                pub fn statePut(s: S, a: A) Self {
+                    return .{ .put = .{ s, a } };
+                }
+
+                pub fn deinit(self: Self) void {
+                    if (self == .get) {
+                        self.get.deinit();
+                    } else {
+                        base.deinitOrUnref(self.put[0]);
+                    }
+                }
+            };
+        }
+    }.StateSA;
+}
+
+pub fn StateFA(comptime cfg: anytype, comptime S: type, comptime A: type) type {
+    return StateF(cfg, S)(A);
+}
+
+pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
+    return struct {
+        allocator: Allocator,
+
+        const Self = @This();
+
+        /// Constructor Type for Functor, Applicative, Monad, ...
+        pub fn F(comptime A: type) type {
+            return StateFA(cfg, S, A);
+        }
+
+        /// Get base type of F(A), it is must just is A.
+        pub fn BaseType(comptime State: type) type {
+            return std.meta.Child(State).StateA;
+        }
+
+        pub const Error = Allocator.Error || cfg.error_set;
+
+        pub const FxTypes = FunctorFxTypes(F, Error);
+        pub const FaType = FxTypes.FaType;
+        pub const FbType = FxTypes.FbType;
+        pub const FaLamType = FxTypes.FaLamType;
+        pub const FbLamType = FxTypes.FbLamType;
+
+        const AFxTypes = ApplicativeFxTypes(F, Error);
+        pub const APaType = AFxTypes.APaType;
+        pub const AFbType = AFxTypes.AFbType;
+
+        pub const MbType = MonadFxTypes(F, Error).MbType;
+
+        pub fn deinitFa(
+            fa: anytype, // Maybe(A)
+            comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
+        ) void {
+            _ = free_fn;
+            fa.deinit();
+        }
+
+        fn TransFnRetType(
+            comptime RetS: type,
+            comptime RetA: type,
+        ) type {
+            const has_err, const _A = comptime isErrorUnionOrVal(RetA);
+            const info = @typeInfo(RetA);
+            const RetE = Error || if (has_err) info.ErrorUnion.error_set else error{};
+            return RetE!struct { _A, RetS };
+        }
+
+        pub fn fmap(
+            self: *Self,
+            comptime K: MapFnKind,
+            map_fn: anytype,
+            fa: FaType(K, @TypeOf(map_fn)),
+        ) FbType(@TypeOf(map_fn)) {
+            _ = self;
+            const A = MapFnInType(@TypeOf(map_fn));
+            const B = MapFnRetType(@TypeOf(map_fn));
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+            const _fa = if (comptime isMapRef(K)) fa.* else fa;
+
+            const MapRefLam = struct {
+                map_fn: @TypeOf(map_fn),
+                const MapSelf = @This();
+                pub fn call(map_self: MapSelf, a: std.meta.Child(A)) B {
+                    return map_self.map_fn(&a);
+                }
+            };
+
+            if (_fa == .get) {
+                if (comptime isMapRef(K)) {
+                    const map_ref_lam = MapRefLam{ .map_fn = map_fn };
+                    return .{ .get = fa.get.appendLam(map_ref_lam) };
+                }
+                return .{ .get = fa.get.appendFn(map_fn) };
+            } else {
+                const b = if (comptime isMapRef(K))
+                    map_fn(&fa.put[1])
+                else
+                    map_fn(fa.put[1]);
+                const _b = if (has_err) try b else b;
+                return .{ .put = .{ fa.put[0], _b } };
+            }
+        }
+
+        pub fn fmapLam(
+            self: *const Self,
+            comptime K: MapFnKind,
+            map_lam: anytype,
+            fa: FaLamType(K, @TypeOf(map_lam)),
+        ) FbLamType(@TypeOf(map_lam)) {
+            _ = self;
+            const A = MapLamInType(@TypeOf(map_lam));
+            const B = MapLamRetType(@TypeOf(map_lam));
+            const has_err, const _B = comptime isErrorUnionOrVal(B);
+            _ = _B;
+            const _fa = if (comptime isMapRef(K)) fa.* else fa;
+
+            const MapRefLam = struct {
+                map_lam: @TypeOf(map_lam),
+                const MapSelf = @This();
+                pub fn call(map_self: MapSelf, a: std.meta.Child(A)) B {
+                    return map_self.map_lam.call(&a);
+                }
+            };
+
+            if (_fa == .get) {
+                if (comptime isMapRef(K)) {
+                    const map_ref_lam = MapRefLam{ .map_lam = map_lam };
+                    return .{ .get = try fa.get.appendLam(map_ref_lam) };
+                }
+                return .{ .get = try fa.get.appendLam(map_lam) };
+            } else {
+                const b = if (comptime isMapRef(K))
+                    map_lam.call(&fa.put[1])
+                else
+                    map_lam.call(fa.put[1]);
+                const _b = if (has_err) try b else b;
+                return .{ .put = .{ fa.put[0], _b } };
+            }
+        }
+    };
+}
+
+/// All value constructors for Maybe Functor
+fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) type {
+    const Error = cfg.error_set;
+
+    // Define Op constructor lambdas for StateF
+    return struct {
+        pub const Put = PutLam;
+        pub const Get = GetLam;
+
+        const PutLam = extern struct {
+            lam_ctx: ?*S = null,
+
+            const Self = @This();
+            pub fn build(s: S) Error!Self {
+                const put_s = try cfg.allocator.create(S);
+                put_s.* = try base.copyOrCloneOrRef(s);
+                return .{ .lam_ctx = put_s };
+            }
+
+            pub fn deinit(self: Self) void {
+                if (self.lam_ctx != null) {
+                    base.deinitOrUnref(self.lam_ctx.?.*);
+                    cfg.allocator.destroy(self.lam_ctx.?);
+                }
+            }
+
+            pub fn call(self: *Self, a: A) StateFA(cfg, S, A) {
+                if (self.lam_ctx == null) {
+                    @panic("Fatal Error: The Put of StateF is not initialized!");
+                }
+
+                defer {
+                    cfg.allocator.destroy(self.lam_ctx.?);
+                    self.lam_ctx = null;
+                }
+                return .{ .put = .{ self.lam_ctx.?.*, a } };
+            }
+        };
+
+        const GetLam = struct {
+            // composable function
+            lam_ctx: *const fn (S) Error!A,
+
+            const Self = @This();
+            // This Op is just a function that return type is A
+            const is_fn_op = true;
+            pub fn build(action: *const fn (S) Error!A) Self {
+                return .{ .lam_ctx = action };
+            }
+
+            pub fn deinit(self: Self) void {
+                _ = self;
+            }
+
+            pub fn call(self: *const Self) Error!StateFA(cfg, S, A) {
+                return StateFA(cfg, S, A).stateGet(self.lam_ctx);
+            }
+        };
+    };
+}
+
+pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
+    return struct {
+        allocator: Allocator,
+
+        const Self = @This();
+
+        pub const F = StateF(cfg, S);
+        pub const G = MWriterMaybe(ArrayList(u8));
+        pub const Error = Allocator.Error;
+
+        pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+            if (fa == .put) {
+                const put_fmt_str = "Put {any}, ";
+                const len = std.fmt.count(put_fmt_str, .{fa.put[0]});
+                var array = try ArrayList(u8).initCapacity(self.allocator, len);
+                const put_buf = array.addManyAsSliceAssumeCapacity(len);
+                _ = std.fmt.bufPrint(put_buf, put_fmt_str, .{fa.put[0]}) catch |err|
+                    switch (err) {
+                    error.NoSpaceLeft => unreachable, // we just counted the size above
+                };
+                return .{ .a = fa.put[1], .w = array };
+            } else {
+                const get_fmt_str = "Get, ";
+                const len = std.fmt.count(get_fmt_str, .{});
+                var array = try ArrayList(u8).initCapacity(self.allocator, len);
+                const get_buf = array.addManyAsSliceAssumeCapacity(len);
+                _ = std.fmt.bufPrint(get_buf, get_fmt_str, .{}) catch |err|
+                    switch (err) {
+                    error.NoSpaceLeft => unreachable, // we just counted the size above
+                };
+                return .{ .a = try fa.get.call(38), .w = array };
+            }
+        }
+    };
+}
+
+const ArrayListMonoidImpl = freetypes.ArrayListMonoidImpl;
+const FreeMonad = freetypes.FreeMonad;
+const FreeMonadImpl = freetypes.FreeMonadImpl;
+const FOpEnumInt = freetypes.FOpEnumInt;
+
+test "FreeMonad(StateF, A) foldFree" {
+    const allocator = testing.allocator;
+    const StateS = u64;
+    const cfg = getDefaultCfg(StateS, allocator);
+    const StateFCtor = StateF(cfg, StateS);
+    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
+    const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
+    // const FreeStateFImpl = FreeMonadImpl(StateFCtor, StateFFunctorImpl);
+    // const FStateMonad = Monad(FreeStateFImpl);
+    // var freem_monad = FStateMonad.init(.{
+    //     .allocator = allocator,
+    //     .funf_impl = statef_functor,
+    // });
+
+    const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+    const ShowMonad = Monad(ShowMonadImpl);
+    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
+    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+
+    const ExistType = freetypes.GetExistentialType(StateFCtor);
+    const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, StateS, u32));
+    const Put: FOpEnumInt = @intFromEnum(StateFCtorEnum.Put);
+    const buildPut = StateFCtorDefs(cfg, StateS, u32).Put.build;
+    const Get: FOpEnumInt = @intFromEnum(StateFCtorEnum.Get);
+    // The function operator build a FreeMonad(F, ExistType)
+    const buildGet = StateFCtorDefs(cfg, StateS, ExistType).Get.build;
+    const FOpInfo = comptime FreeMonad(StateFCtor, u32).FOpInfo;
+    const put_ops = &[_]FOpInfo{
+        .{ .op_e = Put, .op_lam = @bitCast(try buildPut(37)) },
+        .{ .op_e = Put, .op_lam = @bitCast(try buildPut(23)) },
+    };
+
+    var free_state = try FreeMonad(StateFCtor, u32).freeM(allocator, 42, @constCast(put_ops));
+    defer free_state.deinit();
+    const show_writer = try free_state.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer.deinit();
+    try testing.expectEqual(42, show_writer.a);
+    try testing.expectEqualSlices(u8, "Put 23, Put 37, ", show_writer.w.items);
+
+    const get_fn = struct {
+        const Error = FreeMonad(StateFCtor, ExistType).Error;
+        fn get(s: u64) Error!ExistType {
+            return @intCast(s + 10);
+        }
+    }.get;
+
+    const x_to_free_state = struct {
+        const Error = FreeMonad(StateFCtor, u32).Error;
+        fn toFreeState(x: u64) Error!FreeMonad(StateFCtor, u32) {
+            return FreeMonad(StateFCtor, u32).pureM(@intCast(x));
+        }
+    }.toFreeState;
+
+    var free_state1 = try FreeMonad(StateFCtor, u32).freeFOp(x_to_free_state, Get, buildGet(get_fn));
+    defer free_state1.deinit();
+    const show_writer1 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer1.deinit();
+    try testing.expectEqual(48, show_writer1.a);
+    try testing.expectEqualSlices(u8, "Get, ", show_writer1.w.items);
+
+    // free_state1 = try free_state1.appendFOp(allocator, put_ops[0]);
+    // const show_writer2 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
+    // defer show_writer2.deinit();
+    // try testing.expectEqual(48, show_writer2.a);
+    // try testing.expectEqualSlices(u8, "Put 37, Get, ", show_writer2.w.items);
+}
+
+///////////////////////////////////////////////////
+// Definition of MWriter
+///////////////////////////////////////////////////
+fn MWriter(comptime W: type) TCtor {
     return struct {
         fn MWriterF(comptime A: type) type {
             return struct {
@@ -1037,7 +1375,7 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         }
 
         pub fn fmapLam(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_lam: anytype,
             fa: FaLamType(K, @TypeOf(map_lam)),
@@ -1115,6 +1453,9 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
     };
 }
 
+///////////////////////////////////////////////////
+// Definition of MWriterMaybe
+///////////////////////////////////////////////////
 /// The type is just MWriter(W, Maybe(A))
 pub fn MWriterMaybe(comptime W: type) TCtor {
     return struct {
@@ -1198,7 +1539,7 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         }
 
         pub fn fmapLam(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_lam: anytype,
             fa: FaLamType(K, @TypeOf(map_lam)),

@@ -96,14 +96,14 @@ pub fn ComposeFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fmapLam(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_lam: anytype,
             fga: FaLamType(K, @TypeOf(map_lam)),
         ) FbLamType(@TypeOf(map_lam)) {
             const MapLam = @TypeOf(map_lam);
             const map_inner = struct {
-                inner_g: *ImplG,
+                inner_g: *const ImplG,
                 map_lam: MapLam,
 
                 const InnerSelf = @This();

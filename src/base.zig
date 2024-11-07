@@ -75,6 +75,26 @@ pub fn MapLamRetType(comptime MapLam: type) type {
     return R;
 }
 
+pub fn MapFnToLamType(comptime MapFn: type) type {
+    return struct {
+        map_fn: *const fn (a: MapFnInType(MapFn)) MapFnRetType(MapFn),
+
+        const Self = @This();
+        pub fn call(self: *const Self, a: MapFnInType(MapFn)) MapFnRetType(MapFn) {
+            return self.map_fn(a);
+        }
+    };
+}
+
+pub fn mapFnToLam(map_fn: anytype) MapFnToLamType(@TypeOf(map_fn)) {
+    const fn_info = @typeInfo(@TypeOf(map_fn));
+    if (fn_info == .Pointer) {
+        return .{ .map_fn = map_fn };
+    } else {
+        return .{ .map_fn = &map_fn };
+    }
+}
+
 pub fn AnyMapFn(a: anytype, b: anytype) type {
     return fn (@TypeOf(a)) @TypeOf(b);
 }
@@ -146,7 +166,7 @@ pub fn IdentityLamType(comptime T: type) type {
         lam_ctx: void = {},
 
         const Self = @This();
-        fn call(self: Self, val: T) T {
+        fn call(self: *Self, val: T) T {
             _ = self;
             return val;
         }
@@ -157,21 +177,353 @@ pub fn getIdentityLam(comptime A: type) IdentityLamType(A) {
     return IdentityLamType(A){};
 }
 
+/// Any signle-argument function type
 pub const AnyFnType = fn (usize) usize;
 pub const AnyFnPtr = *const AnyFnType;
 
-pub fn AnyLamFromFn(
+/// Any signle-argument lambda type
+pub const AnyLamType = struct {
+    lam_ctx: *anyopaque,
+    const Self = @This();
+    pub fn call(self: *Self, a: usize) usize {
+        _ = self;
+        _ = a;
+    }
+};
+
+/// Define a lambda type for composable lambda that can compose functions and lambdas.
+/// No matter how many functions and lambdas are combined, the composable lambda can be
+/// considered as a single lambda containing the call function A->B.
+/// The parameter cfg must has allocator field.
+pub fn ComposableLam(
+    comptime cfg: anytype,
     comptime A: type,
     comptime B: type,
-    comptime lam_fn: *const fn (*anyopaque, A) B,
 ) type {
+    const has_err, const _B = comptime isErrorUnionOrVal(B);
     return struct {
-        lam_ctx: *anyopaque,
+        any_lam: *anyopaque,
+        call_fn: *const fn (*anyopaque, A) B,
+        deinit_fn: *const fn (*const Self) void,
+
         const Self = @This();
-        pub fn call(self: Self, a: A) B {
-            return lam_fn(self.lam_ctx, a);
+        const self_cfg = cfg;
+
+        pub fn initByFn(map_fn: anytype) Allocator.Error!Self {
+            // @compileLog("initByFn map_fn type: " ++ @typeName(@TypeOf(map_fn)));
+            return Self.init(mapFnToLam(map_fn));
+        }
+
+        pub fn init(init_lam: anytype) Allocator.Error!Self {
+            const InitLam = @TypeOf(init_lam);
+            // @compileLog("init init_lam type: " ++ @typeName(@TypeOf(init_lam)));
+            // @compileLog("init RetType type: " ++ @typeName(MapLamRetType(InitLam)));
+            // @compileLog("init B type: " ++ @typeName(B));
+            comptime assert(A == MapLamInType(InitLam));
+            comptime assert(B == MapLamRetType(InitLam));
+            var any_lam: *anyopaque = undefined;
+            if (@sizeOf(InitLam) <= @sizeOf(*anyopaque)) {
+                var any_lam_bytes = std.mem.asBytes(&any_lam);
+                const tmp_lam = try copyOrCloneOrRef(init_lam);
+                const tmp_lam_bytes = std.mem.asBytes(&tmp_lam);
+                @memcpy(any_lam_bytes[0..@sizeOf(InitLam)], tmp_lam_bytes);
+
+                const SmallLamFns = struct {
+                    fn deinit(self: *const Self) void {
+                        const self_any_lam_bytes = std.mem.asBytes(&self.any_lam);
+                        var lam: InitLam = undefined;
+                        const lam_bytes = std.mem.asBytes(&lam);
+                        @memcpy(lam_bytes, self_any_lam_bytes[0..@sizeOf(InitLam)]);
+                        deinitOrUnref(lam);
+                    }
+
+                    fn call(self_any_lam: *anyopaque, a: A) B {
+                        const self_any_lam_bytes = std.mem.asBytes(&self_any_lam);
+                        var lam: InitLam = undefined;
+                        const lam_bytes = std.mem.asBytes(&lam);
+                        @memcpy(lam_bytes, self_any_lam_bytes[0..@sizeOf(InitLam)]);
+                        return lam.call(a);
+                    }
+                };
+                return .{
+                    .any_lam = any_lam,
+                    .call_fn = SmallLamFns.call,
+                    .deinit_fn = SmallLamFns.deinit,
+                };
+            } else {
+                const lam = try cfg.allocator.create(InitLam);
+                lam.* = try copyOrCloneOrRef(init_lam);
+                any_lam = @ptrCast(lam);
+
+                const NormalLamFns = struct {
+                    fn deinit(self: *const Self) void {
+                        const real_lam: *InitLam = @alignCast(@ptrCast(self.any_lam));
+                        deinitOrUnref(real_lam.*);
+                        cfg.allocator.destroy(real_lam);
+                    }
+
+                    fn call(self_any_lam: *anyopaque, a: A) B {
+                        const real_lam: *InitLam = @alignCast(@ptrCast(self_any_lam));
+                        return real_lam.call(a);
+                    }
+                };
+                return .{
+                    .any_lam = any_lam,
+                    .call_fn = NormalLamFns.call,
+                    .deinit_fn = NormalLamFns.deinit,
+                };
+            }
+        }
+
+        pub fn deinit(self: *const Self) void {
+            self.deinit_fn(self);
+        }
+
+        fn AppendedRetType(comptime InType: type, comptime Lam: type) type {
+            const in_info = @typeInfo(InType);
+            const LamRet = MapLamRetType(Lam);
+            if (in_info != .ErrorUnion) {
+                return LamRet;
+            }
+
+            const ret_info = @typeInfo(LamRet);
+            const InError = in_info.ErrorUnion.error_set;
+            const OutError, const RetType = if (ret_info == .ErrorUnion)
+                .{ InError || ret_info.ErrorUnion.error_set, ret_info.ErrorUnion.payload }
+            else
+                .{ InError, LamRet };
+            return OutError!RetType;
+        }
+
+        pub fn appendFn(
+            self: Self,
+            map_fn: anytype,
+        ) Allocator.Error!ComposableLam(cfg, A, AppendedRetType(B, MapFnToLamType(@TypeOf(map_fn)))) {
+            return self.appendLam(mapFnToLam(map_fn));
+        }
+
+        pub fn appendLam(
+            self: Self,
+            lam: anytype,
+        ) Allocator.Error!ComposableLam(cfg, A, AppendedRetType(B, @TypeOf(lam))) {
+            const Lam = @TypeOf(lam);
+            const InType = MapLamInType(Lam);
+            comptime assert(_B == InType);
+            const RetType = AppendedRetType(B, Lam);
+
+            const NewCompLam = struct {
+                comp_lam: Self,
+                append_lam: Lam,
+
+                const SelfNew = @This();
+                pub fn deinit(self_new: SelfNew) void {
+                    self_new.comp_lam.deinit();
+                    deinitOrUnref(self_new.append_lam);
+                }
+
+                pub fn call(self_new: *SelfNew, a: A) RetType {
+                    if (has_err) {
+                        return self_new.append_lam.call(try self_new.comp_lam.call(a));
+                    } else {
+                        return self_new.append_lam.call(self_new.comp_lam.call(a));
+                    }
+                }
+            };
+
+            const new_comp_lam = NewCompLam{
+                .comp_lam = self,
+                .append_lam = try copyOrCloneOrRef(lam),
+            };
+            return ComposableLam(cfg, A, RetType).init(new_comp_lam);
+        }
+
+        pub fn call(self: *const Self, a: A) B {
+            return self.call_fn(self.any_lam, a);
         }
     };
+}
+
+test ComposableLam {
+    const cfg = getDefaultComposeCfg(testing.allocator);
+    var add_pi_lam = testu.Add_x_f64_Lam{ ._x = 3.14 };
+    _ = &add_pi_lam;
+    var div_5_lam = testu.Div_x_u32_Lam{ ._x = 5 };
+    _ = &div_5_lam;
+    var add_e_f32_lam = testu.Add_x_f32_Lam{ ._x = 2.72 };
+    _ = &add_e_f32_lam;
+    var point_move_lam = testu.Point3_offset_u32_Lam{ ._point = .{ 46.2, 26.83, 72.56 } };
+    _ = &point_move_lam;
+
+    const comp1 = try ComposableLam(cfg, u32, f64).init(add_pi_lam);
+    const comp2 = try comp1.appendLam(div_5_lam);
+    try testing.expectEqual(8, comp2.call(40));
+    const comp3 = try comp2.appendLam(add_e_f32_lam);
+    try testing.expectEqual(10.72, comp3.call(40));
+
+    const comp11 = try ComposableLam(cfg, u32, f64).init(add_pi_lam);
+    const comp12 = try comp11.appendLam(div_5_lam);
+    const comp13 = try comp12.appendLam(point_move_lam);
+    try testing.expectEqual(.{ 54.2, 34.83, 80.56 }, comp13.call(40));
+
+    comp3.deinit();
+    comp13.deinit();
+}
+
+pub fn LamWrapper(comptime cfg: anytype, comptime Lam: type) type {
+    if (@typeInfo(Lam) != .Struct) {
+        @compileError("The parameter lam must be a struct!");
+    }
+
+    const A = MapLamInType(Lam);
+    const B = MapLamRetType(Lam);
+
+    return struct {
+        lam_self: *anyopaque,
+        const Self = @This();
+
+        pub fn init(lam: Lam) Self {
+            const lam_self = try cfg.allocator.create(Lam);
+            @memcpy(lam_self, &lam);
+            return .{ .lam_self = @ptrCast(lam_self) };
+        }
+
+        pub fn deinit(self: Self) void {
+            deinitOrUnref(self.lam_self);
+            cfg.allocator.destroy(@alignCast(@ptrCast(self.lam_self)));
+        }
+
+        pub fn call(self: *Self, a: A) B {
+            const lam_self: *Lam = @alignCast(@ptrCast(self.lam_self));
+            Lam.call(lam_self, a);
+        }
+    };
+}
+
+pub fn anyLamFromLam(comptime cfg: anytype, lam: anytype) !AnyLamType {
+    const Lam = @TypeOf(lam);
+    const lam_wrap = try LamWrapper(cfg, Lam).init(lam);
+    return @bitCast(lam_wrap);
+}
+
+fn FnOrLamInType(comptime FnOrLam: type) type {
+    switch (@typeInfo(FnOrLam)) {
+        .Fn => return MapFnInType(FnOrLam),
+        .Struct => return MapLamInType(FnOrLam),
+        else => @compileError("The FnOrLam(" ++ @typeName(FnOrLam) ++ ") not a function or lambda!"),
+    }
+}
+
+fn FnOrLamRetType(comptime FnOrLam: type) type {
+    switch (@typeInfo(FnOrLam)) {
+        .Fn => return MapFnRetType(FnOrLam),
+        .Struct => return MapLamRetType(FnOrLam),
+        else => @compileError("The FnOrLam(" ++ @typeName(FnOrLam) ++ ") not a function or lambda!"),
+    }
+}
+
+fn manyTupleAllTypes(comptime ManyTuple: type) []const type {
+    const tuple_info = @typeInfo(ManyTuple);
+    if (tuple_info != .Struct) {
+        @compileError("The many_tuple(" ++ @typeName(ManyTuple) ++ ") must be a tuple!");
+    }
+
+    const fields = tuple_info.Struct.fields;
+    if (fields.len == 0) {
+        @compileError("The many_tuple(" ++ @typeName(ManyTuple) ++ ") is a empty tuple!");
+    }
+    var types: [fields.len]type = undefined;
+    types[0] = fields[0].type;
+    if (fields.len == 1) {
+        return types[0..];
+    }
+
+    // check that all types match each other
+    for (fields[1..], 1..) |field, i| {
+        types[i] = field.type;
+        const PrevRetType = FnOrLamRetType(types[i - 1]);
+        const InType = FnOrLamInType(types[i]);
+        comptime assert(PrevRetType == InType);
+    }
+
+    return types[0..];
+}
+
+pub fn ComposedFnType(many_tuple: anytype) type {
+    const ManyTuple = @TypeOf(many_tuple);
+    const all_types = manyTupleAllTypes(ManyTuple);
+    const InType = FnOrLamInType(all_types[0]);
+    const RetType = FnOrLamRetType(all_types[all_types.len - 1]);
+
+    return fn (InType) RetType;
+}
+
+/// Compose many functions or lambdas to a single function in comptime.
+/// Parameter many_tuple is a tuple of many functions or lambdas.
+// This function is inspired from mcomposefns by YangMiao<sdzx-1>
+pub fn comptimeCompose(many_tuple: anytype) ComposedFnType(many_tuple) {
+    const ManyTuple = @TypeOf(many_tuple);
+    const tuple_info = @typeInfo(ManyTuple);
+
+    const fields = tuple_info.Struct.fields;
+    return struct {
+        const A = FnOrLamInType(fields[0].type);
+        const B = FnOrLamRetType(fields[fields.len - 1].type);
+        fn callSubFns(comptime i: usize, in: A) FnOrLamRetType(fields[i].type) {
+            const fn_or_lam = @field(many_tuple, fields[i].name);
+            switch (@typeInfo(fields[i].type)) {
+                .Fn => {
+                    if (i == 0) {
+                        return @call(.auto, fn_or_lam, .{in});
+                    } else {
+                        return @call(.auto, fn_or_lam, .{callSubFns(i - 1, in)});
+                    }
+                },
+                .Struct => {
+                    const Lam = @TypeOf(fn_or_lam);
+                    if (i == 0) {
+                        return @call(.auto, Lam.call, .{ &fn_or_lam, in });
+                    } else {
+                        return @call(.auto, Lam.call, .{ &fn_or_lam, callSubFns(i - 1, in) });
+                    }
+                },
+                else => @compileError("comptimeCompose can not support type: " ++ @typeName(fields[i].type)),
+            }
+        }
+
+        fn composedFn(a: A) B {
+            return callSubFns(fields.len - 1, a);
+        }
+    }.composedFn;
+}
+
+test comptimeCompose {
+    const f1 = comptimeCompose(.{ testu.add4, testu.add_pi_f64 });
+    try testing.expectEqual(47.14, f1(40));
+    const f2 = comptimeCompose(.{ div3FromF64, testu.add_pi_f32 });
+    try testing.expectEqual(18.14, f2(47.14));
+
+    const f1f2 = comptimeCompose(.{ f1, f2 });
+    try testing.expectEqual(18.14, f1f2(40));
+
+    const add_pi_lam = testu.Add_x_f64_Lam{ ._x = 3.14 };
+    const f3 = comptimeCompose(.{ testu.add10, add_pi_lam });
+    try testing.expectEqual(53.14, f3(40));
+    const div_5_lam = testu.Div_x_u32_Lam{ ._x = 5 };
+    const f4 = comptimeCompose(.{ div_5_lam, add_pi_lam });
+    try testing.expectEqual(13.14, f4(53.14));
+
+    const f3f4 = comptimeCompose(.{ f3, f4 });
+    try testing.expectEqual(13.14, f3f4(40));
+
+    // test invalid struct for lambda
+    // const bad_lam = struct { a: u32, b: f64 }{ .a = 3, .b = 2.73 };
+    // const bad_f = comptimeCompose(.{ testu.add10, bad_lam });
+    // try testing.expectEqual(5.73, bad_f(42));
+
+    // test composing incorrect type
+    // const bad_lam1 = union { a: u32, b: f64 }{ .a = 3 };
+    // const bad_f1 = comptimeCompose(.{ testu.add10, bad_lam1 });
+    // try testing.expectEqual(5.73, bad_f1(42));
 }
 
 fn ComposedTwoFn(comptime A: type, comptime B: type, comptime C: type) type {
@@ -179,7 +531,7 @@ fn ComposedTwoFn(comptime A: type, comptime B: type, comptime C: type) type {
         first_fn: *const fn (A) B,
         second_fn: *const fn (B) C,
         const SelfComp = @This();
-        fn call(selfComp: SelfComp, a: A) C {
+        fn call(selfComp: *const SelfComp, a: A) C {
             return selfComp.second_fn(selfComp.first_fn(a));
         }
     };
@@ -205,7 +557,7 @@ fn ComposedManyFn(
             return fn_types;
         }
 
-        pub fn call(self: Self, a: TS[0]) TS[N - 1] {
+        pub fn call(self: *const Self, a: TS[0]) TS[N - 1] {
             assert(N_FNS == self.fns_array.items.len);
             var results: std.meta.Tuple(TS[0..]) = undefined;
             results[0] = a;
@@ -261,7 +613,7 @@ pub fn ComposableFn(comptime cfg: anytype, comptime N: comptime_int, TS: [N]type
             return ComposableFn(cfg, N + M - 1, TS ++ TS1[1..].*);
         }
 
-        /// The parametr compfn1 is a ComposableFn
+        /// The parameter compfn1 is a ComposableFn
         pub fn compose(
             self: Self,
             compfn1: anytype,
@@ -399,7 +751,7 @@ pub fn ComposableFn(comptime cfg: anytype, comptime N: comptime_int, TS: [N]type
             return self;
         }
 
-        pub fn call(self: Self, a: A) B {
+        pub fn call(self: *const Self, a: A) B {
             if (N == 2) {
                 return self.single_fn(a);
             } else if (N == 3) {
@@ -411,12 +763,226 @@ pub fn ComposableFn(comptime cfg: anytype, comptime N: comptime_int, TS: [N]type
     };
 }
 
+fn ComposedTwoLam(comptime LAM1: type, comptime LAM2: type) type {
+    return struct {
+        first_lam: LAM1,
+        second_lam: LAM2,
+
+        const Self = @This();
+        const A = MapLamInType(LAM1);
+        const B = MapLamRetType(LAM2);
+        fn call(self: *const Self, a: A) B {
+            return self.second_lam.call(self.first_lam.call(a));
+        }
+    };
+}
+
+fn ComposedManyLam(
+    comptime cfg: anytype,
+    comptime Num: comptime_int,
+    comptime LamTypes: [Num]type,
+) type {
+    // if (N < 3) {
+    //     @compileError("Too less types for ComposedManyFn");
+    // }
+    return struct {
+        const Self = @This();
+        const N = Num;
+        const LAMS = LamTypes;
+        const A = MapLamInType(LAMS[0]);
+        const B = MapLamRetType(LAMS[N - 1]);
+
+        fn initSliceWithTuple(lams: []AnyLamType, lams_tuple: anytype) void {
+            const fields = std.meta.fields(@TypeOf(lams_tuple));
+            assert(lams_tuple.len == N);
+            inline for (fields, 0..) |field, i| {
+                comptime assert(LAMS[i] == field.type);
+                lams[i] = anyLamFromLam(cfg, lams_tuple[i]);
+            }
+        }
+
+        fn deinitSlice(lams: []AnyLamType) []AnyLamType {
+            assert(N <= lams.len);
+            var i: usize = 0;
+            while (i < N) : (i += 1) {
+                const map_lam: LamWrapper(cfg, LAMS[i]) = @bitCast(lams[i]);
+                deinitOrUnref(map_lam);
+            }
+            return lams[N..];
+        }
+
+        fn AppendLam(comptime Lam: type) type {
+            const InType = MapLamInType(Lam);
+            comptime assert(B == InType);
+            return ComposedManyLam(cfg, Self.N + 1, Self.LAMS ++ [1]type{Lam});
+        }
+
+        fn ValTypes() [N + 1]type {
+            comptime var val_types: [N + 1]type = undefined;
+            val_types[0] = MapLamInType(LAMS[0]);
+            inline for (LAMS, 0..) |LAM, i| {
+                val_types[i + 1] = MapLamRetType(LAM);
+            }
+            return val_types;
+        }
+
+        fn callSlice(lam_and_a: struct { []AnyLamType, A }) struct { []AnyLamType, B } {
+            const lams, const a = lam_and_a;
+            assert(N <= lams.len);
+            var results: std.meta.Tuple(ValTypes[0..]) = undefined;
+            results[0] = a;
+            comptime var i = 0;
+            inline while (i < N) : (i += 1) {
+                const map_lam: LAMS[i] = @bitCast(lams[i]);
+                results[i + 1] = map_lam.call(results[i]);
+            }
+            return .{ lams[N..], results[N] };
+        }
+    };
+}
+
+pub fn ComposedLamType(comptime cfg: anytype, many_tuple: anytype) type {
+    const ManyTuple = @TypeOf(many_tuple);
+    const all_types = comptime manyTupleAllTypes(ManyTuple);
+    const A = MapLamInType(all_types[0]);
+    const B = MapLamRetType(all_types[all_types.len - 1]);
+
+    return ComposeManyLams(cfg, A, B);
+}
+
+pub fn composeLams(
+    comptime cfg: anytype,
+    lams_tuple: anytype,
+) ComposedLamType(cfg, lams_tuple) {
+    const CompLam = ComposedLamType(cfg, lams_tuple);
+    const all_types = comptime manyTupleAllTypes(@TypeOf(lams_tuple));
+    const ManyLamType = ComposedManyLam(cfg, all_types.len, all_types[0..]);
+    return CompLam.init(ManyLamType, lams_tuple);
+}
+
+/// Define a lambda type for composable lambda for function composition
+/// The parameter cfg must has allocator field.
+pub fn ComposeManyLams(
+    comptime cfg: anytype,
+    comptime InType: type,
+    comptime RetType: type,
+) type {
+    const cfg_has_allocator = @hasField(@TypeOf(cfg), "allocator");
+    if (!cfg_has_allocator) {
+        @compileError("The parameter cfg(" ++ @typeName(@TypeOf(cfg)) ++ ") must has allocator field!");
+    }
+
+    // The CompsableLam must has a lambda.
+    return struct {
+        lams_array: ArrayList(AnyLamType),
+        deinit_slice: *const fn ([]AnyLamType) []AnyLamType,
+        call_slice: *const fn (struct { []AnyLamType, A }) struct { []AnyLamType, B },
+
+        const Self = @This();
+        const Error = cfg.error_set;
+        const A = InType;
+        const B = RetType;
+
+        pub fn init(comptime ManyLamType: type, lams_tuple: anytype) Error!Self {
+            const len: usize = @max(4, lams_tuple.len);
+            var lams_array = try ArrayList(AnyLamType).initCapacity(cfg.allotcator, len);
+            _ = &lams_array;
+            ManyLamType.initSliceWithTuple(lams_array.items, lams_tuple);
+            return Self{
+                .lams_array = lams_array,
+                .deinit_slice = ManyLamType.deinitSlice,
+                .call_slice = ManyLamType.callSlice,
+            };
+        }
+
+        pub fn deinit(self: Self) void {
+            self.deinit_slice(self.lams_array.items);
+            self.lams_array.deinit();
+        }
+
+        fn ComposedType(comptime CompLam: type) type {
+            const C = CompLam.A;
+            const D = CompLam.B;
+            comptime assert(B == C);
+            return ComposeManyLams(cfg, A, D);
+        }
+
+        /// The parameter complam1 is a ComposeManyLams
+        pub fn compose(
+            self: Self,
+            complam1: anytype,
+        ) Error!ComposedType(@TypeOf(complam1)) {
+            const CompLam = @TypeOf(complam1);
+            const C = CompLam.A;
+            const D = CompLam.B;
+            comptime assert(B == C);
+            // @compileLog(std.fmt.comptimePrint("A is: {any}", .{A}));
+            // @compileLog(std.fmt.comptimePrint("B is: {any}", .{B}));
+            // @compileLog(std.fmt.comptimePrint("D is: {any}", .{D}));
+
+            const RetCompLam = ComposeManyLams(cfg, A, D);
+            var lams_array = self.lams_array;
+            try lams_array.appendSlice(complam1.lams_array.items);
+            return RetCompLam{
+                .lams_array = lams_array,
+                .deinit_slice = comptimeCompose(self.deinit_slice, complam1.deinit_slice),
+                .call_slice = comptimeCompose(self.call_slice, complam1.call_slice),
+            };
+        }
+
+        fn AppendedType(comptime Lam: type) type {
+            const C = MapLamInType(Lam);
+            const D = MapLamRetType(Lam);
+            comptime assert(B == C);
+            // ManyLamType.AppendLam(Lam);
+            return ComposeManyLams(cfg, A, D);
+        }
+
+        /// This function append a map_lam to a composable function, the map_lam must be
+        /// a single parameter lambda
+        pub fn append(
+            self: Self,
+            map_lam: anytype,
+        ) Error!AppendedType(@TypeOf(map_lam)) {
+            const MapLam = @TypeOf(map_lam);
+            const C = MapLamInType(MapLam);
+            // const D = MapLamRetType(MapLam);
+            comptime assert(B == C);
+            // const CompLam = AppendedType(MapLam);
+
+            const map_lam_wrapped = anyLamFromLam(cfg, map_lam);
+            try self.lams_array.append(map_lam_wrapped);
+        }
+
+        pub fn clone(self: Self) Error!Self {
+            return .{
+                .lams_array = try self.lams_array.clone(),
+                .deinit_slice = self.deinit_slice,
+                .call_slice = self.call_slice,
+            };
+        }
+
+        pub fn call(self: *const Self, a: A) B {
+            // if (N == 1) {
+            //     return self.single_lam.call(a);
+            // } else if (N == 2) {
+            //     return self.composed_two.call(a);
+            // } else {
+            //     return self.composed_many.call(a);
+            // }
+            const rem_lams, const ret_val = self.call_slice(.{ self.lams_array.items, a });
+            assert(rem_lams.len == 0);
+            return ret_val;
+        }
+    };
+}
+
 const ComposeCfg = struct {
     allocator: Allocator,
     error_set: type,
 };
 
-fn getDefaultComposeCfg(allocator: Allocator) ComposeCfg {
+pub fn getDefaultComposeCfg(allocator: Allocator) ComposeCfg {
     return .{
         .allocator = allocator,
         .error_set = Allocator.Error,
@@ -512,7 +1078,7 @@ fn ComposeTwoFn(map_fn1: anytype, map_fn2: anytype) type {
         second_fn: *const fn (B) C,
 
         const Self = @This();
-        pub fn call(self: Self, a: A) C {
+        pub fn call(self: *Self, a: A) C {
             return self.second_fn(self.first_fn(a));
         }
     };
