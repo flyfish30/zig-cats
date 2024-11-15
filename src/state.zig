@@ -833,7 +833,7 @@ test "State(s, a) Monad bind" {
     try testing.expectEqual(42, res1_s);
 }
 
-test "runDo Arraylist" {
+test "runDo State(Arraylist(i32), A)" {
     const input1: i32 = 42;
 
     const allocator = testing.allocator;
@@ -941,8 +941,8 @@ pub fn StateF(comptime cfg: anytype, comptime S: type) TCtor {
     return struct {
         fn StateSA(comptime A: type) type {
             return union(enum) {
-                get: GetLamType,
-                put: struct { S, A },
+                GetF: *GetLamType,
+                PutF: struct { S, A },
 
                 const Self = @This();
                 const GetLamType = base.ComposableLam(cfg, S, Error!A);
@@ -954,18 +954,18 @@ pub fn StateF(comptime cfg: anytype, comptime S: type) TCtor {
                 pub const StateA = A;
 
                 pub fn stateGet(get_fn: *const fn (S) Error!A) Error!Self {
-                    return .{ .get = try GetLamType.initByFn(get_fn) };
+                    return .{ .GetF = try GetLamType.createByFn(get_fn) };
                 }
 
                 pub fn statePut(s: S, a: A) Self {
-                    return .{ .put = .{ s, a } };
+                    return .{ .PutF = .{ s, a } };
                 }
 
                 pub fn deinit(self: Self) void {
-                    if (self == .get) {
-                        self.get.deinit();
+                    if (self == .GetF) {
+                        self.GetF.strongUnref();
                     } else {
-                        base.deinitOrUnref(self.put[0]);
+                        base.deinitOrUnref(self.PutF[0]);
                     }
                 }
             };
@@ -1008,7 +1008,7 @@ pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
         pub const MbType = MonadFxTypes(F, Error).MbType;
 
         pub fn deinitFa(
-            fa: anytype, // Maybe(A)
+            fa: anytype, // StateF(cfg, S, A)
             comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
         ) void {
             _ = free_fn;
@@ -1046,19 +1046,19 @@ pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
                 }
             };
 
-            if (_fa == .get) {
+            if (_fa == .GetF) {
                 if (comptime isMapRef(K)) {
                     const map_ref_lam = MapRefLam{ .map_fn = map_fn };
-                    return .{ .get = fa.get.appendLam(map_ref_lam) };
+                    return .{ .GetF = fa.GetF.appendLam(map_ref_lam) };
                 }
-                return .{ .get = fa.get.appendFn(map_fn) };
+                return .{ .GetF = fa.GetF.appendFn(map_fn) };
             } else {
                 const b = if (comptime isMapRef(K))
-                    map_fn(&fa.put[1])
+                    map_fn(&fa.PutF[1])
                 else
-                    map_fn(fa.put[1]);
+                    map_fn(fa.PutF[1]);
                 const _b = if (has_err) try b else b;
-                return .{ .put = .{ fa.put[0], _b } };
+                return .{ .PutF = .{ fa.PutF[0], _b } };
             }
         }
 
@@ -1078,24 +1078,28 @@ pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
             const MapRefLam = struct {
                 map_lam: @TypeOf(map_lam),
                 const MapSelf = @This();
+                pub fn deinit(map_self: MapSelf) void {
+                    base.deinitOrUnref(map_self.map_lam);
+                }
+
                 pub fn call(map_self: MapSelf, a: std.meta.Child(A)) B {
                     return map_self.map_lam.call(&a);
                 }
             };
 
-            if (_fa == .get) {
+            if (_fa == .GetF) {
                 if (comptime isMapRef(K)) {
                     const map_ref_lam = MapRefLam{ .map_lam = map_lam };
-                    return .{ .get = try fa.get.appendLam(map_ref_lam) };
+                    return .{ .GetF = try fa.GetF.appendLam(map_ref_lam) };
                 }
-                return .{ .get = try fa.get.appendLam(map_lam) };
+                return .{ .GetF = try fa.GetF.appendLam(map_lam) };
             } else {
                 const b = if (comptime isMapRef(K))
-                    map_lam.call(&fa.put[1])
+                    map_lam.call(&fa.PutF[1])
                 else
-                    map_lam.call(fa.put[1]);
+                    map_lam.call(fa.PutF[1]);
                 const _b = if (has_err) try b else b;
-                return .{ .put = .{ fa.put[0], _b } };
+                return .{ .PutF = .{ fa.PutF[0], _b } };
             }
         }
     };
@@ -1107,10 +1111,10 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
 
     // Define Op constructor lambdas for StateF
     return struct {
-        pub const Put = PutLam;
-        pub const Get = GetLam;
+        pub const PutF = PutFLam;
+        pub const GetF = GetFLam;
 
-        const PutLam = extern struct {
+        const PutFLam = extern struct {
             lam_ctx: ?*S = null,
 
             const Self = @This();
@@ -1132,15 +1136,11 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
                     @panic("Fatal Error: The Put of StateF is not initialized!");
                 }
 
-                defer {
-                    cfg.allocator.destroy(self.lam_ctx.?);
-                    self.lam_ctx = null;
-                }
-                return .{ .put = .{ self.lam_ctx.?.*, a } };
+                return .{ .PutF = .{ self.lam_ctx.?.*, a } };
             }
         };
 
-        const GetLam = struct {
+        const GetFLam = struct {
             // composable function
             lam_ctx: *const fn (S) Error!A,
 
@@ -1173,18 +1173,18 @@ pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
         pub const Error = Allocator.Error;
 
         pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
-            if (fa == .put) {
-                const put_fmt_str = "Put {any}, ";
-                const len = std.fmt.count(put_fmt_str, .{fa.put[0]});
+            if (fa == .PutF) {
+                const put_fmt_str = "PutF {any}, ";
+                const len = std.fmt.count(put_fmt_str, .{fa.PutF[0]});
                 var array = try ArrayList(u8).initCapacity(self.allocator, len);
                 const put_buf = array.addManyAsSliceAssumeCapacity(len);
-                _ = std.fmt.bufPrint(put_buf, put_fmt_str, .{fa.put[0]}) catch |err|
+                _ = std.fmt.bufPrint(put_buf, put_fmt_str, .{fa.PutF[0]}) catch |err|
                     switch (err) {
                     error.NoSpaceLeft => unreachable, // we just counted the size above
                 };
-                return .{ .a = fa.put[1], .w = array };
+                return .{ .a = fa.PutF[1], .w = array };
             } else {
-                const get_fmt_str = "Get, ";
+                const get_fmt_str = "GetF, ";
                 const len = std.fmt.count(get_fmt_str, .{});
                 var array = try ArrayList(u8).initCapacity(self.allocator, len);
                 const get_buf = array.addManyAsSliceAssumeCapacity(len);
@@ -1192,7 +1192,7 @@ pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
                     switch (err) {
                     error.NoSpaceLeft => unreachable, // we just counted the size above
                 };
-                return .{ .a = try fa.get.call(38), .w = array };
+                return .{ .a = try fa.GetF.call(38), .w = array };
             }
         }
     };
@@ -1210,12 +1210,6 @@ test "FreeMonad(StateF, A) foldFree" {
     const StateFCtor = StateF(cfg, StateS);
     const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
     const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
-    // const FreeStateFImpl = FreeMonadImpl(StateFCtor, StateFFunctorImpl);
-    // const FStateMonad = Monad(FreeStateFImpl);
-    // var freem_monad = FStateMonad.init(.{
-    //     .allocator = allocator,
-    //     .funf_impl = statef_functor,
-    // });
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
     const ShowMonad = Monad(ShowMonadImpl);
@@ -1226,15 +1220,15 @@ test "FreeMonad(StateF, A) foldFree" {
 
     const ExistType = freetypes.GetExistentialType(StateFCtor);
     const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, StateS, u32));
-    const Put: FOpEnumInt = @intFromEnum(StateFCtorEnum.Put);
-    const buildPut = StateFCtorDefs(cfg, StateS, u32).Put.build;
-    const Get: FOpEnumInt = @intFromEnum(StateFCtorEnum.Get);
+    const PutF: FOpEnumInt = @intFromEnum(StateFCtorEnum.PutF);
+    const buildPutF = StateFCtorDefs(cfg, StateS, u32).PutF.build;
+    const GetF: FOpEnumInt = @intFromEnum(StateFCtorEnum.GetF);
     // The function operator build a FreeMonad(F, ExistType)
-    const buildGet = StateFCtorDefs(cfg, StateS, ExistType).Get.build;
+    const buildGetF = StateFCtorDefs(cfg, StateS, ExistType).GetF.build;
     const FOpInfo = comptime FreeMonad(StateFCtor, u32).FOpInfo;
     const put_ops = &[_]FOpInfo{
-        .{ .op_e = Put, .op_lam = @bitCast(try buildPut(37)) },
-        .{ .op_e = Put, .op_lam = @bitCast(try buildPut(23)) },
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37)) },
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(23)) },
     };
 
     var free_state = try FreeMonad(StateFCtor, u32).freeM(allocator, 42, @constCast(put_ops));
@@ -1242,7 +1236,7 @@ test "FreeMonad(StateF, A) foldFree" {
     const show_writer = try free_state.foldFree(nat_statef_show, statef_functor, show_monad);
     defer show_writer.deinit();
     try testing.expectEqual(42, show_writer.a);
-    try testing.expectEqualSlices(u8, "Put 23, Put 37, ", show_writer.w.items);
+    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, ", show_writer.w.items);
 
     const get_fn = struct {
         const Error = FreeMonad(StateFCtor, ExistType).Error;
@@ -1253,23 +1247,110 @@ test "FreeMonad(StateF, A) foldFree" {
 
     const x_to_free_state = struct {
         const Error = FreeMonad(StateFCtor, u32).Error;
-        fn toFreeState(x: u64) Error!FreeMonad(StateFCtor, u32) {
-            return FreeMonad(StateFCtor, u32).pureM(@intCast(x));
+        fn xToFreeState(x: u64) Error!FreeMonad(StateFCtor, u32) {
+            const x_state_ops = &[_]FOpInfo{
+                .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37 + x)) },
+            };
+            return FreeMonad(StateFCtor, u32).freeM(allocator, 42, @constCast(x_state_ops));
         }
-    }.toFreeState;
+    }.xToFreeState;
 
-    var free_state1 = try FreeMonad(StateFCtor, u32).freeFOp(x_to_free_state, Get, buildGet(get_fn));
+    var free_state1 = try FreeMonad(StateFCtor, u32).freeFOp(x_to_free_state, GetF, buildGetF(get_fn));
     defer free_state1.deinit();
     const show_writer1 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
     defer show_writer1.deinit();
-    try testing.expectEqual(48, show_writer1.a);
-    try testing.expectEqualSlices(u8, "Get, ", show_writer1.w.items);
+    try testing.expectEqual(42, show_writer1.a);
+    // In StateFShowNatImpl, the GetF had been put a 38 as S value.
+    try testing.expectEqualSlices(u8, "GetF, PutF 85, ", show_writer1.w.items);
 
-    // free_state1 = try free_state1.appendFOp(allocator, put_ops[0]);
-    // const show_writer2 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
-    // defer show_writer2.deinit();
-    // try testing.expectEqual(48, show_writer2.a);
-    // try testing.expectEqualSlices(u8, "Put 37, Get, ", show_writer2.w.items);
+    const state1_ops = &[_]FOpInfo{
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(89)) },
+    };
+    free_state1 = try free_state1.appendFOp(allocator, state1_ops[0]);
+    const show_writer2 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer2.deinit();
+    try testing.expectEqual(42, show_writer2.a);
+    try testing.expectEqualSlices(u8, "PutF 89, GetF, PutF 85, ", show_writer2.w.items);
+}
+
+test "FreeMonad(StateF, A) fmap and fmapLam" {
+    const allocator = testing.allocator;
+    const StateS = u64;
+    const cfg = getDefaultCfg(StateS, allocator);
+    const StateFCtor = StateF(cfg, StateS);
+    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
+    const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
+    const FreeStateFImpl = FreeMonadImpl(StateFCtor, StateFFunctorImpl(cfg, StateS));
+    const FStateMonad = Monad(FreeStateFImpl);
+    var freem_monad = FStateMonad.init(.{
+        .allocator = allocator,
+        .funf_impl = statef_functor,
+    });
+
+    const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+    const ShowMonad = Monad(ShowMonadImpl);
+    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
+    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+
+    const ExistType = freetypes.GetExistentialType(StateFCtor);
+    const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, StateS, u32));
+    const PutF: FOpEnumInt = @intFromEnum(StateFCtorEnum.PutF);
+    const buildPutF = StateFCtorDefs(cfg, StateS, u32).PutF.build;
+    const GetF: FOpEnumInt = @intFromEnum(StateFCtorEnum.GetF);
+    // The function operator build a FreeMonad(F, ExistType)
+    const buildGetF = StateFCtorDefs(cfg, StateS, ExistType).GetF.build;
+    const FOpInfo = comptime FreeMonad(StateFCtor, u32).FOpInfo;
+    const put_ops = &[_]FOpInfo{
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37)) },
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(23)) },
+    };
+
+    const get_fn = struct {
+        const Error = FreeMonad(StateFCtor, ExistType).Error;
+        fn get(s: u64) Error!ExistType {
+            return @intCast(s + 10);
+        }
+    }.get;
+
+    const x_to_free_state = struct {
+        const Error = FreeMonad(StateFCtor, u32).Error;
+        fn xToFreeState(x: u64) Error!FreeMonad(StateFCtor, u32) {
+            const x_state_ops = &[_]FOpInfo{
+                .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37 + x)) },
+            };
+            return FreeMonad(StateFCtor, u32).freeM(allocator, 42, @constCast(x_state_ops));
+        }
+    }.xToFreeState;
+
+    var free_state = try FreeMonad(StateFCtor, u32).freeFOp(x_to_free_state, GetF, buildGetF(get_fn));
+
+    free_state = try free_state.appendFOps(allocator, put_ops);
+    // When use InplaceMap mode to call fmap with free_state, do not deinit free_state.
+    // defer free_state.deinit();
+    const show_writer = try free_state.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer.deinit();
+    try testing.expectEqual(42, show_writer.a);
+    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 85, ", show_writer.w.items);
+
+    // const add_pi_f64_lam = testu.Add_x_f64_Lam{ ._x = 3.14 };
+    // const free_state1 = try freem_monad.fmapLam(.InplaceMap, add_pi_f64_lam, free_state);
+    const free_state1 = try freem_monad.fmap(.InplaceMap, add_pi_f64, free_state);
+    // When use InplaceMap mode to call fmap with free_state1, do not deinit free_state1.
+    // defer free_state1.deinit();
+    const show_writer1 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer1.deinit();
+    try testing.expectEqual(45.14, show_writer1.a);
+    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 85, ", show_writer1.w.items);
+
+    const div_5_u32_lam = testu.Div_x_u32_Lam{ ._x = 5 };
+    const free_state2 = try freem_monad.fmapLam(.InplaceMap, div_5_u32_lam, free_state1);
+    defer free_state2.deinit();
+    const show_writer2 = try free_state2.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer2.deinit();
+    try testing.expectEqual(9, show_writer2.a);
+    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 85, ", show_writer2.w.items);
 }
 
 ///////////////////////////////////////////////////

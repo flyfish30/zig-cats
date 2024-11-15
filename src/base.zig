@@ -42,18 +42,19 @@ pub fn MapFnRetType(comptime MapFn: type) type {
 }
 
 pub fn MapLamInType(comptime MapLam: type) type {
-    const info = @typeInfo(MapLam);
+    const _MapLam = if (@typeInfo(MapLam) == .Pointer) std.meta.Child(MapLam) else MapLam;
+    const info = @typeInfo(_MapLam);
     if (info != .Struct) {
         @compileError("The map lambda must be a struct!");
     }
 
-    const mapFnInfo = @typeInfo(@TypeOf(MapLam.call));
+    const mapFnInfo = @typeInfo(@TypeOf(_MapLam.call));
     const len = mapFnInfo.Fn.params.len;
 
     if (len != 2) {
         @compileError("The call function of map lambda must have only two parameters!");
     }
-    if (mapFnInfo.Fn.params[0].type.? != *MapLam and mapFnInfo.Fn.params[0].type.? != *const MapLam) {
+    if (mapFnInfo.Fn.params[0].type.? != *_MapLam and mapFnInfo.Fn.params[0].type.? != *const _MapLam) {
         @compileError("The first parameter of call function must be a pointer of MapLam!");
     }
 
@@ -61,12 +62,13 @@ pub fn MapLamInType(comptime MapLam: type) type {
 }
 
 pub fn MapLamRetType(comptime MapLam: type) type {
-    const info = @typeInfo(MapLam);
+    const _MapLam = if (@typeInfo(MapLam) == .Pointer) std.meta.Child(MapLam) else MapLam;
+    const info = @typeInfo(_MapLam);
     if (info != .Struct) {
         @compileError("The map lambda must be a struct!");
     }
 
-    const mapFnInfo = @typeInfo(@TypeOf(MapLam.call));
+    const mapFnInfo = @typeInfo(@TypeOf(_MapLam.call));
     const R = mapFnInfo.Fn.return_type.?;
 
     if (R == noreturn) {
@@ -202,19 +204,21 @@ pub fn ComposableLam(
 ) type {
     const has_err, const _B = comptime isErrorUnionOrVal(B);
     return struct {
+        ref_count: ?usize,
         any_lam: *anyopaque,
         call_fn: *const fn (*anyopaque, A) B,
-        deinit_fn: *const fn (*const Self) void,
+        ref_fn: *const fn (*Self) *Self,
+        unref_fn: *const fn (*Self) void,
 
         const Self = @This();
         const self_cfg = cfg;
 
-        pub fn initByFn(map_fn: anytype) Allocator.Error!Self {
-            // @compileLog("initByFn map_fn type: " ++ @typeName(@TypeOf(map_fn)));
-            return Self.init(mapFnToLam(map_fn));
+        pub fn createByFn(map_fn: anytype) Allocator.Error!*Self {
+            // @compileLog("createByFn map_fn type: " ++ @typeName(@TypeOf(map_fn)));
+            return Self.create(mapFnToLam(map_fn));
         }
 
-        pub fn init(init_lam: anytype) Allocator.Error!Self {
+        pub fn create(init_lam: anytype) Allocator.Error!*Self {
             const InitLam = @TypeOf(init_lam);
             // @compileLog("init init_lam type: " ++ @typeName(@TypeOf(init_lam)));
             // @compileLog("init RetType type: " ++ @typeName(MapLamRetType(InitLam)));
@@ -222,19 +226,54 @@ pub fn ComposableLam(
             comptime assert(A == MapLamInType(InitLam));
             comptime assert(B == MapLamRetType(InitLam));
             var any_lam: *anyopaque = undefined;
-            if (@sizeOf(InitLam) <= @sizeOf(*anyopaque)) {
+            const comp_lam = try cfg.allocator.create(Self);
+            // std.debug.print("create comp_lam = {*}\n", .{comp_lam});
+            comp_lam.* = if (@sizeOf(InitLam) <= @sizeOf(*anyopaque)) blk_t: {
                 var any_lam_bytes = std.mem.asBytes(&any_lam);
                 const tmp_lam = try copyOrCloneOrRef(init_lam);
                 const tmp_lam_bytes = std.mem.asBytes(&tmp_lam);
                 @memcpy(any_lam_bytes[0..@sizeOf(InitLam)], tmp_lam_bytes);
 
                 const SmallLamFns = struct {
-                    fn deinit(self: *const Self) void {
+                    fn ref(self: *Self) *Self {
+                        if (self.ref_count == null) {
+                            self.ref_count = 1;
+                            // return self;
+                        }
                         const self_any_lam_bytes = std.mem.asBytes(&self.any_lam);
                         var lam: InitLam = undefined;
                         const lam_bytes = std.mem.asBytes(&lam);
                         @memcpy(lam_bytes, self_any_lam_bytes[0..@sizeOf(InitLam)]);
+                        if (@hasDecl(InitLam, "refSubLam"))
+                            lam.refSubLam()
+                        else
+                            _ = tryStrongRef(lam);
+                        self.ref_count.? += 1;
+                        // std.debug.print("ref ref_count={?}, SmallLam = {*}\n", .{ self.ref_count, self });
+                        return self;
+                    }
+
+                    fn unref(self: *Self) void {
+                        const self_any_lam_bytes = std.mem.asBytes(&self.any_lam);
+                        var lam: InitLam = undefined;
+                        const lam_bytes = std.mem.asBytes(&lam);
+                        @memcpy(lam_bytes, self_any_lam_bytes[0..@sizeOf(InitLam)]);
+                        // std.debug.print("unref ref_count={?}, SmallLam = {*}\n", .{ self.ref_count, self });
+
+                        if (self.ref_count != null and self.ref_count.? > 1) {
+                            self.ref_count.? -= 1;
+                            if (@hasDecl(InitLam, "unrefSubLam"))
+                                unreachable
+                                // lam.unrefSubLam()
+                            else
+                                tryStrongUnref(lam);
+                            return;
+                        }
+
                         deinitOrUnref(lam);
+                        // std.debug.print("destroy SmallLam comp_lam = {*}\n", .{self});
+                        self.ref_count = null;
+                        cfg.allocator.destroy(self);
                     }
 
                     fn call(self_any_lam: *anyopaque, a: A) B {
@@ -245,21 +284,55 @@ pub fn ComposableLam(
                         return lam.call(a);
                     }
                 };
-                return .{
+                break :blk_t .{
+                    .ref_count = null,
                     .any_lam = any_lam,
                     .call_fn = SmallLamFns.call,
-                    .deinit_fn = SmallLamFns.deinit,
+                    .ref_fn = SmallLamFns.ref,
+                    .unref_fn = SmallLamFns.unref,
                 };
-            } else {
+            } else blk_f: {
                 const lam = try cfg.allocator.create(InitLam);
+                // std.debug.print("create NormalLam = {*}\n", .{lam});
                 lam.* = try copyOrCloneOrRef(init_lam);
                 any_lam = @ptrCast(lam);
 
                 const NormalLamFns = struct {
-                    fn deinit(self: *const Self) void {
+                    fn ref(self: *Self) *Self {
+                        if (self.ref_count == null) {
+                            self.ref_count = 1;
+                            // return self;
+                        }
                         const real_lam: *InitLam = @alignCast(@ptrCast(self.any_lam));
+                        if (@hasDecl(InitLam, "refSubLam"))
+                            real_lam.refSubLam()
+                        else
+                            _ = tryStrongRef(real_lam);
+                        self.ref_count.? += 1;
+                        // std.debug.print("ref ref_count={?}, NormalLam = {*}\n", .{ self.ref_count, self });
+                        return self;
+                    }
+
+                    fn unref(self: *Self) void {
+                        const real_lam: *InitLam = @alignCast(@ptrCast(self.any_lam));
+                        // std.debug.print("unref ref_count={?}, NormalLam = {*}\n", .{ self.ref_count, self });
+                        if (self.ref_count != null and self.ref_count.? > 1) {
+                            self.ref_count.? -= 1;
+                            if (@hasDecl(InitLam, "unrefSubLam"))
+                                real_lam.unrefSubLam()
+                            else
+                                tryStrongUnref(real_lam);
+                            return;
+                        }
+
                         deinitOrUnref(real_lam.*);
+                        // unreference real_lam self
+                        tryStrongUnref(real_lam);
+                        // std.debug.print("destroy NormalLam = {*}\n", .{real_lam});
                         cfg.allocator.destroy(real_lam);
+                        self.ref_count = null;
+                        // std.debug.print("destroy NormalLam comp_lam = {*}\n", .{self});
+                        cfg.allocator.destroy(self);
                     }
 
                     fn call(self_any_lam: *anyopaque, a: A) B {
@@ -267,16 +340,24 @@ pub fn ComposableLam(
                         return real_lam.call(a);
                     }
                 };
-                return .{
+                break :blk_f .{
+                    .ref_count = null,
                     .any_lam = any_lam,
                     .call_fn = NormalLamFns.call,
-                    .deinit_fn = NormalLamFns.deinit,
+                    .ref_fn = NormalLamFns.ref,
+                    .unref_fn = NormalLamFns.unref,
                 };
-            }
+            };
+            return comp_lam;
         }
 
-        pub fn deinit(self: *const Self) void {
-            self.deinit_fn(self);
+        pub fn strongRef(self: *Self) *Self {
+            _ = self.ref_fn(self);
+            return self;
+        }
+
+        pub fn strongUnref(self: *Self) void {
+            self.unref_fn(self);
         }
 
         fn AppendedRetType(comptime InType: type, comptime Lam: type) type {
@@ -298,26 +379,39 @@ pub fn ComposableLam(
         pub fn appendFn(
             self: Self,
             map_fn: anytype,
-        ) Allocator.Error!ComposableLam(cfg, A, AppendedRetType(B, MapFnToLamType(@TypeOf(map_fn)))) {
+        ) Allocator.Error!*ComposableLam(cfg, A, AppendedRetType(B, MapFnToLamType(@TypeOf(map_fn)))) {
             return self.appendLam(mapFnToLam(map_fn));
         }
 
         pub fn appendLam(
-            self: Self,
+            self: *Self,
             lam: anytype,
-        ) Allocator.Error!ComposableLam(cfg, A, AppendedRetType(B, @TypeOf(lam))) {
+        ) Allocator.Error!*ComposableLam(cfg, A, AppendedRetType(B, @TypeOf(lam))) {
             const Lam = @TypeOf(lam);
             const InType = MapLamInType(Lam);
             comptime assert(_B == InType);
             const RetType = AppendedRetType(B, Lam);
 
-            const NewCompLam = struct {
-                comp_lam: Self,
+            const AppendedCompLam = struct {
+                comp_lam: *Self,
                 append_lam: Lam,
 
                 const SelfNew = @This();
+                pub fn refSubLam(self_new: *const SelfNew) void {
+                    // std.debug.print("appended_comp_lam refSubLam comp_lam={*}\n", .{self_new.comp_lam});
+                    _ = self_new.comp_lam.strongRef();
+                    _ = tryStrongRef(self_new.append_lam);
+                }
+
+                pub fn unrefSubLam(self_new: SelfNew) void {
+                    // std.debug.print("appended_comp_lam unrefSubLam comp_lam={*}\n", .{self_new.comp_lam});
+                    self_new.comp_lam.strongUnref();
+                    tryStrongUnref(self_new.append_lam);
+                }
+
                 pub fn deinit(self_new: SelfNew) void {
-                    self_new.comp_lam.deinit();
+                    // std.debug.print("appended_comp_lam deinit comp_lam={*}\n", .{self_new.comp_lam});
+                    self_new.comp_lam.strongUnref();
                     deinitOrUnref(self_new.append_lam);
                 }
 
@@ -330,11 +424,12 @@ pub fn ComposableLam(
                 }
             };
 
-            const new_comp_lam = NewCompLam{
+            const appended_comp_lam = AppendedCompLam{
                 .comp_lam = self,
                 .append_lam = try copyOrCloneOrRef(lam),
             };
-            return ComposableLam(cfg, A, RetType).init(new_comp_lam);
+            // std.debug.print("appended_comp_lam comp_lam={*}\n", .{appended_comp_lam.comp_lam});
+            return ComposableLam(cfg, A, RetType).create(appended_comp_lam);
         }
 
         pub fn call(self: *const Self, a: A) B {
@@ -354,19 +449,18 @@ test ComposableLam {
     var point_move_lam = testu.Point3_offset_u32_Lam{ ._point = .{ 46.2, 26.83, 72.56 } };
     _ = &point_move_lam;
 
-    const comp1 = try ComposableLam(cfg, u32, f64).init(add_pi_lam);
+    const comp1 = try ComposableLam(cfg, u32, f64).create(add_pi_lam);
     const comp2 = try comp1.appendLam(div_5_lam);
     try testing.expectEqual(8, comp2.call(40));
     const comp3 = try comp2.appendLam(add_e_f32_lam);
     try testing.expectEqual(10.72, comp3.call(40));
+    comp3.strongUnref();
 
-    const comp11 = try ComposableLam(cfg, u32, f64).init(add_pi_lam);
+    const comp11 = try ComposableLam(cfg, u32, f64).create(add_pi_lam);
     const comp12 = try comp11.appendLam(div_5_lam);
     const comp13 = try comp12.appendLam(point_move_lam);
     try testing.expectEqual(.{ 54.2, 34.83, 80.56 }, comp13.call(40));
-
-    comp3.deinit();
-    comp13.deinit();
+    comp13.strongUnref();
 }
 
 pub fn LamWrapper(comptime cfg: anytype, comptime Lam: type) type {
@@ -388,8 +482,9 @@ pub fn LamWrapper(comptime cfg: anytype, comptime Lam: type) type {
         }
 
         pub fn deinit(self: Self) void {
-            deinitOrUnref(self.lam_self);
-            cfg.allocator.destroy(@alignCast(@ptrCast(self.lam_self)));
+            const lam_self: *Lam = @alignCast(@ptrCast(self.lam_self));
+            deinitOrUnref(lam_self.*);
+            cfg.allocator.destroy(lam_self);
         }
 
         pub fn call(self: *Self, a: A) B {
@@ -417,19 +512,19 @@ fn FnOrLamRetType(comptime FnOrLam: type) type {
     switch (@typeInfo(FnOrLam)) {
         .Fn => return MapFnRetType(FnOrLam),
         .Struct => return MapLamRetType(FnOrLam),
-        else => @compileError("The FnOrLam(" ++ @typeName(FnOrLam) ++ ") not a function or lambda!"),
+        else => @compileError("Expect FnOrLam be a function or lambda, found '" ++ @typeName(FnOrLam) ++ "'"),
     }
 }
 
 fn manyTupleAllTypes(comptime ManyTuple: type) []const type {
     const tuple_info = @typeInfo(ManyTuple);
     if (tuple_info != .Struct) {
-        @compileError("The many_tuple(" ++ @typeName(ManyTuple) ++ ") must be a tuple!");
+        @compileError("Expect ManyTuple be a tuple, found '" ++ @typeName(ManyTuple) ++ "'");
     }
 
     const fields = tuple_info.Struct.fields;
     if (fields.len == 0) {
-        @compileError("The many_tuple(" ++ @typeName(ManyTuple) ++ ") is a empty tuple!");
+        @compileError("The ManyTuple(" ++ @typeName(ManyTuple) ++ ") is a empty tuple!");
     }
     var types: [fields.len]type = undefined;
     types[0] = fields[0].type;
@@ -1168,6 +1263,32 @@ pub fn freeNothing(a: anytype) void {
     return;
 }
 
+/// Try to referance a pointer, else do nothing
+pub fn tryStrongRef(a: anytype) @TypeOf(a) {
+    const T = @TypeOf(a);
+    const info = @typeInfo(T);
+    switch (info) {
+        .Pointer => {
+            const Child = info.Pointer.child;
+            const child_info = @typeInfo(Child);
+            if (info.Pointer.size != .One) {
+                @compileError("tryRef only for pointer that has only one element!");
+            }
+            switch (child_info) {
+                .Struct, .Enum, .Union, .Opaque => {
+                    if (@hasDecl(Child, "strongRef")) {
+                        return a.strongRef();
+                    }
+                },
+                else => {},
+            }
+        },
+        else => {},
+    }
+
+    return a;
+}
+
 /// Clone a constructed data or referance a pointer
 pub fn copyOrCloneOrRef(a: anytype) !@TypeOf(a) {
     const T = @TypeOf(a);
@@ -1182,11 +1303,11 @@ pub fn copyOrCloneOrRef(a: anytype) !@TypeOf(a) {
             const Child = info.Pointer.child;
             const child_info = @typeInfo(Child);
             if (info.Pointer.size != .One) {
-                @compileError("deinitOrUnref only for pointer that has only one element!");
+                @compileError("copyOrCloneOrRef only for pointer that has only one element!");
             }
             switch (child_info) {
                 .Struct, .Enum, .Union, .Opaque => {
-                    if (@hasDecl(T, "strongRef")) {
+                    if (@hasDecl(Child, "strongRef")) {
                         return a.strongRef();
                     }
                 },
@@ -1208,6 +1329,30 @@ pub fn getDeinitOrUnref(comptime T: type) FreeTFn(T) {
     }.freeT;
 }
 
+/// Try to unreferance a pointer, else do nothing
+pub fn tryStrongUnref(a: anytype) void {
+    const T = @TypeOf(a);
+    const info = @typeInfo(T);
+    switch (info) {
+        .Pointer => {
+            const Child = info.Pointer.child;
+            const child_info = @typeInfo(Child);
+            if (info.Pointer.size != .One) {
+                @compileError("nothingOrUnref only for pointer that has only one element!");
+            }
+            switch (child_info) {
+                .Struct, .Enum, .Union, .Opaque => {
+                    if (@hasDecl(Child, "strongUnref")) {
+                        _ = a.strongUnref();
+                    }
+                },
+                else => {},
+            }
+        },
+        else => {},
+    }
+}
+
 /// Deinit a constructed data or unreferance a pointer
 pub fn deinitOrUnref(a: anytype) void {
     const T = @TypeOf(a);
@@ -1226,7 +1371,7 @@ pub fn deinitOrUnref(a: anytype) void {
             }
             switch (child_info) {
                 .Struct, .Enum, .Union, .Opaque => {
-                    if (@hasDecl(T, "strongUnref")) {
+                    if (@hasDecl(Child, "strongUnref")) {
                         _ = a.strongUnref();
                     }
                 },
