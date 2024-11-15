@@ -204,7 +204,7 @@ pub fn ComposableLam(
 ) type {
     const has_err, const _B = comptime isErrorUnionOrVal(B);
     return struct {
-        ref_count: ?usize,
+        ref_count: usize,
         any_lam: *anyopaque,
         call_fn: *const fn (*anyopaque, A) B,
         ref_fn: *const fn (*Self) *Self,
@@ -236,10 +236,6 @@ pub fn ComposableLam(
 
                 const SmallLamFns = struct {
                     fn ref(self: *Self) *Self {
-                        if (self.ref_count == null) {
-                            self.ref_count = 1;
-                            // return self;
-                        }
                         const self_any_lam_bytes = std.mem.asBytes(&self.any_lam);
                         var lam: InitLam = undefined;
                         const lam_bytes = std.mem.asBytes(&lam);
@@ -248,8 +244,8 @@ pub fn ComposableLam(
                             lam.refSubLam()
                         else
                             _ = tryStrongRef(lam);
-                        self.ref_count.? += 1;
-                        // std.debug.print("ref ref_count={?}, SmallLam = {*}\n", .{ self.ref_count, self });
+                        self.ref_count += 1;
+                        // std.debug.print("ref ref_count={d}, SmallLam = {*}\n", .{ self.ref_count, self });
                         return self;
                     }
 
@@ -258,10 +254,10 @@ pub fn ComposableLam(
                         var lam: InitLam = undefined;
                         const lam_bytes = std.mem.asBytes(&lam);
                         @memcpy(lam_bytes, self_any_lam_bytes[0..@sizeOf(InitLam)]);
-                        // std.debug.print("unref ref_count={?}, SmallLam = {*}\n", .{ self.ref_count, self });
+                        // std.debug.print("unref ref_count={d}, SmallLam = {*}\n", .{ self.ref_count, self });
 
-                        if (self.ref_count != null and self.ref_count.? > 1) {
-                            self.ref_count.? -= 1;
+                        if (self.ref_count > 1) {
+                            self.ref_count -= 1;
                             if (@hasDecl(InitLam, "unrefSubLam"))
                                 unreachable
                                 // lam.unrefSubLam()
@@ -272,7 +268,7 @@ pub fn ComposableLam(
 
                         deinitOrUnref(lam);
                         // std.debug.print("destroy SmallLam comp_lam = {*}\n", .{self});
-                        self.ref_count = null;
+                        self.ref_count = 0;
                         cfg.allocator.destroy(self);
                     }
 
@@ -285,7 +281,7 @@ pub fn ComposableLam(
                     }
                 };
                 break :blk_t .{
-                    .ref_count = null,
+                    .ref_count = 1,
                     .any_lam = any_lam,
                     .call_fn = SmallLamFns.call,
                     .ref_fn = SmallLamFns.ref,
@@ -299,25 +295,21 @@ pub fn ComposableLam(
 
                 const NormalLamFns = struct {
                     fn ref(self: *Self) *Self {
-                        if (self.ref_count == null) {
-                            self.ref_count = 1;
-                            // return self;
-                        }
                         const real_lam: *InitLam = @alignCast(@ptrCast(self.any_lam));
                         if (@hasDecl(InitLam, "refSubLam"))
                             real_lam.refSubLam()
                         else
                             _ = tryStrongRef(real_lam);
-                        self.ref_count.? += 1;
-                        // std.debug.print("ref ref_count={?}, NormalLam = {*}\n", .{ self.ref_count, self });
+                        self.ref_count += 1;
+                        // std.debug.print("ref ref_count={d}, NormalLam = {*}\n", .{ self.ref_count, self });
                         return self;
                     }
 
                     fn unref(self: *Self) void {
                         const real_lam: *InitLam = @alignCast(@ptrCast(self.any_lam));
-                        // std.debug.print("unref ref_count={?}, NormalLam = {*}\n", .{ self.ref_count, self });
-                        if (self.ref_count != null and self.ref_count.? > 1) {
-                            self.ref_count.? -= 1;
+                        // std.debug.print("unref ref_count={d}, NormalLam = {*}\n", .{ self.ref_count, self });
+                        if (self.ref_count > 1) {
+                            self.ref_count -= 1;
                             if (@hasDecl(InitLam, "unrefSubLam"))
                                 real_lam.unrefSubLam()
                             else
@@ -330,7 +322,7 @@ pub fn ComposableLam(
                         tryStrongUnref(real_lam);
                         // std.debug.print("destroy NormalLam = {*}\n", .{real_lam});
                         cfg.allocator.destroy(real_lam);
-                        self.ref_count = null;
+                        self.ref_count = 0;
                         // std.debug.print("destroy NormalLam comp_lam = {*}\n", .{self});
                         cfg.allocator.destroy(self);
                     }
@@ -341,7 +333,7 @@ pub fn ComposableLam(
                     }
                 };
                 break :blk_f .{
-                    .ref_count = null,
+                    .ref_count = 1,
                     .any_lam = any_lam,
                     .call_fn = NormalLamFns.call,
                     .ref_fn = NormalLamFns.ref,

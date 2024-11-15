@@ -1163,6 +1163,8 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
 }
 
 pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
+    const StateFCtor = StateF(cfg, S);
+    const ExistType = freetypes.GetExistentialType(StateFCtor);
     return struct {
         allocator: Allocator,
 
@@ -1192,10 +1194,33 @@ pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
                     switch (err) {
                     error.NoSpaceLeft => unreachable, // we just counted the size above
                 };
-                return .{ .a = try fa.GetF.call(38), .w = array };
+                const init_val = base.defaultVal(ExistType);
+                return .{ .a = try fa.GetF.call(init_val), .w = array };
             }
         }
     };
+}
+
+fn statefToA(
+    comptime cfg: anytype,
+    comptime S: type,
+    comptime A: type,
+) *const fn (a: StateFA(cfg, S, A)) A {
+    const StateFCtor = StateF(cfg, S);
+    const ExistType = freetypes.GetExistentialType(StateFCtor);
+    return struct {
+        fn iterFn(statef: StateFA(cfg, S, A)) A {
+            switch (statef) {
+                .GetF => {
+                    const init_val = base.defaultVal(ExistType);
+                    return statef.GetF.call(init_val) catch base.defaultVal(A);
+                },
+                .PutF => {
+                    return statef.PutF[1];
+                },
+            }
+        }
+    }.iterFn;
 }
 
 const ArrayListMonoidImpl = freetypes.ArrayListMonoidImpl;
@@ -1203,7 +1228,7 @@ const FreeMonad = freetypes.FreeMonad;
 const FreeMonadImpl = freetypes.FreeMonadImpl;
 const FOpEnumInt = freetypes.FOpEnumInt;
 
-test "FreeMonad(StateF, A) foldFree" {
+test "FreeMonad(StateF, A) foldFree and iter" {
     const allocator = testing.allocator;
     const StateS = u64;
     const cfg = getDefaultCfg(StateS, allocator);
@@ -1237,6 +1262,7 @@ test "FreeMonad(StateF, A) foldFree" {
     defer show_writer.deinit();
     try testing.expectEqual(42, show_writer.a);
     try testing.expectEqualSlices(u8, "PutF 23, PutF 37, ", show_writer.w.items);
+    try testing.expectEqual(42, try free_state.iter(statef_functor, statefToA(cfg, ExistType, u32)));
 
     const get_fn = struct {
         const Error = FreeMonad(StateFCtor, ExistType).Error;
@@ -1260,8 +1286,9 @@ test "FreeMonad(StateF, A) foldFree" {
     const show_writer1 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
     defer show_writer1.deinit();
     try testing.expectEqual(42, show_writer1.a);
-    // In StateFShowNatImpl, the GetF had been put a 38 as S value.
-    try testing.expectEqualSlices(u8, "GetF, PutF 85, ", show_writer1.w.items);
+    // In StateFShowNatImpl, the GetF had been put a 0 as S value.
+    try testing.expectEqualSlices(u8, "GetF, PutF 47, ", show_writer1.w.items);
+    try testing.expectEqual(42, try free_state1.iter(statef_functor, statefToA(cfg, ExistType, u32)));
 
     const state1_ops = &[_]FOpInfo{
         .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(89)) },
@@ -1270,7 +1297,8 @@ test "FreeMonad(StateF, A) foldFree" {
     const show_writer2 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
     defer show_writer2.deinit();
     try testing.expectEqual(42, show_writer2.a);
-    try testing.expectEqualSlices(u8, "PutF 89, GetF, PutF 85, ", show_writer2.w.items);
+    try testing.expectEqualSlices(u8, "PutF 89, GetF, PutF 47, ", show_writer2.w.items);
+    try testing.expectEqual(42, try free_state1.iter(statef_functor, statefToA(cfg, ExistType, u32)));
 }
 
 test "FreeMonad(StateF, A) fmap and fmapLam" {
@@ -1332,7 +1360,7 @@ test "FreeMonad(StateF, A) fmap and fmapLam" {
     const show_writer = try free_state.foldFree(nat_statef_show, statef_functor, show_monad);
     defer show_writer.deinit();
     try testing.expectEqual(42, show_writer.a);
-    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 85, ", show_writer.w.items);
+    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 47, ", show_writer.w.items);
 
     // const add_pi_f64_lam = testu.Add_x_f64_Lam{ ._x = 3.14 };
     // const free_state1 = try freem_monad.fmapLam(.InplaceMap, add_pi_f64_lam, free_state);
@@ -1342,7 +1370,7 @@ test "FreeMonad(StateF, A) fmap and fmapLam" {
     const show_writer1 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
     defer show_writer1.deinit();
     try testing.expectEqual(45.14, show_writer1.a);
-    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 85, ", show_writer1.w.items);
+    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 47, ", show_writer1.w.items);
 
     const div_5_u32_lam = testu.Div_x_u32_Lam{ ._x = 5 };
     const free_state2 = try freem_monad.fmapLam(.InplaceMap, div_5_u32_lam, free_state1);
@@ -1350,7 +1378,7 @@ test "FreeMonad(StateF, A) fmap and fmapLam" {
     const show_writer2 = try free_state2.foldFree(nat_statef_show, statef_functor, show_monad);
     defer show_writer2.deinit();
     try testing.expectEqual(9, show_writer2.a);
-    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 85, ", show_writer2.w.items);
+    try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 47, ", show_writer2.w.items);
 }
 
 ///////////////////////////////////////////////////
