@@ -208,7 +208,7 @@ pub fn ComposableLam(
         any_lam: *anyopaque,
         call_fn: *const fn (*anyopaque, A) B,
         ref_fn: *const fn (*Self) *Self,
-        unref_fn: *const fn (*Self) void,
+        unref_fn: *const fn (*Self) bool,
 
         const Self = @This();
         const self_cfg = cfg;
@@ -249,7 +249,7 @@ pub fn ComposableLam(
                         return self;
                     }
 
-                    fn unref(self: *Self) void {
+                    fn unref(self: *Self) bool {
                         const self_any_lam_bytes = std.mem.asBytes(&self.any_lam);
                         var lam: InitLam = undefined;
                         const lam_bytes = std.mem.asBytes(&lam);
@@ -263,13 +263,14 @@ pub fn ComposableLam(
                                 // lam.unrefSubLam()
                             else
                                 tryStrongUnref(lam);
-                            return;
+                            return false;
                         }
 
                         deinitOrUnref(lam);
                         // std.debug.print("destroy SmallLam comp_lam = {*}\n", .{self});
                         self.ref_count = 0;
                         cfg.allocator.destroy(self);
+                        return true;
                     }
 
                     fn call(self_any_lam: *anyopaque, a: A) B {
@@ -305,7 +306,7 @@ pub fn ComposableLam(
                         return self;
                     }
 
-                    fn unref(self: *Self) void {
+                    fn unref(self: *Self) bool {
                         const real_lam: *InitLam = @alignCast(@ptrCast(self.any_lam));
                         // std.debug.print("unref ref_count={d}, NormalLam = {*}\n", .{ self.ref_count, self });
                         if (self.ref_count > 1) {
@@ -314,7 +315,7 @@ pub fn ComposableLam(
                                 real_lam.unrefSubLam()
                             else
                                 tryStrongUnref(real_lam);
-                            return;
+                            return false;
                         }
 
                         deinitOrUnref(real_lam.*);
@@ -325,6 +326,7 @@ pub fn ComposableLam(
                         self.ref_count = 0;
                         // std.debug.print("destroy NormalLam comp_lam = {*}\n", .{self});
                         cfg.allocator.destroy(self);
+                        return true;
                     }
 
                     fn call(self_any_lam: *anyopaque, a: A) B {
@@ -348,8 +350,8 @@ pub fn ComposableLam(
             return self;
         }
 
-        pub fn strongUnref(self: *Self) void {
-            self.unref_fn(self);
+        pub fn strongUnref(self: *Self) bool {
+            return self.unref_fn(self);
         }
 
         fn AppendedRetType(comptime InType: type, comptime Lam: type) type {
@@ -397,13 +399,13 @@ pub fn ComposableLam(
 
                 pub fn unrefSubLam(self_new: SelfNew) void {
                     // std.debug.print("appended_comp_lam unrefSubLam comp_lam={*}\n", .{self_new.comp_lam});
-                    self_new.comp_lam.strongUnref();
+                    _ = self_new.comp_lam.strongUnref();
                     tryStrongUnref(self_new.append_lam);
                 }
 
                 pub fn deinit(self_new: SelfNew) void {
                     // std.debug.print("appended_comp_lam deinit comp_lam={*}\n", .{self_new.comp_lam});
-                    self_new.comp_lam.strongUnref();
+                    _ = self_new.comp_lam.strongUnref();
                     deinitOrUnref(self_new.append_lam);
                 }
 
@@ -446,13 +448,13 @@ test ComposableLam {
     try testing.expectEqual(8, comp2.call(40));
     const comp3 = try comp2.appendLam(add_e_f32_lam);
     try testing.expectEqual(10.72, comp3.call(40));
-    comp3.strongUnref();
+    _ = comp3.strongUnref();
 
     const comp11 = try ComposableLam(cfg, u32, f64).create(add_pi_lam);
     const comp12 = try comp11.appendLam(div_5_lam);
     const comp13 = try comp12.appendLam(point_move_lam);
     try testing.expectEqual(.{ 54.2, 34.83, 80.56 }, comp13.call(40));
-    comp13.strongUnref();
+    _ = comp13.strongUnref();
 }
 
 pub fn LamWrapper(comptime cfg: anytype, comptime Lam: type) type {

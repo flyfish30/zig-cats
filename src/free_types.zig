@@ -147,7 +147,7 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                         self.free_m[0].deinit();
                         allocator.destroy(self.free_m[0]);
                     } else if (self == .free_fop) {
-                        self.free_fop[0].strongUnref();
+                        _ = self.free_fop[0].strongUnref();
                         const op_info = self.free_fop[1];
                         const fa_op_ctors = GetOpCtors(F, A);
                         const op_ctor_info = fa_op_ctors[op_info.op_e];
@@ -274,7 +274,7 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                         const x_to_freem = self.free_fop[0].strongRef();
                         const comp_iter = try x_to_freem.appendLam(inner_iter);
                         const fa = try f_impl.fmapLam(.InplaceMap, comp_iter, fx);
-                        comp_iter.strongUnref();
+                        _ = comp_iter.strongUnref();
                         defer base.deinitOrUnref(fa);
                         return f(fa);
                     }
@@ -377,7 +377,7 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                         const comp_fold = try x_to_freem.appendLam(inner_fold);
                         const f_acc_m = try f_impl.fmapLam(.InplaceMap, comp_fold, fx);
                         const m_acc_m = try nat_impl.trans(MImpl.F(A), f_acc_m);
-                        comp_fold.strongUnref();
+                        _ = comp_fold.strongUnref();
                         base.deinitOrUnref(f_acc_m);
                         defer MImpl.deinitFa(m_acc_m, base.getDeinitOrUnref(MImpl.F(A)));
                         return try @constCast(&m_impl).join(A, m_acc_m);
