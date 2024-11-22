@@ -1208,6 +1208,16 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
                 }
             }
 
+            pub fn clone(self: Self) Error!Self {
+                if (self.lam_ctx != null) {
+                    const new_put_s = try cfg.allocator.create(S);
+                    new_put_s.* = try base.copyOrCloneOrRef(self.lam_ctx.?.*);
+                    return .{ .lam_ctx = new_put_s };
+                } else {
+                    return .{ .lam_ctx = null };
+                }
+            }
+
             pub fn call(self: *Self, a: A) StateFA(cfg, S, A) {
                 if (self.lam_ctx == null) {
                     @panic("Fatal Error: The Put of StateF is not initialized!");
@@ -1373,7 +1383,7 @@ test "FreeMonad(StateF, A) foldFree and iter" {
     const GetF: FOpEnumInt = @intFromEnum(StateFCtorEnum.GetF);
     // The function operator build a FreeMonad(F, ExistType)
     const buildGetF = StateFCtorDefs(cfg, StateS, ExistType).GetF.build;
-    const FOpInfo = comptime FreeMonad(StateFCtor, u32).FOpInfo;
+    const FOpInfo = freetypes.FOpInfo;
     const put_ops = &[_]FOpInfo{
         .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37)) },
         .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(23)) },
@@ -1481,7 +1491,7 @@ test "FreeMonad(StateF, A) fmap and fmapLam" {
     const GetF: FOpEnumInt = @intFromEnum(StateFCtorEnum.GetF);
     // The function operator build a FreeMonad(F, ExistType)
     const buildGetF = StateFCtorDefs(cfg, StateS, ExistType).GetF.build;
-    const FOpInfo = comptime FreeMonad(StateFCtor, u32).FOpInfo;
+    const FOpInfo = freetypes.FOpInfo;
     const put_ops = &[_]FOpInfo{
         .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37)) },
         .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(23)) },
@@ -1559,6 +1569,312 @@ test "FreeMonad(StateF, A) fmap and fmapLam" {
     try testing.expectEqual(4, show_writer2.a);
     // (0 + 10) + 37 = 47
     try testing.expectEqualSlices(u8, "PutF 23, PutF 37, GetF, PutF 47, ", show_writer2.w.items);
+}
+
+test "FreeMonad(StateF, A) fapply and fapplyLam" {
+    const allocator = testing.allocator;
+    const StateS = u64;
+    const cfg = getDefaultCfg(StateS, allocator);
+    const StateFCtor = StateF(cfg, StateS);
+    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
+    const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
+    const FreeStateFImpl = FreeMonadImpl(StateFCtor, StateFFunctorImpl(cfg, StateS));
+    const FStateMonad = Monad(FreeStateFImpl);
+    var freem_monad = FStateMonad.init(.{
+        .allocator = allocator,
+        .funf_impl = statef_functor,
+    });
+
+    const StateMonad = Monad(StateMonadImpl(cfg, StateS));
+    const state_monad = StateMonad.init(.{ .allocator = allocator });
+    const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
+    const nat_statef_state = NatStateFToState.init(.{});
+
+    const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+    const ShowMonad = Monad(ShowMonadImpl);
+    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
+    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+
+    const ExistType = freetypes.GetExistentialType(StateFCtor);
+    const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, StateS, u32));
+    const PutF: FOpEnumInt = @intFromEnum(StateFCtorEnum.PutF);
+    const buildPutF = StateFCtorDefs(cfg, StateS, u32).PutF.build;
+    const GetF: FOpEnumInt = @intFromEnum(StateFCtorEnum.GetF);
+    // The function operator build a FreeMonad(F, ExistType)
+    const buildGetF = StateFCtorDefs(cfg, StateS, ExistType).GetF.build;
+    const FOpInfo = freetypes.FOpInfo;
+
+    // test all variants of FreeMonad StateF A with pure value
+    const put_a_ops = &[_]FOpInfo{
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(25)) },
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(19)) },
+    };
+    const put_af_ops = &[_]FOpInfo{
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(17)) },
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(35)) },
+    };
+    const put_flam_ops = &[_]FOpInfo{
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(17)) },
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(35)) },
+    };
+
+    const pure_free_a = try freem_monad.pure(@as(u32, 42));
+    const pure_free_a1 = try pure_free_a.appendFOps(allocator, put_a_ops);
+    defer pure_free_a1.deinit();
+    const pure_free_af = try freem_monad.pure(&add_pi_f64);
+    const pure_free_af1 = try pure_free_af.appendFOps(allocator, put_af_ops);
+    defer pure_free_af1.deinit();
+    const add_pi_f64_lam = testu.Add_x_f64_Lam{ ._x = 3.14 };
+    const pure_free_flam = try freem_monad.pure(add_pi_f64_lam);
+    const pure_free_flam1 = try pure_free_flam.appendFOps(allocator, put_flam_ops);
+    defer pure_free_flam1.deinit();
+
+    const pure_applied1 = try freem_monad.fapply(u32, f64, pure_free_af1, pure_free_a);
+    defer pure_applied1.deinit();
+    const pure_state1 = try pure_applied1.foldFree(nat_statef_state, statef_functor, state_monad);
+    const pure_res1_a, const pure_res1_s = try pure_state1.runState(13);
+    _ = pure_state1.strongUnref();
+    try testing.expectEqual(45.14, pure_res1_a);
+    try testing.expectEqual(17, pure_res1_s);
+    const show_pure1 = try pure_applied1.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_pure1.deinit();
+    try testing.expectEqual(45.14, show_pure1.a);
+    try testing.expectEqualSlices(u8, "PutF 35, PutF 17, ", show_pure1.w.items);
+
+    const pure_applied2 = try freem_monad.fapply(u32, f64, pure_free_af1, pure_free_a1);
+    defer pure_applied2.deinit();
+    const pure_state2 = try pure_applied2.foldFree(nat_statef_state, statef_functor, state_monad);
+    const pure_res2_a, const pure_res2_s = try pure_state2.runState(13);
+    _ = pure_state2.strongUnref();
+    try testing.expectEqual(45.14, pure_res2_a);
+    try testing.expectEqual(25, pure_res2_s);
+    const show_pure2 = try pure_applied2.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_pure2.deinit();
+    try testing.expectEqual(45.14, show_pure2.a);
+    try testing.expectEqualSlices(u8, "PutF 35, PutF 17, PutF 19, PutF 25, ", show_pure2.w.items);
+
+    const pure_applied3 = try freem_monad.fapplyLam(u32, f64, pure_free_flam1, pure_free_a1);
+    defer pure_applied3.deinit();
+    const pure_state3 = try pure_applied3.foldFree(nat_statef_state, statef_functor, state_monad);
+    const pure_res3_a, const pure_res3_s = try pure_state3.runState(13);
+    _ = pure_state3.strongUnref();
+    try testing.expectEqual(45.14, pure_res3_a);
+    try testing.expectEqual(25, pure_res3_s);
+    const show_pure3 = try pure_applied3.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_pure3.deinit();
+    try testing.expectEqual(45.14, show_pure3.a);
+    try testing.expectEqualSlices(u8, "PutF 35, PutF 17, PutF 19, PutF 25, ", show_pure3.w.items);
+
+    // test all variants of FreeMonad StateF A with GetF operator
+    const x_to_free_state = struct {
+        const Error = FreeMonad(StateFCtor, u32).Error;
+        fn xToFreeState(x: u64) Error!FreeMonad(StateFCtor, u32) {
+            const x_state_ops = &[_]FOpInfo{
+                .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37 + x)) },
+            };
+            const a = @as(u32, @intCast(x)) * 2;
+            return FreeMonad(StateFCtor, u32).freeM(allocator, a, @constCast(x_state_ops));
+        }
+    }.xToFreeState;
+
+    const get_fn = struct {
+        const Error = FreeMonad(StateFCtor, ExistType).Error;
+        fn get(s: u64) Error!ExistType {
+            return @intCast(s + 10);
+        }
+    }.get;
+
+    var free_state = try FreeMonad(StateFCtor, u32).freeFOp(x_to_free_state, GetF, buildGetF(get_fn));
+    defer free_state.deinit();
+    const free_state1 = try freem_monad.fapply(u32, f64, pure_free_af1, free_state);
+    defer free_state1.deinit();
+    const state1 = try free_state1.foldFree(nat_statef_state, statef_functor, state_monad);
+    const res1_a, const res1_s = try state1.runState(13);
+    _ = state1.strongUnref();
+    // (17 + 10) * 2 + 3.14 = 57.14
+    try testing.expectEqual(57.14, res1_a);
+    // (17 + 10) + 37 = 64
+    try testing.expectEqual(64, res1_s);
+    const show_writer1 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer1.deinit();
+    // (0 + 10) * 2 + 3.14 = 23.14
+    try testing.expectEqual(23.14, show_writer1.a);
+    // (0 + 10) + 37 = 47
+    try testing.expectEqualSlices(u8, "PutF 35, PutF 17, GetF, PutF 47, ", show_writer1.w.items);
+
+    const free_state11 = try freem_monad.fapplyLam(u32, f64, pure_free_flam1, free_state);
+    defer free_state11.deinit();
+    const state11 = try free_state11.foldFree(nat_statef_state, statef_functor, state_monad);
+    const res11_a, const res11_s = try state11.runState(13);
+    _ = state11.strongUnref();
+    // (17 + 10) * 2 + 3.14 = 57.14
+    try testing.expectEqual(57.14, res11_a);
+    // (17 + 10) + 37 = 64
+    try testing.expectEqual(64, res11_s);
+    const show_writer11 = try free_state11.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer11.deinit();
+    // (0 + 10) * 2 + 3.14 = 23.14
+    try testing.expectEqual(23.14, show_writer11.a);
+    // (0 + 10) + 37 = 47
+    try testing.expectEqualSlices(u8, "PutF 35, PutF 17, GetF, PutF 47, ", show_writer11.w.items);
+
+    const put_ops = &[_]FOpInfo{
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37)) },
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(23)) },
+    };
+
+    free_state = try free_state.appendFOps(allocator, put_ops);
+    const free_state2 = try freem_monad.fapply(u32, f64, pure_free_af1, free_state);
+    defer free_state2.deinit();
+    const state2 = try free_state2.foldFree(nat_statef_state, statef_functor, state_monad);
+    const res2_a, const res2_s = try state2.runState(13);
+    _ = state2.strongUnref();
+    // (37 + 10) * 2 + 3.14 = 97.14
+    try testing.expectEqual(97.14, res2_a);
+    // (37 + 10) + 37 = 84
+    try testing.expectEqual(84, res2_s);
+    const show_writer2 = try free_state2.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer2.deinit();
+    // (0 + 10) * 2 + 3.14 = 23.14
+    try testing.expectEqual(23.14, show_writer2.a);
+    // (0 + 10) + 37 = 47
+    try testing.expectEqualSlices(u8, "PutF 35, PutF 17, PutF 23, PutF 37, GetF, PutF 47, ", show_writer2.w.items);
+
+    const free_state22 = try freem_monad.fapplyLam(u32, f64, pure_free_flam1, free_state);
+    defer free_state22.deinit();
+    const state22 = try free_state22.foldFree(nat_statef_state, statef_functor, state_monad);
+    const res22_a, const res22_s = try state22.runState(13);
+    _ = state22.strongUnref();
+    // (37 + 10) * 2 + 3.14 = 97.14
+    try testing.expectEqual(97.14, res22_a);
+    // (37 + 10) + 37 = 84
+    try testing.expectEqual(84, res22_s);
+    const show_writer22 = try free_state22.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer22.deinit();
+    // (0 + 10) * 2 + 3.14 = 23.14
+    try testing.expectEqual(23.14, show_writer22.a);
+    // (0 + 10) + 37 = 47
+    try testing.expectEqualSlices(u8, "PutF 35, PutF 17, PutF 23, PutF 37, GetF, PutF 47, ", show_writer22.w.items);
+
+    const FnType1 = *const fn (u32) f64;
+    const x_to_free_state_fn = struct {
+        const Error = FreeMonad(StateFCtor, FnType1).Error;
+        fn xToFreeState(x: u64) Error!FreeMonad(StateFCtor, FnType1) {
+            const x_state_ops = &[_]FOpInfo{
+                .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(19 + x)) },
+            };
+            const res_fn = struct {
+                fn f(a: u32) f64 {
+                    return @as(f64, @floatFromInt(a)) + 6.18;
+                }
+            }.f;
+            return FreeMonad(StateFCtor, FnType1).freeM(allocator, &res_fn, @constCast(x_state_ops));
+        }
+    }.xToFreeState;
+
+    var free_state_af1 = try FreeMonad(StateFCtor, FnType1).freeFOp(x_to_free_state_fn, GetF, buildGetF(get_fn));
+    defer free_state_af1.deinit();
+    const free_state3 = try freem_monad.fapply(u32, f64, free_state_af1, free_state);
+    defer free_state3.deinit();
+    const state3 = try free_state3.foldFree(nat_statef_state, statef_functor, state_monad);
+    const res3_a, const res3_s = try state3.runState(13);
+    _ = state3.strongUnref();
+    // (37 + 10) * 2 + 6.18 = 100.18
+    try testing.expectEqual(100.18, res3_a);
+    // (37 + 10) + 37 = 84
+    try testing.expectEqual(84, res3_s);
+    const show_writer3 = try free_state3.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer3.deinit();
+    // (0 + 10) * 2 + 6.18 = 26.18
+    try testing.expectEqual(26.18, show_writer3.a);
+    // (0 + 10) + 37 = 47
+    try testing.expectEqualSlices(u8, "GetF, PutF 29, PutF 23, PutF 37, GetF, PutF 47, ", show_writer3.w.items);
+
+    const LamType1 = struct {
+        _x: f64,
+        const Self = @This();
+        pub fn call(self: *const Self, a: u32) f64 {
+            return @as(f64, @floatFromInt(a)) + self._x;
+        }
+    };
+    const x_to_free_state_lam = struct {
+        const Error = FreeMonad(StateFCtor, LamType1).Error;
+        fn xToFreeState(x: u64) Error!FreeMonad(StateFCtor, LamType1) {
+            const x_state_ops = &[_]FOpInfo{
+                .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(19 + x)) },
+            };
+            const res_lam = LamType1{ ._x = 6.18 };
+            return FreeMonad(StateFCtor, LamType1).freeM(allocator, res_lam, @constCast(x_state_ops));
+        }
+    }.xToFreeState;
+
+    var free_state_lam1 = try FreeMonad(StateFCtor, LamType1).freeFOp(x_to_free_state_lam, GetF, buildGetF(get_fn));
+    defer free_state_lam1.deinit();
+    const free_state33 = try freem_monad.fapplyLam(u32, f64, free_state_lam1, free_state);
+    defer free_state33.deinit();
+    const state33 = try free_state33.foldFree(nat_statef_state, statef_functor, state_monad);
+    const res33_a, const res33_s = try state33.runState(13);
+    _ = state33.strongUnref();
+    // (37 + 10) * 2 + 6.18 = 100.18
+    try testing.expectEqual(100.18, res33_a);
+    // (37 + 10) + 37 = 84
+    try testing.expectEqual(84, res33_s);
+    const show_writer33 = try free_state33.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer33.deinit();
+    // (0 + 10) * 2 + 6.18 = 26.18
+    try testing.expectEqual(26.18, show_writer33.a);
+    // (0 + 10) + 37 = 47
+    try testing.expectEqualSlices(u8, "GetF, PutF 29, PutF 23, PutF 37, GetF, PutF 47, ", show_writer33.w.items);
+
+    const put_af1_ops = &[_]FOpInfo{
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(33)) },
+        .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(21)) },
+    };
+    free_state_af1 = try free_state_af1.appendFOps(allocator, put_af1_ops);
+    const free_state4 = try freem_monad.fapply(u32, f64, free_state_af1, free_state);
+    defer free_state4.deinit();
+    const state4 = try free_state4.foldFree(nat_statef_state, statef_functor, state_monad);
+    const res4_a, const res4_s = try state4.runState(13);
+    _ = state4.strongUnref();
+    // (37 + 10) * 2 + 6.18 = 100.18
+    try testing.expectEqual(100.18, res4_a);
+    // (37 + 10) + 37 = 84
+    try testing.expectEqual(84, res4_s);
+    const show_writer4 = try free_state4.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer4.deinit();
+    // (0 + 10) * 2 + 6.18 = 26.18
+    try testing.expectEqual(26.18, show_writer4.a);
+    // (0 + 10) + 37 = 47
+    try testing.expectEqualSlices(
+        u8,
+        "PutF 21, PutF 33, GetF, PutF 29, PutF 23, PutF 37, GetF, PutF 47, ",
+        show_writer4.w.items,
+    );
+
+    var put_flam1_ops: [put_ops.len]FOpInfo = undefined;
+    try free_state_af1.cloneFOpsToSlice(&put_flam1_ops);
+    free_state_lam1 = try free_state_lam1.appendFOps(allocator, &put_flam1_ops);
+    const free_state44 = try freem_monad.fapplyLam(u32, f64, free_state_lam1, free_state);
+    defer free_state44.deinit();
+    const state44 = try free_state44.foldFree(nat_statef_state, statef_functor, state_monad);
+    const res44_a, const res44_s = try state44.runState(13);
+    _ = state44.strongUnref();
+    // (37 + 10) * 2 + 6.18 = 100.18
+    try testing.expectEqual(100.18, res44_a);
+    // (37 + 10) + 37 = 84
+    try testing.expectEqual(84, res44_s);
+    const show_writer44 = try free_state44.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer44.deinit();
+    // (0 + 10) * 2 + 6.18 = 26.18
+    try testing.expectEqual(26.18, show_writer44.a);
+    // (0 + 10) + 37 = 47
+    try testing.expectEqualSlices(
+        u8,
+        "PutF 21, PutF 33, GetF, PutF 29, PutF 23, PutF 37, GetF, PutF 47, ",
+        show_writer44.w.items,
+    );
 }
 
 ///////////////////////////////////////////////////
