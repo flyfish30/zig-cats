@@ -1085,7 +1085,7 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                         defer {
                             freem.deinit();
                         }
-                        // recusive call fmap for inner free monad
+                        // recusive call fapply for inner free monad
                         return self_apply.fimpl.fapply(A, B, freem, self_apply.local_fa);
                     }
                 }{ .fimpl = self, .local_fa = try base.copyOrCloneOrRef(fa) };
@@ -1163,7 +1163,7 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                         defer {
                             freem.deinit();
                         }
-                        // recusive call fmap for inner free monad
+                        // recusive call fapplyLam for inner free monad
                         return self_apply.fimpl.fapplyLam(A, B, freem, self_apply.local_fa);
                     }
                 }{ .fimpl = self, .local_fa = try base.copyOrCloneOrRef(fa) };
@@ -1213,14 +1213,57 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                 return try k(self, ma.pure_m);
             }
 
+            const is_only_fop, const free_fop = blk: {
+                break :blk if (ma == .free_fop)
+                    .{ true, ma.free_fop }
+                else if (ma == .free_m and ma.free_m[0].* == .free_fop)
+                    .{ false, ma.free_m[0].free_fop }
+                else
+                    .{ false, null };
+            };
+
+            if (free_fop) |_free_fop| {
+                const inner_bind_lam = struct {
+                    fimpl: *Self,
+                    local_k: @TypeOf(k),
+
+                    const SelfBind = @This();
+                    pub fn call(
+                        self_bind: *const SelfBind,
+                        freem: @TypeOf(ma),
+                    ) MbType(B) {
+                        defer {
+                            freem.deinit();
+                        }
+                        // recusive call bind for inner free monad
+                        return self_bind.fimpl.bind(A, B, freem, self_bind.local_k);
+                    }
+                }{ .fimpl = self, .local_k = k };
+
+                const x_to_freem = _free_fop[0].strongRef();
+                const new_x_to_freem = try x_to_freem.appendLam(inner_bind_lam);
+                if (is_only_fop) {
+                    return .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                } else {
+                    const new_freem = try self.allocator.create(FreeMonad(FunF, B));
+                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    return .{ .free_m = .{ new_freem, try ma.cloneFOps() } };
+                }
+            }
+
             const freem = try k(self, ma.free_m[0].pure_m);
             if (freem == .pure_m) {
                 const new_pure_m = try self.allocator.create(F(B));
                 new_pure_m.* = .{ .pure_m = freem.pure_m };
-                return .{ .free_m = .{ new_pure_m, try ma.free_m[1].clone() } };
+                return .{ .free_m = .{ new_pure_m, try ma.cloneFOps() } };
+            } else if (freem == .free_fop) {
+                const new_pure_m = try self.allocator.create(F(B));
+                new_pure_m.* = .{ .free_fop = freem.free_fop };
+                return .{ .free_m = .{ new_pure_m, try ma.cloneFOps() } };
             } else {
                 var flist = freem.free_m[1];
-                try flist.appendSlice(ma.free_m[1].items);
+                const new_mb_fops = try flist.addManyAsSlice(ma.free_m[1].items.len);
+                try ma.cloneFOpsToSlice(new_mb_fops);
                 return .{ .free_m = .{ freem.free_m[0], flist } };
             }
         }
@@ -1234,19 +1277,60 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                 return mma.pure_m;
             }
 
-            // mma.free_m[0] is a pointer of pure(FreeMonad(F, A)), so the
-            // mma.free_m[0].pure_m is FreeMonad(F, A).
-            if (mma.free_m[0].pure_m == .pure_m) {
-                // mma.free_m[0].pure_m is a pure value of FreeMonad(F, A).
-                const new_pure_m = try self.allocator.create(F(A));
-                new_pure_m.* = .{ .pure_m = mma.free_m[0].pure_m.pure_m };
-                return .{ .free_m = .{ new_pure_m, try mma.free_m[1].clone() } };
+            const is_only_fop, const free_fop = blk: {
+                break :blk if (mma == .free_fop)
+                    .{ true, mma.free_fop }
+                else if (mma == .free_m and mma.free_m[0].* == .free_fop)
+                    .{ false, mma.free_m[0].free_fop }
+                else
+                    .{ false, null };
+            };
+
+            if (free_fop) |_free_fop| {
+                const inner_bind_lam = struct {
+                    fimpl: *Self,
+
+                    const SelfBind = @This();
+                    pub fn call(
+                        self_bind: *const SelfBind,
+                        freem: @TypeOf(mma),
+                    ) MbType(A) {
+                        defer freem.deinit();
+                        // recusive call join for inner free monad
+                        return self_bind.fimpl.join(A, freem);
+                    }
+                }{ .fimpl = self };
+
+                const x_to_freem = _free_fop[0].strongRef();
+                const new_x_to_freem = try x_to_freem.appendLam(inner_bind_lam);
+                if (is_only_fop) {
+                    return .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                } else {
+                    // TODO: In InplaceMap mode, reuse the allocated memory of free_m[0]
+                    // in mma,
+                    // const new_freem: *FreeMonad(FunF, A) = @ptrCast(mma.free_m[0]);
+                    const new_freem = try self.allocator.create(F(A));
+                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    return .{ .free_m = .{ new_freem, try mma.cloneFOps() } };
+                }
             }
 
-            // mma.free_m[0].pure_m is a impure value of FreeMonad(F, A).
-            var flist = mma.free_m[0].pure_m.free_m[1];
-            try flist.appendSlice(mma.free_m[1].items);
-            return .{ .free_m = .{ mma.free_m[0].pure_m.free_m[0], flist } };
+            // mma.free_m[0].pure is a FreeMonad(F, A).
+            const freem = mma.free_m[0].pure_m;
+            if (freem == .pure_m) {
+                const new_pure_m = try self.allocator.create(F(A));
+                new_pure_m.* = .{ .pure_m = freem.pure_m };
+                return .{ .free_m = .{ new_pure_m, try mma.cloneFOps() } };
+            } else if (freem == .free_fop) {
+                const new_pure_m = try self.allocator.create(F(A));
+                new_pure_m.* = .{ .free_fop = freem.free_fop };
+                return .{ .free_m = .{ new_pure_m, try mma.cloneFOps() } };
+            } else {
+                var flist = freem.free_m[1];
+                const outter_fops = try flist.addManyAsSlice(mma.free_m[1].items.len);
+                try mma.cloneFOpsToSlice(outter_fops);
+                return .{ .free_m = .{ freem.free_m[0], flist } };
+            }
         }
     };
 }
