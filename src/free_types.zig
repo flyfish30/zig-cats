@@ -83,12 +83,12 @@ pub fn toSpecificOpLam(comptime OpLam: type, any_op_lam: AnyOpLam) OpLam {
 /// and all operator constructors of F must take only one parameter.
 /// If you need a operator constructor with multiple parameters, you can curry it
 /// into multiple operator constructors that take one parameter.
-pub fn FreeMonad(comptime F: TCtor, comptime A: type) type {
-    return FreeM(F)(A);
+pub fn FreeMonad(comptime cfg: anytype, comptime F: TCtor, comptime A: type) type {
+    return FreeM(cfg, F)(A);
 }
 
 /// The type function FreeM is currying form of type constructor FreeMonad.
-pub fn FreeM(comptime F: TCtor) TCtor {
+pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
     return struct {
         fn FreeF(comptime A: type) type {
             return union(enum) {
@@ -126,17 +126,16 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                 const Self = @This();
                 pub const BaseType = A;
                 pub const Error = Allocator.Error;
-                const ExistType = if (@hasField(@TypeOf(cfg), "ExistentialType"))
+                pub const cfg = in_cfg;
+                pub const ExistType = if (@hasField(@TypeOf(cfg), "ExistentialType"))
                     cfg.ExistentialType
                 else
                     GetExistentialType(F);
-
-                const cfg = getDefaultListCfg(testing.allocator);
                 const XToFreeFALam = base.ComposableLam(cfg, ExistType, Error!Self);
 
                 pub fn deinit(self: Self) void {
                     if (self == .free_m) {
-                        const allocator = self.free_m[1].allocator;
+                        const allocator = cfg.allocator;
                         const fa_op_ctors = GetOpCtors(F, A);
                         for (self.free_m[1].items) |op_info| {
                             const op_ctor_info = fa_op_ctors[op_info.op_e];
@@ -155,7 +154,7 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                     }
                 }
 
-                pub inline fn pureM(a: A) Self {
+                pub fn pureM(a: A) Self {
                     return .{ .pure_m = a };
                 }
 
@@ -167,6 +166,12 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                 ) !Self {
                     // TODO: add a check assume the f is a function operator
                     // assert(f.op_kind == OpFunction)
+                    const XToFreemType = @TypeOf(x_to_freem);
+                    if (XToFreemType == *XToFreeFALam) {
+                        const fop = .{ .op_e = e, .op_lam = toAnyOpLam(fop_lam) };
+                        return .{ .free_fop = .{ x_to_freem.strongRef(), fop } };
+                    }
+
                     const info = @typeInfo(@TypeOf(x_to_freem));
                     const is_valid, const x_to_freem_lam = switch (info) {
                         .Struct => .{ true, x_to_freem },
@@ -194,7 +199,8 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                     return .{ .free_fop = .{ try XToFreeFALam.create(x_to_freem_lam), fop } };
                 }
 
-                pub fn freeM(allocator: Allocator, a: A, fs: []FOpInfo) !Self {
+                pub fn freeM(a: A, fs: []FOpInfo) !Self {
+                    const allocator = cfg.allocator;
                     const new_pure_m = try allocator.create(Self);
                     new_pure_m.* = .{ .pure_m = a };
                     var flist = try ArrayList(FOpInfo).initCapacity(allocator, fs.len);
@@ -202,8 +208,26 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                     return .{ .free_m = .{ new_pure_m, flist } };
                 }
 
+                fn freeFPure(fpure: anytype) !Self {
+                    // const FpureType = @TypeOf(fpure);
+                    // comptime assert(Self == FaType.BaseType);
+
+                    const fx_op_ctors = GetOpCtors(F, Self);
+                    const ctor_e = std.meta.activeTag(fpure);
+                    const op_e = @intFromEnum(ctor_e);
+                    const op_ctor_info = fx_op_ctors[op_e];
+                    return try op_ctor_info.fpureToFreem(Self, fpure);
+                }
+
+                pub fn liftFree(f_impl: anytype, fa: anytype) !Self {
+                    const fpure = try f_impl.fmap(.NewValMap, pureM, fa);
+                    defer fpure.deinit();
+                    return freeFPure(fpure);
+                }
+
                 // This function has move semantics, all value in self move to new self.
-                pub fn appendFOp(self: Self, allocator: Allocator, f: FOpInfo) !Self {
+                pub fn appendFOp(self: Self, f: FOpInfo) !Self {
+                    const allocator = cfg.allocator;
                     if (self == .pure_m) {
                         var flist = try ArrayList(FOpInfo).initCapacity(allocator, DEFAULT_LEN);
                         flist.appendAssumeCapacity(f);
@@ -224,7 +248,8 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                 }
 
                 // This function has move semantics, all value in self move to new self.
-                pub fn appendFOps(self: Self, allocator: Allocator, fs: []const FOpInfo) !Self {
+                pub fn appendFOps(self: Self, fs: []const FOpInfo) !Self {
+                    const allocator = cfg.allocator;
                     if (self == .pure_m) {
                         var flist = try ArrayList(FOpInfo).initCapacity(allocator, fs.len);
                         flist.appendSliceAssumeCapacity(fs);
@@ -246,7 +271,7 @@ pub fn FreeM(comptime F: TCtor) TCtor {
 
                 pub fn cloneFOps(self: Self) !ArrayList(FOpInfo) {
                     const len = self.free_m[1].items.len;
-                    var new_flist = try ArrayList(FOpInfo).initCapacity(self.free_m[1].allocator, len);
+                    var new_flist = try ArrayList(FOpInfo).initCapacity(cfg.allocator, len);
                     const new_items = new_flist.addManyAtAssumeCapacity(0, len);
                     try self.cloneFOpsToSlice(new_items);
                     return new_flist;
@@ -264,6 +289,17 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                             .op_lam = new_op_lam orelse op_info.op_lam,
                         };
                     }
+                }
+
+                pub fn copyOrCloneFOp(fop: FOpInfo) !FOpInfo {
+                    const op_info = fop;
+                    const fa_op_ctors = GetOpCtors(F, A);
+                    const op_ctor_info = fa_op_ctors[op_info.op_e];
+                    const new_op_lam = try op_ctor_info.tryCloneOpCtor(op_info.op_lam);
+                    return .{
+                        .op_e = op_info.op_e,
+                        .op_lam = new_op_lam orelse op_info.op_lam,
+                    };
                 }
 
                 /// Tear down a FreeMonad(F, A) using iteration.
@@ -321,7 +357,7 @@ pub fn FreeM(comptime F: TCtor) TCtor {
                 //     self: Self,
                 //     comptime NatImpl: type,
                 //     nat_impl: NatImpl,
-                // ) FreeMonad(NatImpl.G, A) {
+                // ) FreeMonad(cfg, NatImpl.G, A) {
                 //     comptime assert(F == NatImpl.F);
                 //     if (self == .pure_m) {
                 //         return .{ .pure_m = self.pure_m };
@@ -569,6 +605,20 @@ fn OpCtorInfo(
                 },
             }
         }
+
+        pub fn fpureToFreem(self: Self, comptime FreeMType: type, fpure: anytype) !FreeMType {
+            switch (self.ctor_e) {
+                inline else => |e| {
+                    // std.debug.print("fpureToFreem OpCtor enum: {any}\n", .{e});
+                    const OpLam = @field(OpDefs, @tagName(e));
+                    if (!@hasDecl(OpLam, "fpureToFreem")) {
+                        @compileError("The functor's constuctor '" ++ @typeName(OpLam) ++
+                            "' can not be lifted to a Free Monad");
+                    }
+                    return @call(.auto, OpLam.fpureToFreem, .{ FreeMType, fpure });
+                },
+            }
+        }
     };
 }
 
@@ -610,6 +660,14 @@ fn MaybeCtorDefs(comptime A: type) type {
                 return .{ .lam_ctx = 0 };
             }
 
+            pub fn fpureToFreem(FreeMType: type, fpure: Maybe(A)) error{}!FreeMType {
+                _ = fpure;
+                const ops_array = [_]FOpInfo{
+                    .{ .op_e = Nothing, .op_lam = @bitCast(try build()) },
+                };
+                return FreeMType.freeM(base.defaultVal(A), &ops_array);
+            }
+
             pub fn deinit(self: Self) void {
                 _ = self;
             }
@@ -626,6 +684,14 @@ fn MaybeCtorDefs(comptime A: type) type {
             const Self = @This();
             pub fn build() Self {
                 return .{ .lam_ctx = 0 };
+            }
+
+            pub fn fpureToFreem(FreeMType: type, fpure: Maybe(A)) error{}!FreeMType {
+                const ops_array = [_]FOpInfo{
+                    .{ .op_e = Just, .op_lam = @bitCast(try build()) },
+                };
+                const a = fpure.?;
+                return FreeMType.freeM(a, &ops_array);
             }
 
             pub fn deinit(self: Self) void {
@@ -650,12 +716,13 @@ fn maybeToA(comptime A: type) *const fn (a: Maybe(A)) A {
 
 test "FreeMonad(F, A) constructor functions and iter" {
     const allocator = testing.allocator;
+    const cfg = base.getDefaultBaseCfg(allocator);
     const MaybeFunctor = Functor(MaybeMonadImpl);
     const maybe_functor = MaybeFunctor.init(.{ .none = {} });
 
     var a: u32 = 42;
     _ = &a;
-    const pure_freem = FreeMonad(Maybe, u32).pureM(a);
+    const pure_freem = FreeMonad(cfg, Maybe, u32).pureM(a);
     try testing.expectEqual(42, pure_freem.pure_m);
 
     const MaybeCtorEnum = std.meta.DeclEnum(MaybeCtorDefs(u32));
@@ -667,13 +734,10 @@ test "FreeMonad(F, A) constructor functions and iter" {
     const just_fns = &[_]FOpInfo{
         .{ .op_e = Just, .op_lam = @bitCast(buildNothing()) },
     };
-    var free_maybe = try FreeMonad(Maybe, u32).freeM(allocator, 42, @constCast(just_fns));
+    var free_maybe = try FreeMonad(cfg, Maybe, u32).freeM(42, @constCast(just_fns));
     try testing.expectEqual(42, try free_maybe.iter(maybe_functor, maybeToA(u32)));
 
-    free_maybe = try free_maybe.appendFOp(
-        allocator,
-        .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
-    );
+    free_maybe = try free_maybe.appendFOp(.{ .op_e = Just, .op_lam = @bitCast(buildJust()) });
     try testing.expectEqual(42, try free_maybe.iter(maybe_functor, maybeToA(u32)));
 
     const just_fns3 = &[_]FOpInfo{
@@ -681,7 +745,7 @@ test "FreeMonad(F, A) constructor functions and iter" {
         .{ .op_e = Nothing, .op_lam = @bitCast(buildNothing()) },
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
     };
-    free_maybe = try free_maybe.appendFOps(allocator, @constCast(just_fns3));
+    free_maybe = try free_maybe.appendFOps(@constCast(just_fns3));
     defer free_maybe.deinit();
     try testing.expectEqual(0, try free_maybe.iter(maybe_functor, maybeToA(u32)));
 }
@@ -738,6 +802,7 @@ pub fn ArrayListMonoidImpl(comptime T: type) type {
 
 test "FreeMonad(F, A) constructor functions and foldFree" {
     const allocator = testing.allocator;
+    const cfg = base.getDefaultBaseCfg(allocator);
     const MaybeFunctor = Functor(MaybeMonadImpl);
     const maybe_functor = MaybeFunctor.init(.{ .none = {} });
     const ArrayListMonad = Monad(ArrayListMonadImpl);
@@ -763,7 +828,7 @@ test "FreeMonad(F, A) constructor functions and foldFree" {
     const just_fns = &[_]FOpInfo{
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
     };
-    var free_maybe = try FreeMonad(Maybe, u32).freeM(allocator, 42, @constCast(just_fns));
+    var free_maybe = try FreeMonad(cfg, Maybe, u32).freeM(42, @constCast(just_fns));
     defer free_maybe.deinit();
 
     const folded = try free_maybe.foldFree(nat_maybe_array, maybe_functor, array_monad);
@@ -774,10 +839,7 @@ test "FreeMonad(F, A) constructor functions and foldFree" {
     try testing.expectEqual(42, show_writer.a);
     try testing.expectEqualSlices(u8, "Just ", show_writer.w.items);
 
-    free_maybe = try free_maybe.appendFOp(
-        allocator,
-        .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
-    );
+    free_maybe = try free_maybe.appendFOp(.{ .op_e = Just, .op_lam = @bitCast(buildJust()) });
     const folded1 = try free_maybe.foldFree(nat_maybe_array, maybe_functor, array_monad);
     defer folded1.deinit();
     try testing.expectEqualSlices(u32, &[_]u32{42}, folded1.items);
@@ -791,7 +853,7 @@ test "FreeMonad(F, A) constructor functions and foldFree" {
         .{ .op_e = Nothing, .op_lam = @bitCast(buildNothing()) },
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
     };
-    free_maybe = try free_maybe.appendFOps(allocator, @constCast(just_fns3));
+    free_maybe = try free_maybe.appendFOps(@constCast(just_fns3));
     const folded2 = try free_maybe.foldFree(nat_maybe_array, maybe_functor, array_monad);
     defer folded2.deinit();
     try testing.expectEqualSlices(u32, &[_]u32{}, folded2.items);
@@ -801,8 +863,66 @@ test "FreeMonad(F, A) constructor functions and foldFree" {
     try testing.expectEqualSlices(u8, "Just ", show2_writer.w.items);
 }
 
+pub fn liftNothing(comptime cfg: anytype, comptime A: type) !FreeMonad(cfg, Maybe, A) {
+    const CtorEnum = std.meta.DeclEnum(MaybeCtorDefs(A));
+    const Nothing: FOpEnumInt = @intFromEnum(CtorEnum.Nothing);
+    const buildNothing = MaybeCtorDefs(A).Nothing.build;
+    const ops_array = &[_]FOpInfo{
+        .{ .op_e = Nothing, .op_lam = @bitCast(buildNothing()) },
+    };
+
+    const a = base.defaultVal(A);
+    return FreeMonad(cfg, Maybe, A).freeM(a, @constCast(ops_array));
+}
+
+pub fn liftJust(comptime cfg: anytype, a: anytype) !FreeMonad(cfg, Maybe, @TypeOf(a)) {
+    const A = @TypeOf(a);
+    const CtorEnum = std.meta.DeclEnum(MaybeCtorDefs(A));
+    const Just: FOpEnumInt = @intFromEnum(CtorEnum.Just);
+    const buildJust = MaybeCtorDefs(A).Just.build;
+    const ops_array = &[_]FOpInfo{
+        .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
+    };
+
+    return FreeMonad(cfg, Maybe, A).freeM(a, @constCast(ops_array));
+}
+
+test "FreeMonad(Maybe, A) liftNothing and liftJust" {
+    const allocator = testing.allocator;
+    const cfg = base.getDefaultBaseCfg(allocator);
+    const MaybeFunctor = Functor(MaybeMonadImpl);
+    var maybe_functor = MaybeFunctor.init(.{ .none = {} });
+    _ = &maybe_functor;
+
+    const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+    const ShowMonad = Monad(ShowMonadImpl);
+    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
+    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+
+    const a: u32 = 42;
+    const just1 = try liftJust(cfg, a);
+    defer just1.deinit();
+    const show1_writer = try just1.foldFree(nat_maybe_show, maybe_functor, show_monad);
+    defer show1_writer.deinit();
+    try testing.expectEqual(42, show1_writer.a);
+    try testing.expectEqualSlices(u8, "Just ", show1_writer.w.items);
+
+    const nothing1 = try liftNothing(cfg, u32);
+    defer nothing1.deinit();
+    const show3_writer = try nothing1.foldFree(nat_maybe_show, maybe_functor, show_monad);
+    defer show3_writer.deinit();
+    try testing.expectEqual(null, show3_writer.a);
+    try testing.expectEqualSlices(u8, "", show3_writer.w.items);
+}
+
 /// The Monad instance of FreeMonad, the parameter FunF is a Functor.
-pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
+pub fn FreeMonadImpl(
+    comptime cfg: anytype,
+    comptime FunF: TCtor,
+    comptime FunFImpl: type,
+) type {
     return struct {
         allocator: Allocator,
         funf_impl: FunFImpl,
@@ -810,7 +930,7 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
         const Self = @This();
 
         /// Constructor Type for Functor, Applicative, Monad, ...
-        pub const F = FreeM(FunF);
+        pub const F = FreeM(cfg, FunF);
 
         /// Get base type of FreeMonad(F, A), it is must just is A.
         pub fn BaseType(comptime FreeFA: type) type {
@@ -903,18 +1023,22 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                 }{ .fimpl = self, .map_fn = map_fn };
 
                 const x_to_freem = if (isInplaceMap(K)) _free_fop[0] else _free_fop[0].strongRef();
+                const new_op_info = if (isInplaceMap(K))
+                    _free_fop[1]
+                else
+                    try @TypeOf(fa).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_map_lam);
                 if (is_only_fop) {
-                    return .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    return .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                 } else {
                     if (isInplaceMap(K)) {
                         // reuse the allocated memory of free_m[0] in fa,
-                        var new_freem: *FreeMonad(FunF, _B) = @ptrCast(fa.free_m[0]);
-                        new_freem.free_fop = .{ new_x_to_freem, _free_fop[1] };
+                        var new_freem: *FreeMonad(cfg, FunF, _B) = @ptrCast(fa.free_m[0]);
+                        new_freem.free_fop = .{ new_x_to_freem, new_op_info };
                         return .{ .free_m = .{ new_freem, fa.free_m[1] } };
                     } else {
-                        const new_freem = try self.allocator.create(FreeMonad(FunF, _B));
-                        new_freem.* = .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                        const new_freem = try self.allocator.create(FreeMonad(cfg, FunF, _B));
+                        new_freem.* = .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                         return .{ .free_m = .{ new_freem, try fa.cloneFOps() } };
                     }
                 }
@@ -933,7 +1057,7 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
             if (is_pure) {
                 return .{ .pure_m = _b };
             } else {
-                const new_pure_m = try self.allocator.create(FreeMonad(FunF, _B));
+                const new_pure_m = try self.allocator.create(FreeMonad(cfg, FunF, _B));
                 new_pure_m.* = .{ .pure_m = _b };
                 if (isInplaceMap(K)) {
                     return .{ .free_m = .{ new_pure_m, fa.free_m[1] } };
@@ -998,18 +1122,22 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                 }{ .fimpl = self, .map_lam = try base.copyOrCloneOrRef(map_lam) };
 
                 const x_to_freem = if (isInplaceMap(K)) _free_fop[0] else _free_fop[0].strongRef();
+                const new_op_info = if (isInplaceMap(K))
+                    _free_fop[1]
+                else
+                    try @TypeOf(fa).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_map_lam);
                 if (is_only_fop) {
-                    return .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    return .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                 } else {
                     if (isInplaceMap(K)) {
                         // reuse the allocated memory of free_m[0] in fa,
-                        var new_freem: *FreeMonad(FunF, _B) = @ptrCast(fa.free_m[0]);
-                        new_freem.free_fop = .{ new_x_to_freem, _free_fop[1] };
+                        var new_freem: *FreeMonad(cfg, FunF, _B) = @ptrCast(fa.free_m[0]);
+                        new_freem.free_fop = .{ new_x_to_freem, new_op_info };
                         return .{ .free_m = .{ new_freem, fa.free_m[1] } };
                     } else {
-                        const new_freem = try self.allocator.create(FreeMonad(FunF, _B));
-                        new_freem.* = .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                        const new_freem = try self.allocator.create(FreeMonad(cfg, FunF, _B));
+                        new_freem.* = .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                         return .{ .free_m = .{ new_freem, try fa.cloneFOps() } };
                     }
                 }
@@ -1028,7 +1156,7 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
             if (is_pure) {
                 return .{ .pure_m = _b };
             } else {
-                const new_pure_m = try self.allocator.create(FreeMonad(FunF, _B));
+                const new_pure_m = try self.allocator.create(FreeMonad(cfg, FunF, _B));
                 new_pure_m.* = .{ .pure_m = _b };
                 if (isInplaceMap(K)) {
                     return .{ .free_m = .{ new_pure_m, fa.free_m[1] } };
@@ -1091,12 +1219,13 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                 }{ .fimpl = self, .local_fa = try base.copyOrCloneOrRef(fa) };
 
                 const x_to_freem = _free_fop[0].strongRef();
+                const new_op_info = try @TypeOf(ff).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_apply_lam);
                 if (is_only_fop) {
-                    return .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    return .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                 } else {
-                    const new_freem = try self.allocator.create(FreeMonad(FunF, _B));
-                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    const new_freem = try self.allocator.create(FreeMonad(cfg, FunF, _B));
+                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                     return .{ .free_m = .{ new_freem, try ff.cloneFOps() } };
                 }
             }
@@ -1169,12 +1298,13 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                 }{ .fimpl = self, .local_fa = try base.copyOrCloneOrRef(fa) };
 
                 const x_to_freem = _free_fop[0].strongRef();
+                const new_op_info = try @TypeOf(flam).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_apply_lam);
                 if (is_only_fop) {
-                    return .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    return .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                 } else {
-                    const new_freem = try self.allocator.create(FreeMonad(FunF, _B));
-                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    const new_freem = try self.allocator.create(FreeMonad(cfg, FunF, _B));
+                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                     return .{ .free_m = .{ new_freem, try flam.cloneFOps() } };
                 }
             }
@@ -1241,12 +1371,13 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                 }{ .fimpl = self, .local_k = k };
 
                 const x_to_freem = _free_fop[0].strongRef();
+                const new_op_info = try @TypeOf(ma).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_bind_lam);
                 if (is_only_fop) {
-                    return .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    return .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                 } else {
-                    const new_freem = try self.allocator.create(FreeMonad(FunF, B));
-                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    const new_freem = try self.allocator.create(FreeMonad(cfg, FunF, B));
+                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                     return .{ .free_m = .{ new_freem, try ma.cloneFOps() } };
                 }
             }
@@ -1262,8 +1393,8 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                 return .{ .free_m = .{ new_pure_m, try ma.cloneFOps() } };
             } else {
                 var flist = freem.free_m[1];
-                const new_mb_fops = try flist.addManyAsSlice(ma.free_m[1].items.len);
-                try ma.cloneFOpsToSlice(new_mb_fops);
+                const new_ma_fops = try flist.addManyAsSlice(ma.free_m[1].items.len);
+                try ma.cloneFOpsToSlice(new_ma_fops);
                 return .{ .free_m = .{ freem.free_m[0], flist } };
             }
         }
@@ -1302,15 +1433,16 @@ pub fn FreeMonadImpl(comptime FunF: TCtor, comptime FunFImpl: type) type {
                 }{ .fimpl = self };
 
                 const x_to_freem = _free_fop[0].strongRef();
+                const new_op_info = try @TypeOf(mma).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_bind_lam);
                 if (is_only_fop) {
-                    return .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    return .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                 } else {
                     // TODO: In InplaceMap mode, reuse the allocated memory of free_m[0]
                     // in mma,
                     // const new_freem: *FreeMonad(FunF, A) = @ptrCast(mma.free_m[0]);
                     const new_freem = try self.allocator.create(F(A));
-                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, _free_fop[1] } };
+                    new_freem.* = .{ .free_fop = .{ new_x_to_freem, new_op_info } };
                     return .{ .free_m = .{ new_freem, try mma.cloneFOps() } };
                 }
             }
@@ -1345,9 +1477,10 @@ const Add_x_f64_Lam = testu.Add_x_f64_Lam;
 
 test "FreeMonad(F, A) fmap" {
     const allocator = testing.allocator;
+    const cfg = base.getDefaultBaseCfg(allocator);
     const MaybeFunctor = Functor(MaybeMonadImpl);
     const maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    const FreeMFunctor = Functor(FreeMonadImpl(Maybe, MaybeMonadImpl));
+    const FreeMFunctor = Functor(FreeMonadImpl(cfg, Maybe, MaybeMonadImpl));
     var freem_functor = FreeMFunctor.init(.{
         .allocator = allocator,
         .funf_impl = maybe_functor,
@@ -1363,7 +1496,7 @@ test "FreeMonad(F, A) fmap" {
     var a: u32 = 42;
     _ = &a;
     // const pure_freem = .{ .pure_m = a };
-    const pure_freem = FreeMonad(Maybe, u32).pureM(@as(u32, 42));
+    const pure_freem = FreeMonad(cfg, Maybe, u32).pureM(@as(u32, 42));
     const pure_freem1 = try freem_functor.fmap(.NewValMap, add_pi_f64, pure_freem);
     try testing.expectEqual(45.14, try pure_freem1.iter(maybe_functor, maybeToA(f64)));
     const show_writer = try pure_freem1.foldFree(nat_maybe_show, maybe_functor, show_monad);
@@ -1379,7 +1512,7 @@ test "FreeMonad(F, A) fmap" {
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
     };
-    const free_maybe = try pure_freem.appendFOps(allocator, @constCast(just_fns2));
+    const free_maybe = try pure_freem.appendFOps(@constCast(just_fns2));
     defer free_maybe.deinit();
     const free_maybe1 = try freem_functor.fmap(.NewValMap, add10, free_maybe);
     defer free_maybe1.deinit();
@@ -1401,9 +1534,10 @@ test "FreeMonad(F, A) fmap" {
 
 test "FreeMonad(F, A) pure and fapply" {
     const allocator = testing.allocator;
+    const cfg = base.getDefaultBaseCfg(allocator);
     const MaybeFunctor = Functor(MaybeMonadImpl);
     const maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    const FreeMApplicative = Applicative(FreeMonadImpl(Maybe, MaybeMonadImpl));
+    const FreeMApplicative = Applicative(FreeMonadImpl(cfg, Maybe, MaybeMonadImpl));
     var freem_applicative = FreeMApplicative.init(.{
         .allocator = allocator,
         .funf_impl = maybe_functor,
@@ -1428,12 +1562,9 @@ test "FreeMonad(F, A) pure and fapply" {
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
     };
 
-    const pure_freem = FreeMonad(Maybe, u32).pureM(@as(u32, 33));
+    const pure_freem = FreeMonad(cfg, Maybe, u32).pureM(@as(u32, 33));
     const purem_fn = try freem_applicative.pure(add_pi_f64);
-    var freem_fn = try purem_fn.appendFOp(
-        allocator,
-        .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
-    );
+    var freem_fn = try purem_fn.appendFOp(.{ .op_e = Just, .op_lam = @bitCast(buildJust()) });
     defer freem_fn.deinit();
     const applied_purem = try freem_applicative.fapply(u32, f64, freem_fn, pure_freem);
     defer applied_purem.deinit();
@@ -1443,7 +1574,7 @@ test "FreeMonad(F, A) pure and fapply" {
     try testing.expectEqual(36.14, show_writer.a);
     try testing.expectEqualSlices(u8, "Just ", show_writer.w.items);
 
-    const freem_a = try FreeMonad(Maybe, u32).freeM(allocator, 42, @constCast(just_fns1));
+    const freem_a = try FreeMonad(cfg, Maybe, u32).freeM(42, @constCast(just_fns1));
     defer freem_a.deinit();
     const applied_freem = try freem_applicative.fapply(u32, f64, freem_fn, freem_a);
     defer applied_freem.deinit();
@@ -1469,7 +1600,7 @@ test "FreeMonad(F, A) pure and fapply" {
         .{ .op_e = Nothing, .op_lam = @bitCast(buildNothing()) },
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
     };
-    freem_lam = try freem_lam.appendFOps(allocator, @constCast(just_fns2));
+    freem_lam = try freem_lam.appendFOps(@constCast(just_fns2));
     const applied_freem1 = try freem_applicative.fapplyLam(u32, f64, freem_lam, freem_a);
     defer applied_freem1.deinit();
     try testing.expectEqual(0, try applied_freem1.iter(maybe_functor, maybeToA(f64)));
@@ -1481,9 +1612,10 @@ test "FreeMonad(F, A) pure and fapply" {
 
 test "FreeMonad(F, A) bind" {
     const allocator = testing.allocator;
+    const cfg = base.getDefaultBaseCfg(allocator);
     const MaybeFunctor = Functor(MaybeMonadImpl);
     const maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    const FreeMaybeImpl = FreeMonadImpl(Maybe, MaybeMonadImpl);
+    const FreeMaybeImpl = FreeMonadImpl(cfg, Maybe, MaybeMonadImpl);
     const FMaybeMonad = Monad(FreeMaybeImpl);
     var freem_monad = FMaybeMonad.init(.{
         .allocator = allocator,
@@ -1507,16 +1639,16 @@ test "FreeMonad(F, A) bind" {
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
     };
 
-    const pure_freem = FreeMonad(Maybe, u32).pureM(@as(u32, 1));
-    const freem_a = try FreeMonad(Maybe, u32).freeM(allocator, 2, @constCast(just_fns1));
+    const pure_freem = FreeMonad(cfg, Maybe, u32).pureM(@as(u32, 1));
+    const freem_a = try FreeMonad(cfg, Maybe, u32).freeM(2, @constCast(just_fns1));
     defer freem_a.deinit();
-    const freem_b = try FreeMonad(Maybe, u32).freeM(allocator, 3, @constCast(just_fns1));
+    const freem_b = try FreeMonad(cfg, Maybe, u32).freeM(3, @constCast(just_fns1));
     defer freem_b.deinit();
-    const freem_c = try FreeMonad(Maybe, u32).freeM(allocator, 8, @constCast(just_fns1));
+    const freem_c = try FreeMonad(cfg, Maybe, u32).freeM(8, @constCast(just_fns1));
     defer freem_c.deinit();
 
     const k_u32 = struct {
-        fn f(self: *FreeMaybeImpl, a: u32) !FreeMonad(Maybe, f64) {
+        fn f(self: *FreeMaybeImpl, a: u32) !FreeMonad(cfg, Maybe, f64) {
             const _a = if (a > 3) 0 else a;
             const just_array = switch (_a) {
                 0 => &[_]FOpInfo{},
@@ -1537,7 +1669,7 @@ test "FreeMonad(F, A) bind" {
             const b = @as(f64, @floatFromInt(a)) + 3.14;
 
             const freem_k = if (just_array.len > 0)
-                try FreeMonad(Maybe, f64).freeM(allocator, b, @constCast(just_array))
+                try FreeMonad(cfg, Maybe, f64).freeM(b, @constCast(just_array))
             else
                 try self.pure(b);
             return freem_k;
@@ -1576,9 +1708,10 @@ test "FreeMonad(F, A) bind" {
 
 test "FreeMonad(F, A) join" {
     const allocator = testing.allocator;
+    const cfg = base.getDefaultBaseCfg(allocator);
     const MaybeFunctor = Functor(MaybeMonadImpl);
     const maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    const FreeMaybeImpl = FreeMonadImpl(Maybe, MaybeMonadImpl);
+    const FreeMaybeImpl = FreeMonadImpl(cfg, Maybe, MaybeMonadImpl);
     const FMaybeMonad = Monad(FreeMaybeImpl);
     var freem_monad = FMaybeMonad.init(.{
         .allocator = allocator,
@@ -1602,19 +1735,20 @@ test "FreeMonad(F, A) join" {
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
     };
 
-    const pure_freem = FreeMonad(Maybe, u32).pureM(@as(u32, 1));
-    const freem_a = try FreeMonad(Maybe, u32).freeM(allocator, 2, @constCast(just_fns1));
+    const pure_freem = FreeMonad(cfg, Maybe, u32).pureM(@as(u32, 1));
+    const freem_a = try FreeMonad(cfg, Maybe, u32).freeM(2, @constCast(just_fns1));
     defer freem_a.deinit();
-    const freem_b = try FreeMonad(Maybe, u32).freeM(allocator, 3, @constCast(just_fns1));
+    const freem_b = try FreeMonad(cfg, Maybe, u32).freeM(3, @constCast(just_fns1));
     defer freem_b.deinit();
-    const freem_c = try FreeMonad(Maybe, u32).freeM(allocator, 8, @constCast(just_fns1));
+    const freem_c = try FreeMonad(cfg, Maybe, u32).freeM(8, @constCast(just_fns1));
     defer freem_c.deinit();
 
     const k_u32 = struct {
         allocator: Allocator,
 
         const Self = @This();
-        pub fn call(self: *const Self, a: u32) !FreeMonad(Maybe, f64) {
+        pub fn call(self: *const Self, a: u32) !FreeMonad(cfg, Maybe, f64) {
+            _ = self;
             const _a = if (a > 3) 0 else a;
             const just_array = switch (_a) {
                 0 => &[_]FOpInfo{},
@@ -1635,9 +1769,9 @@ test "FreeMonad(F, A) join" {
             const b = @as(f64, @floatFromInt(a)) + 3.14;
 
             const freem_k = if (just_array.len > 0)
-                try FreeMonad(Maybe, f64).freeM(self.allocator, b, @constCast(just_array))
+                try FreeMonad(cfg, Maybe, f64).freeM(b, @constCast(just_array))
             else
-                FreeMonad(Maybe, f64).pureM(b);
+                FreeMonad(cfg, Maybe, f64).pureM(b);
             return freem_k;
         }
     }{ .allocator = allocator };
@@ -1800,9 +1934,10 @@ fn listToA(comptime A: type) *const fn (a: List(A)) A {
 
 // test "FreeMonad(List, A) fmap" {
 //     const allocator = testing.allocator;
+//     const cfg = base.getDefaultBaseCfg(allocator);
 //     const ListFunctor = Functor(ListFunctorImpl);
 //     const list_functor = ListFunctor.init(.{ .none = {} });
-//     const FreeMFunctor = Functor(FreeMonadImpl(List, ListFunctorImpl));
+//     const FreeMFunctor = Functor(FreeMonadImpl(cfg, List, ListFunctorImpl));
 //     var freem_functor = FreeMFunctor.init(.{
 //         .allocator = allocator,
 //         .funf_impl = list_functor,
@@ -1818,7 +1953,7 @@ fn listToA(comptime A: type) *const fn (a: List(A)) A {
 //     var a: u32 = 42;
 //     _ = &a;
 //     // const pure_freem = .{ .pure_m = a };
-//     const pure_freem = FreeMonad(List, u32).pureM(@as(u32, 42));
+//     const pure_freem = FreeMonad(cfg, List, u32).pureM(@as(u32, 42));
 //     const pure_freem1 = try freem_functor.fmap(.NewValMap, add_pi_f64, pure_freem);
 //     try testing.expectEqual(45.14, try pure_freem1.iter(list_functor, listToA(f64)));
 //     const show_writer = try pure_freem1.foldFree(nat_list_show, list_functor, show_monad);
@@ -1830,12 +1965,12 @@ fn listToA(comptime A: type) *const fn (a: List(A)) A {
 //     const Just: FOpEnumInt = @intFromEnum(MaybeCtorEnum.Just);
 //     const buildJust = MaybeCtorDefs(u32).Just.build;
 //     // const Nothing: FOpEnumInt = @intFromEnum(MaybeCtorEnum.Nothing);
-//     const FOpInfo = comptime FreeMonad(List, u32).FOpInfo;
+//     const FOpInfo = comptime FreeMonad(cfg, List, u32).FOpInfo;
 //     const just_fns2 = &[_]FOpInfo{
 //         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
 //         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
 //     };
-//     const free_maybe = try pure_freem.appendFOps(allocator, @constCast(just_fns2));
+//     const free_maybe = try pure_freem.appendFOps(@constCast(just_fns2));
 //     defer free_maybe.deinit();
 //     const free_maybe1 = try freem_functor.fmap(.NewValMap, add10, free_maybe);
 //     defer free_maybe1.deinit();

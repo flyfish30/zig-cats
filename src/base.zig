@@ -163,6 +163,14 @@ pub fn getIdentityFn(comptime A: type) *const fn (A) A {
     }.id;
 }
 
+pub fn getImpureIdentityFn(comptime E: type, comptime A: type) *const fn (A) E!A {
+    return &struct {
+        fn impureId(a: A) E!A {
+            return a;
+        }
+    }.impureId;
+}
+
 pub fn IdentityLamType(comptime T: type) type {
     return struct {
         lam_ctx: void = {},
@@ -193,6 +201,18 @@ pub const AnyLamType = struct {
     }
 };
 
+const BaseContextCfg = struct {
+    allocator: Allocator,
+    error_set: type,
+};
+
+pub fn getDefaultBaseCfg(allocator: Allocator) BaseContextCfg {
+    return .{
+        .allocator = allocator,
+        .error_set = Allocator.Error,
+    };
+}
+
 /// Define a lambda type for composable lambda that can compose functions and lambdas.
 /// No matter how many functions and lambdas are combined, the composable lambda can be
 /// considered as a single lambda containing the call function A->B.
@@ -220,9 +240,11 @@ pub fn ComposableLam(
 
         pub fn create(init_lam: anytype) Allocator.Error!*Self {
             const InitLam = @TypeOf(init_lam);
-            // @compileLog("init init_lam type: " ++ @typeName(@TypeOf(init_lam)));
-            // @compileLog("init RetType type: " ++ @typeName(MapLamRetType(InitLam)));
-            // @compileLog("init B type: " ++ @typeName(B));
+            if (B != MapLamRetType(InitLam)) {
+                @compileLog("init init_lam type: " ++ @typeName(@TypeOf(init_lam)));
+                @compileLog("init RetType type: " ++ @typeName(MapLamRetType(InitLam)));
+                @compileLog("init B type: " ++ @typeName(B));
+            }
             comptime assert(A == MapLamInType(InitLam));
             comptime assert(B == MapLamRetType(InitLam));
             var any_lam: *anyopaque = undefined;
@@ -370,25 +392,29 @@ pub fn ComposableLam(
             return OutError!RetType;
         }
 
+        /// Append a single argument function to a composable lambda.
+        /// Note: this function will consume the self.
         pub fn appendFn(
-            self: Self,
+            self: *Self,
             map_fn: anytype,
         ) Allocator.Error!*ComposableLam(cfg, A, AppendedRetType(B, MapFnToLamType(@TypeOf(map_fn)))) {
             return self.appendLam(mapFnToLam(map_fn));
         }
 
+        /// Append a single argument lambda to a composable lambda.
+        /// Note: this function will consume the self.
         pub fn appendLam(
             self: *Self,
-            lam: anytype,
-        ) Allocator.Error!*ComposableLam(cfg, A, AppendedRetType(B, @TypeOf(lam))) {
-            const Lam = @TypeOf(lam);
-            const InType = MapLamInType(Lam);
+            map_lam: anytype,
+        ) Allocator.Error!*ComposableLam(cfg, A, AppendedRetType(B, @TypeOf(map_lam))) {
+            const MapLam = @TypeOf(map_lam);
+            const InType = MapLamInType(MapLam);
             comptime assert(_B == InType);
-            const RetType = AppendedRetType(B, Lam);
+            const RetType = AppendedRetType(B, MapLam);
 
             const AppendedCompLam = struct {
                 comp_lam: *Self,
-                append_lam: Lam,
+                append_lam: MapLam,
 
                 const SelfNew = @This();
                 pub fn refSubLam(self_new: *const SelfNew) void {
@@ -420,7 +446,7 @@ pub fn ComposableLam(
 
             const appended_comp_lam = AppendedCompLam{
                 .comp_lam = self,
-                .append_lam = try copyOrCloneOrRef(lam),
+                .append_lam = try copyOrCloneOrRef(map_lam),
             };
             // std.debug.print("appended_comp_lam comp_lam={*}\n", .{appended_comp_lam.comp_lam});
             return ComposableLam(cfg, A, RetType).create(appended_comp_lam);
@@ -433,7 +459,7 @@ pub fn ComposableLam(
 }
 
 test ComposableLam {
-    const cfg = getDefaultComposeCfg(testing.allocator);
+    const cfg = getDefaultBaseCfg(testing.allocator);
     var add_pi_lam = testu.Add_x_f64_Lam{ ._x = 3.14 };
     _ = &add_pi_lam;
     var div_5_lam = testu.Div_x_u32_Lam{ ._x = 5 };
@@ -1066,18 +1092,6 @@ pub fn ComposeManyLams(
     };
 }
 
-const ComposeCfg = struct {
-    allocator: Allocator,
-    error_set: type,
-};
-
-pub fn getDefaultComposeCfg(allocator: Allocator) ComposeCfg {
-    return .{
-        .allocator = allocator,
-        .error_set = Allocator.Error,
-    };
-}
-
 fn div3FromF64(x: f64) u32 {
     const a: u32 = @intFromFloat(x);
     return @divFloor(a, 3);
@@ -1089,7 +1103,7 @@ fn rainbowColorFromU32(a: u32) RainbowColor {
 
 test ComposableFn {
     const allocator = testing.allocator;
-    const cfg = comptime getDefaultComposeCfg(allocator);
+    const cfg = comptime getDefaultBaseCfg(allocator);
     const add10_types = [_]type{ u32, u32 };
 
     // test append function
@@ -1242,7 +1256,7 @@ pub fn FreeTFn(comptime T: type) type {
     return *const fn (T) void;
 }
 
-/// A empty free function, do nothing
+/// Get a empty free function that do nothing
 pub fn getFreeNothing(comptime T: type) FreeTFn(T) {
     return struct {
         fn freeT(a: T) void {
