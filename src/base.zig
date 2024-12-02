@@ -151,7 +151,7 @@ pub const RainbowColor = enum {
 };
 
 /// A identity function as unit of endofunctions
-fn identity(a: anytype) @TypeOf(a) {
+pub fn identity(a: anytype) @TypeOf(a) {
     return a;
 }
 
@@ -185,6 +185,19 @@ pub fn IdentityLamType(comptime T: type) type {
 
 pub fn getIdentityLam(comptime A: type) IdentityLamType(A) {
     return IdentityLamType(A){};
+}
+
+fn FnToImpureType(E: type, MapFn: type) type {
+    return fn (MapFnInType(MapFn)) E!MapFnRetType(MapFn);
+}
+
+pub fn pureFnToImpure(E: type, comptime map_fn: anytype) FnToImpureType(E, @TypeOf(map_fn)) {
+    const MapFn = @TypeOf(map_fn);
+    return struct {
+        fn impureFn(a: MapFnInType(MapFn)) E!MapFnRetType(MapFn) {
+            return map_fn(a);
+        }
+    }.impureFn;
 }
 
 /// Any signle-argument function type
@@ -524,7 +537,7 @@ fn FnOrLamInType(comptime FnOrLam: type) type {
     switch (@typeInfo(FnOrLam)) {
         .Fn => return MapFnInType(FnOrLam),
         .Struct => return MapLamInType(FnOrLam),
-        else => @compileError("The FnOrLam(" ++ @typeName(FnOrLam) ++ ") not a function or lambda!"),
+        else => @compileError("Expect FnOrLam be a function or lambda, found '" ++ @typeName(FnOrLam) ++ "'"),
     }
 }
 

@@ -2518,6 +2518,100 @@ test "FreeMonad(StateF, A) bind and join" {
     );
 }
 
+test "runDo FreeMonad(StateF, A) " {
+    const input1: u32 = 42;
+
+    const allocator = testing.allocator;
+    const StateS = u32;
+    const cfg = getDefaultStateCfg(StateS, allocator);
+    const Error = cfg.error_set;
+    const F = StateF(cfg, StateS);
+    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
+    const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
+    const FreeStateFImpl = FreeMonadImpl(cfg, F, StateFFunctorImpl(cfg, StateS));
+    const FStateMonad = Monad(FreeStateFImpl);
+    const freem_monad = FStateMonad.init(.{
+        .allocator = allocator,
+        .funf_impl = statef_functor,
+    });
+
+    const StateMonad = Monad(StateMonadImpl(cfg, StateS));
+    const state_monad = StateMonad.init(.{ .allocator = allocator });
+    const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
+    const nat_statef_state = NatStateFToState.init(.{});
+
+    const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
+    const ShowMonad = Monad(ShowMonadImpl);
+    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
+    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
+    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+
+    var do_ctx = struct {
+        // It is must to define monad_impl for support do syntax.
+        monad_impl: FreeStateFImpl,
+        param1: u32,
+
+        // intermediate variable
+        b: u32 = undefined,
+
+        const Ctx = @This();
+        pub const is_pure = false;
+
+        fn deinit(ctx: Ctx) void {
+            _ = ctx;
+        }
+
+        // the do context struct must has startDo function
+        pub fn startDo(impl: *FreeStateFImpl) FreeStateFImpl.MbType(u32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            const s: StateS = 17;
+            // PutF(s, ctx.param1)
+            return liftPutF(cfg, s, ctx.param1);
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do1(impl: *FreeStateFImpl, a: u32) FreeStateFImpl.MbType(f64) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            ctx.b = a;
+            const add_x_f64 = struct {
+                _x: f64,
+                const Self = @This();
+                pub fn call(self: *const Self, in: u32) Error!f64 {
+                    return @as(f64, @floatFromInt(in)) + self._x;
+                }
+            }{ ._x = @floatFromInt(a) };
+            // GetF (\s -> s + a)
+            return liftGetF(cfg, add_x_f64);
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do2(impl: *FreeStateFImpl, a: f64) FreeStateFImpl.MbType(u32) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            const div_x_u32 = testu.Div_x_u32_Lam{ ._x = 7 };
+            const n = div_x_u32.call(a);
+            return liftPutF(cfg, ctx.b, n + ctx.b);
+        }
+    }{ .monad_impl = freem_monad, .param1 = input1 };
+    defer do_ctx.deinit();
+    var free_state1 = try runDo(&do_ctx);
+    defer free_state1.deinit();
+
+    const state1 = try free_state1.foldFree(nat_statef_state, statef_functor, state_monad);
+    const res1_a, const res1_s = try state1.runState(12);
+    _ = state1.strongUnref();
+    // (42 + 17) / 7 + 42 = 50
+    try testing.expectEqual(50, res1_a);
+    // s = ctx.b = ctx.param1 = 42
+    try testing.expectEqual(42, res1_s);
+    const show_writer1 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
+    defer show_writer1.deinit();
+    // 42 / 7 + 42 = 48
+    try testing.expectEqual(48, show_writer1.a);
+    // s = ctx.b = ctx.param1 = 42
+    try testing.expectEqualSlices(u8, "PutF 17, GetF, PutF 42, ", show_writer1.w.items);
+}
+
 ///////////////////////////////////////////////////
 // Definition of MWriter
 ///////////////////////////////////////////////////

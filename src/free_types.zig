@@ -185,6 +185,7 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                     };
 
                     if (!is_valid) {
+                        @compileLog("freeFOp XToFreeFALam type: " ++ @typeName(XToFreeFALam));
                         @compileError("Expect x_to_freem be a function or lambda," ++
                             " found '" ++ @typeName(@TypeOf(x_to_freem)) ++ "'");
                     }
@@ -956,19 +957,12 @@ pub fn FreeMonadImpl(
             comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
         ) void {
             if (fa == .pure_m) {
-                free_fn(fa.pure_m);
-            } else if (fa == .free_fop) {
-                fa.deinit();
-            } else {
-                if (fa.free_m[0].* == .pure_m) {
-                    free_fn(fa.free_m[0].pure_m);
-                } else {
-                    fa.free_m[0].deinit();
-                }
-                const allocator = fa.free_m[1].allocator;
-                allocator.destroy(fa.free_m[0]);
-                fa.free_m[1].deinit();
+                return free_fn(fa.pure_m);
             }
+            if (fa == .free_m and fa.free_m[0].* == .pure_m) {
+                free_fn(fa.free_m[0].pure_m);
+            }
+            fa.deinit();
         }
 
         pub fn fmap(
