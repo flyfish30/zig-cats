@@ -210,8 +210,8 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                 }
 
                 fn freeFPure(fpure: anytype) !Self {
-                    // const FpureType = @TypeOf(fpure);
-                    // comptime assert(Self == FaType.BaseType);
+                    const FpureType = @TypeOf(fpure);
+                    comptime assert(Self == FpureType.BaseType);
 
                     const fx_op_ctors = GetOpCtors(F, Self);
                     const ctor_e = std.meta.activeTag(fpure);

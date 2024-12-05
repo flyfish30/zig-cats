@@ -44,7 +44,7 @@ const FOpInfo = freetypes.FOpInfo;
 pub fn StateContext(comptime cfg: anytype) type {
     return struct {
         pub const ctx_cfg = cfg;
-        const Error = ctx_cfg.error_set;
+        pub const Error = ctx_cfg.error_set;
 
         // the currying form of State function
         pub fn StateM(comptime S: type) TCtor {
@@ -281,78 +281,78 @@ pub fn StateContext(comptime cfg: anytype) type {
     };
 }
 
-fn CloneTFn(comptime T: type) type {
-    return *const fn (a: T) Allocator.Error!T;
+pub fn CloneStateSFn(comptime S: type) type {
+    return *const fn (a: S) Allocator.Error!S;
 }
 
-fn FreeTFn(comptime T: type) type {
-    return *const fn (Allocator, a: T) void;
+pub fn FreeStateSFn(comptime S: type) type {
+    return *const fn (Allocator, a: S) void;
 }
 
-pub fn StateCtxCfg(comptime T: type) type {
+pub fn StateCtxCfg(comptime S: type) type {
     return struct {
         allocator: Allocator,
-        clone_s: CloneTFn(T),
-        free_s: FreeTFn(T),
+        clone_s: CloneStateSFn(S),
+        free_s: FreeStateSFn(S),
         error_set: type,
     };
 }
 
-fn getCopyAsClone(comptime T: type) CloneTFn(T) {
+fn getCopyAsClone(comptime S: type) CloneStateSFn(S) {
     return struct {
-        fn f(a: T) Allocator.Error!T {
+        fn f(a: S) Allocator.Error!S {
             return a;
         }
     }.f;
 }
 
-fn getFreeNothing(comptime T: type) FreeTFn(T) {
+fn getFreeNothing(comptime S: type) FreeStateSFn(S) {
     return struct {
-        fn f(allocator: Allocator, a: T) void {
+        fn f(allocator: Allocator, a: S) void {
             _ = allocator;
             _ = a;
         }
     }.f;
 }
 
-fn getDefaultStateCfg(comptime T: type, allocator: Allocator) StateCtxCfg(T) {
+fn getDefaultStateCfg(comptime S: type, allocator: Allocator) StateCtxCfg(S) {
     return .{
-        .clone_s = getCopyAsClone(T),
-        .free_s = getFreeNothing(T),
+        .clone_s = getCopyAsClone(S),
+        .free_s = getFreeNothing(S),
         .allocator = allocator,
         .error_set = Allocator.Error,
     };
 }
 
-fn getNormalClone(comptime T: type) CloneTFn(T) {
+fn getNormalClone(comptime S: type) CloneStateSFn(S) {
     return struct {
-        fn f(a: T) Allocator.Error!T {
+        fn f(a: S) Allocator.Error!S {
             return a.clone();
         }
     }.f;
 }
 
-fn getFreeOneT(comptime T: type) FreeTFn(T) {
+fn getFreeOneT(comptime S: type) FreeStateSFn(S) {
     return struct {
-        fn f(allocator: Allocator, a: T) void {
+        fn f(allocator: Allocator, a: S) void {
             allocator.destroy(a);
         }
     }.f;
 }
 
-fn getDeinitOneT(comptime T: type) FreeTFn(T) {
+fn getDeinitOneT(comptime S: type) FreeStateSFn(S) {
     return struct {
-        fn f(allocator: Allocator, a: T) void {
+        fn f(allocator: Allocator, a: S) void {
             _ = allocator;
             a.deinit();
         }
     }.f;
 }
 
-fn getDeinitCfg(comptime T: type, allocator: Allocator) StateCtxCfg(T) {
+pub fn getDeinitCfg(comptime S: type, allocator: Allocator) StateCtxCfg(S) {
     return .{
-        .clone_s = getNormalClone(T),
-        .free_s = getDeinitOneT(T),
+        .clone_s = getNormalClone(S),
+        .free_s = getDeinitOneT(S),
         .allocator = allocator,
         .error_set = Allocator.Error,
     };
@@ -1105,16 +1105,6 @@ pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
             fa.deinit();
         }
 
-        fn TransFnRetType(
-            comptime RetS: type,
-            comptime RetA: type,
-        ) type {
-            const has_err, const _A = comptime isErrorUnionOrVal(RetA);
-            const info = @typeInfo(RetA);
-            const RetE = Error || if (has_err) info.ErrorUnion.error_set else error{};
-            return RetE!struct { _A, RetS };
-        }
-
         pub fn fmap(
             self: *Self,
             comptime K: MapFnKind,
@@ -1197,7 +1187,7 @@ pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
     };
 }
 
-/// All value constructors for Maybe Functor
+/// All value constructors for StateF Functor
 fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) type {
     const Error = cfg.error_set;
 
@@ -1510,14 +1500,9 @@ pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
                 };
                 return .{ .a = fa.putf[1], .w = array };
             } else {
-                const get_fmt_str = "GetF, ";
-                const len = std.fmt.count(get_fmt_str, .{});
-                var array = try ArrayList(u8).initCapacity(self.allocator, len);
-                const get_buf = array.addManyAsSliceAssumeCapacity(len);
-                _ = std.fmt.bufPrint(get_buf, get_fmt_str, .{}) catch |err|
-                    switch (err) {
-                    error.NoSpaceLeft => unreachable, // we just counted the size above
-                };
+                const get_str = "GetF, ";
+                var array = try ArrayList(u8).initCapacity(self.allocator, get_str.len);
+                array.appendSliceAssumeCapacity(get_str);
                 const init_val = base.defaultVal(ExistType);
                 return .{ .a = try fa.getf.call(init_val), .w = array };
             }
@@ -2606,7 +2591,7 @@ test "runDo FreeMonad(StateF, A) " {
     try testing.expectEqual(42, res1_s);
     const show_writer1 = try free_state1.foldFree(nat_statef_show, statef_functor, show_monad);
     defer show_writer1.deinit();
-    // 42 / 7 + 42 = 48
+    // (42 + 0) / 7 + 42 = 48
     try testing.expectEqual(48, show_writer1.a);
     // s = ctx.b = ctx.param1 = 42
     try testing.expectEqualSlices(u8, "PutF 17, GetF, PutF 42, ", show_writer1.w.items);
