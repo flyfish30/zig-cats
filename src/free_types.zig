@@ -453,6 +453,7 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                             op_info.op_lam,
                             @constCast(&[_]MImpl.F(A){acc_m}),
                         );
+                        defer base.deinitOrUnref(f_acc_m);
                         const m_acc_m = try nat_impl.trans(MImpl.F(A), f_acc_m);
                         defer MImpl.deinitFa(m_acc_m, base.getDeinitOrUnref(MImpl.F(A)));
                         acc_m = try @constCast(&m_impl).join(A, m_acc_m);

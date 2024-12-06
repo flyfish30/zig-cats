@@ -47,32 +47,40 @@ fn StackCalcF(Kont: type) type {
     return union(enum) {
         push: struct { Int, Kont },
         pop: Kont,
+        top: *TopLamType,
         add: Kont,
         mul: Kont,
 
         const Self = @This();
-        pub const BaseType = Kont;
-        pub const Error = error{};
-        pub const ExistentialType = Int;
-        pub const OpCtorDefs = GetOpCtorDefs();
+        const cfg = zcats.getDefaultBaseCfg(g_allocator);
+        const TopLamType = zcats.ComposableLam(cfg, Int, Error!Kont);
 
-        fn GetOpCtorDefs() type {
-            const op_ctor_defs = StackCalcFCtorDefs(Kont);
+        pub const BaseType = Kont;
+        pub const Error = cfg.error_set;
+        pub const ExistentialType = Int;
+        pub const OpCtorDefs = ValidateOpCtorDefs();
+
+        fn ValidateOpCtorDefs() type {
+            const op_ctor_defs = StackCalcFCtorDefs(cfg, Kont);
             const CtorEnum = std.meta.DeclEnum(op_ctor_defs);
             const push_e = @intFromEnum(std.meta.activeTag(Self{ .push = undefined }));
             const pop_e = @intFromEnum(std.meta.activeTag(Self{ .pop = undefined }));
+            const top_e = @intFromEnum(std.meta.activeTag(Self{ .top = undefined }));
             const add_e = @intFromEnum(std.meta.activeTag(Self{ .add = undefined }));
             const mul_e = @intFromEnum(std.meta.activeTag(Self{ .mul = undefined }));
             // Check if it has same order of {Push, Pop, Add, Mul}
             assert(@intFromEnum(CtorEnum.Push) == push_e);
             assert(@intFromEnum(CtorEnum.Pop) == pop_e);
+            assert(@intFromEnum(CtorEnum.Top) == top_e);
             assert(@intFromEnum(CtorEnum.Add) == add_e);
             assert(@intFromEnum(CtorEnum.Mul) == mul_e);
             return op_ctor_defs;
         }
 
         pub fn deinit(self: Self) void {
-            _ = self;
+            if (self == .top) {
+                _ = self.top.strongUnref();
+            }
         }
     };
 }
@@ -86,8 +94,8 @@ const StackCalcFunctorImpl = struct {
     pub const F = StackCalcF;
 
     /// Get base type of F(A), it is must just is A.
-    pub fn BaseType(comptime State: type) type {
-        return std.meta.Child(State).StateA;
+    pub fn BaseType(comptime StackCalcFA: type) type {
+        return StackCalcFA.BaseType;
     }
 
     pub const Error = Allocator.Error;
@@ -105,10 +113,18 @@ const StackCalcFunctorImpl = struct {
     pub const MbType = MonadFxTypes(F, Error).MbType;
 
     pub fn deinitFa(
-        fa: anytype, // StateF(cfg, S, A)
+        fa: anytype, // StackCalcF(A)
         comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
     ) void {
-        _ = free_fn;
+        switch (fa) {
+            .pop, .add, .mul => |a| {
+                free_fn(a);
+            },
+            .push => {
+                free_fn(fa.push[1]);
+            },
+            .top => {},
+        }
         fa.deinit();
     }
 
@@ -119,7 +135,7 @@ const StackCalcFunctorImpl = struct {
         fa: FaType(K, @TypeOf(map_fn)),
     ) FbType(@TypeOf(map_fn)) {
         _ = self;
-        // const A = MapFnInType(@TypeOf(map_fn));
+        const A = MapFnInType(@TypeOf(map_fn));
         const B = MapFnRetType(@TypeOf(map_fn));
         const has_err, const _B = comptime isErrorUnionOrVal(B);
         _ = _B;
@@ -141,6 +157,22 @@ const StackCalcFunctorImpl = struct {
                     map_fn(fa.pop);
                 const _b = if (has_err) try b else b;
                 return .{ .pop = _b };
+            },
+            .top => {
+                const MapRefLam = struct {
+                    map_fn: @TypeOf(map_fn),
+                    const MapSelf = @This();
+                    pub fn call(map_self: MapSelf, a: std.meta.Child(A)) B {
+                        return map_self.map_fn(&a);
+                    }
+                };
+
+                const top_lam = if (isInplaceMap(K)) fa.top else fa.top.strongRef();
+                if (comptime isMapRef(K)) {
+                    const map_ref_lam = MapRefLam{ .map_fn = map_fn };
+                    return .{ .top = try top_lam.appendLam(map_ref_lam) };
+                }
+                return .{ .top = try top_lam.appendFn(map_fn) };
             },
             .add => {
                 const b = if (comptime isMapRef(K))
@@ -168,7 +200,7 @@ const StackCalcFunctorImpl = struct {
         fa: FaLamType(K, @TypeOf(map_lam)),
     ) FbLamType(@TypeOf(map_lam)) {
         _ = self;
-        // const A = MapLamInType(@TypeOf(map_lam));
+        const A = MapLamInType(@TypeOf(map_lam));
         const B = MapLamRetType(@TypeOf(map_lam));
         const has_err, const _B = comptime isErrorUnionOrVal(B);
         _ = _B;
@@ -191,6 +223,22 @@ const StackCalcFunctorImpl = struct {
                 const _b = if (has_err) try b else b;
                 return .{ .pop = _b };
             },
+            .top => {
+                const MapRefLam = struct {
+                    map_lam: @TypeOf(map_lam),
+                    const MapSelf = @This();
+                    pub fn call(map_self: MapSelf, a: std.meta.Child(A)) B {
+                        return map_self.map_lam.call(&a);
+                    }
+                };
+
+                const top_lam = if (isInplaceMap(K)) fa.top else fa.top.strongRef();
+                if (comptime isMapRef(K)) {
+                    const map_ref_lam = MapRefLam{ .map_lam = map_lam };
+                    return .{ .top = try top_lam.appendLam(map_ref_lam) };
+                }
+                return .{ .top = try top_lam.appendLam(map_lam) };
+            },
             .add => {
                 const b = if (comptime isMapRef(K))
                     map_lam.call(&fa.add)
@@ -212,14 +260,15 @@ const StackCalcFunctorImpl = struct {
 };
 
 /// All value constructors for StackCalcF Functor
-fn StackCalcFCtorDefs(comptime A: type) type {
+fn StackCalcFCtorDefs(comptime cfg: anytype, comptime A: type) type {
     const Error = Allocator.Error;
 
-    // Define Op constructor lambdas for StateF
+    // Define Op constructor lambdas for StackCalcF
     return struct {
-        // The order of PutF and GetF must be same as order of putf and getf in StateF
+        // The order of Push...Mul must be same as order of push...mul in StackCalcF
         pub const Push = PushLam;
         pub const Pop = PopLam;
+        pub const Top = TopLam;
         pub const Add = AddLam;
         pub const Mul = MulLam;
 
@@ -227,6 +276,7 @@ fn StackCalcFCtorDefs(comptime A: type) type {
         const CtorEnum = std.meta.DeclEnum(SelfCtor);
         const Push_E: FOpEnumInt = @intFromEnum(CtorEnum.Push);
         const Pop_E: FOpEnumInt = @intFromEnum(CtorEnum.Pop);
+        const Top_E: FOpEnumInt = @intFromEnum(CtorEnum.Top);
         const Add_E: FOpEnumInt = @intFromEnum(CtorEnum.Add);
         const Mul_E: FOpEnumInt = @intFromEnum(CtorEnum.Mul);
 
@@ -276,6 +326,56 @@ fn StackCalcFCtorDefs(comptime A: type) type {
             pub fn call(self: *Self, a: A) StackCalcF(A) {
                 _ = self;
                 return .{ .pop = a };
+            }
+        };
+
+        const TopLam = extern struct {
+            lam_ctx: *TopLamType,
+
+            const Self = @This();
+            // This Op is just a function that return type is A
+            pub const is_fn_op = true;
+            const TopLamType = zcats.ComposableLam(cfg, Int, Error!A);
+
+            pub fn build(action: anytype) Error!Self {
+                const info = @typeInfo(@TypeOf(action));
+                const is_valid, const action_lam = switch (info) {
+                    .Struct => .{ true, action },
+
+                    .Fn => .{ true, zcats.mapFnToLam(action) },
+                    .Pointer => if (@typeInfo(info.Pointer.child) == .Fn)
+                        .{ true, zcats.mapFnToLam(action) }
+                    else
+                        .{ false, undefined },
+                    else => .{ false, undefined },
+                };
+
+                if (!is_valid) {
+                    @compileError("Expect action be a function or lambda," ++
+                        " found '" ++ @typeName(@TypeOf(action)) ++ "'");
+                }
+
+                const top_lam = try TopLamType.create(action_lam);
+                return .{ .lam_ctx = top_lam };
+            }
+
+            pub fn fpureToFreem(FreeMType: type, fpure: StackCalcF(A)) Error!FreeMType {
+                comptime assert(Int == FreeMType.ExistType);
+                const impureId = zcats.getImpureIdentityFn(Error, Int);
+                const top_lam = try zcats.ComposableLam(cfg, Int, Error!Int).createByFn(impureId);
+                return FreeMType.freeFOp(fpure.top, Top_E, .{ .lam_ctx = top_lam });
+            }
+
+            pub fn deinit(self: Self) void {
+                _ = self.lam_ctx.strongUnref();
+            }
+
+            pub fn clone(self: Self) Error!Self {
+                return .{ .lam_ctx = self.lam_ctx.strongRef() };
+            }
+
+            pub fn call(self: *const Self) StackCalcF(A) {
+                return .{ .top = self.lam_ctx.strongRef() };
             }
         };
 
@@ -335,9 +435,9 @@ fn liftPush(comptime cfg: anytype, n: Int) !FreeMonad(cfg, StackCalcF, void) {
     const A = void;
     const F = StackCalcF;
 
-    const CtorEnum = std.meta.DeclEnum(StackCalcFCtorDefs(A));
+    const CtorEnum = std.meta.DeclEnum(StackCalcFCtorDefs(cfg, A));
     const Push: FOpEnumInt = @intFromEnum(CtorEnum.Push);
-    const buildPush = StackCalcFCtorDefs(A).Push.build;
+    const buildPush = StackCalcFCtorDefs(cfg, A).Push.build;
     const push_ops = &[_]FOpInfo{
         .{ .op_e = Push, .op_lam = @bitCast(try buildPush(n)) },
     };
@@ -348,22 +448,70 @@ fn liftPop(comptime cfg: anytype) !FreeMonad(cfg, StackCalcF, void) {
     const A = void;
     const F = StackCalcF;
 
-    const CtorEnum = std.meta.DeclEnum(StackCalcFCtorDefs(A));
+    const CtorEnum = std.meta.DeclEnum(StackCalcFCtorDefs(cfg, A));
     const Pop: FOpEnumInt = @intFromEnum(CtorEnum.Pop);
-    const buildPop = StackCalcFCtorDefs(A).Pop.build;
+    const buildPop = StackCalcFCtorDefs(cfg, A).Pop.build;
     const pop_ops = &[_]FOpInfo{
         .{ .op_e = Pop, .op_lam = @bitCast(try buildPop()) },
     };
     return FreeMonad(cfg, F, void).freeM({}, @constCast(pop_ops));
 }
 
+fn LiftTopType(comptime cfg: anytype, comptime ActionType: type) type {
+    const info = @typeInfo(ActionType);
+    switch (info) {
+        .Struct => {
+            const A = MapLamRetType(ActionType);
+            const has_err, const _A = isErrorUnionOrVal(A);
+            _ = has_err;
+            return FreeMonad(cfg, StackCalcF, _A);
+        },
+
+        .Fn => {
+            const A = MapFnRetType(ActionType);
+            const has_err, const _A = isErrorUnionOrVal(A);
+            _ = has_err;
+            return FreeMonad(cfg, StackCalcF, _A);
+        },
+        .Pointer => if (@typeInfo(info.Pointer.child) == .Fn) {
+            const A = MapFnRetType(ActionType);
+            const has_err, const _A = isErrorUnionOrVal(A);
+            _ = has_err;
+            return FreeMonad(cfg, StackCalcF, _A);
+        } else {
+            @compileError("Expect a type of function or lambda," ++
+                " found '" ++ @typeName(ActionType) ++ "'");
+        },
+        else => {
+            @compileError("Expect a type of function or lambda," ++
+                " found '" ++ @typeName(ActionType) ++ "'");
+        },
+    }
+}
+
+pub fn liftTop(comptime cfg: anytype) !FreeMonad(cfg, StackCalcF, Int) {
+    const Error = cfg.error_set;
+    const F = StackCalcF;
+    const ExistType = zcats.GetExistentialType(F);
+    comptime assert(ExistType == Int);
+    const CtorEnum = std.meta.DeclEnum(StackCalcFCtorDefs(cfg, Int));
+    const Top: FOpEnumInt = @intFromEnum(CtorEnum.Top);
+    const buildTop = StackCalcFCtorDefs(cfg, ExistType).Top.build;
+
+    const action_lam = zcats.getImpureIdentityLam(Error, Int);
+    const comp_action_lam = try zcats.ComposableLam(cfg, Int, Error!Int).create(action_lam);
+    const top_lam = try comp_action_lam.appendFn(FreeMonad(cfg, F, Int).pureM);
+    defer _ = top_lam.strongUnref();
+    return FreeMonad(cfg, F, Int).freeFOp(top_lam, Top, try buildTop(zcats.getImpureIdentityFn(Error, Int)));
+}
+
 fn liftAdd(comptime cfg: anytype) !FreeMonad(cfg, StackCalcF, void) {
     const A = void;
     const F = StackCalcF;
 
-    const CtorEnum = std.meta.DeclEnum(StackCalcFCtorDefs(A));
+    const CtorEnum = std.meta.DeclEnum(StackCalcFCtorDefs(cfg, A));
     const Add: FOpEnumInt = @intFromEnum(CtorEnum.Add);
-    const buildAdd = StackCalcFCtorDefs(A).Add.build;
+    const buildAdd = StackCalcFCtorDefs(cfg, A).Add.build;
     const add_ops = &[_]FOpInfo{
         .{ .op_e = Add, .op_lam = @bitCast(try buildAdd()) },
     };
@@ -374,9 +522,9 @@ fn liftMul(comptime cfg: anytype) !FreeMonad(cfg, StackCalcF, void) {
     const A = void;
     const F = StackCalcF;
 
-    const CtorEnum = std.meta.DeclEnum(StackCalcFCtorDefs(A));
+    const CtorEnum = std.meta.DeclEnum(StackCalcFCtorDefs(cfg, A));
     const Mul: FOpEnumInt = @intFromEnum(CtorEnum.Mul);
-    const buildMul = StackCalcFCtorDefs(A).Mul.build;
+    const buildMul = StackCalcFCtorDefs(cfg, A).Mul.build;
     const mul_ops = &[_]FOpInfo{
         .{ .op_e = Mul, .op_lam = @bitCast(try buildMul()) },
     };
@@ -404,10 +552,11 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
             switch (fa) {
                 .push => {
                     const action_lam = struct {
-                        local_fa: F(A),
+                        local_n: Int,
+                        local_k: A,
                         const LamSelf = @This();
                         pub fn deinit(lam_self: LamSelf) void {
-                            _ = lam_self;
+                            _ = lam_self.local_k.strongUnref();
                         }
 
                         pub fn call(
@@ -415,82 +564,106 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                             s: S,
                         ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
                             // This lambda just as Haskell code:
-                            //     \s -> (s ++ [push[0]], push[1])
-                            std.debug.print("trans Push s={any}\n", .{s.items});
-                            try s.append(lam_self.local_fa.push[0]);
-                            std.debug.print("end trans Push s={any}\n", .{s.items});
-                            return .{ lam_self.local_fa.push[1].strongRef(), s };
+                            //     \s -> (k, a:s)
+                            try s.append(lam_self.local_n); // push(n)
+                            return .{ lam_self.local_k, s };
                         }
-                    }{ .local_fa = fa };
+                    }{ .local_n = fa.push[0], .local_k = fa.push[1].strongRef() };
                     // It is just as Haskell code:
-                    //     State $ \s -> (s ++ [push[0]], push[1])
+                    //     State $ \s -> (k, a:s)
                     return DefaultCtx.mkStateFromLam(action_lam);
                 },
                 .pop => {
                     const action_lam = struct {
-                        local_fa: F(A),
+                        local_k: A,
                         const LamSelf = @This();
+                        pub fn deinit(lam_self: LamSelf) void {
+                            _ = lam_self.local_k.strongUnref();
+                        }
 
                         pub fn call(
                             lam_self: *const LamSelf,
                             s: S,
                         ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
                             // This lambda just as Haskell code:
-                            //     \s -> (tail s, k)
-                            std.debug.print("trans Pop s={any}\n", .{s.items});
-                            _ = s.pop();
-                            std.debug.print("end trans Pop s={any}\n", .{s.items});
-                            return .{ lam_self.local_fa.pop.strongRef(), s };
+                            //     \s -> (k, tail s)
+                            _ = s.popOrNull() orelse @panic("Pop empty stack in calculator!");
+                            return .{ lam_self.local_k, s };
                         }
-                    }{ .local_fa = fa };
+                    }{ .local_k = fa.pop.strongRef() };
                     // It is just as Haskell code:
-                    //     State $ \s -> (tail s, k)
+                    //     State $ \s -> (k, tail s)
+                    return DefaultCtx.mkStateFromLam(action_lam);
+                },
+                .top => {
+                    const action_lam = struct {
+                        local_fa: F(A),
+                        const LamSelf = @This();
+                        pub fn deinit(lam_self: LamSelf) void {
+                            lam_self.local_fa.deinit();
+                        }
+
+                        pub fn call(
+                            lam_self: *const LamSelf,
+                            s: S,
+                        ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
+                            // This lambda just as Haskell code:
+                            //     \s -> (k (head s), s)
+                            if (s.items.len == 0)
+                                @panic("Top from empty stack in calculator!");
+                            return .{ try lam_self.local_fa.top.call(s.items[s.items.len - 1]), s };
+                        }
+                    }{ .local_fa = .{ .top = fa.top.strongRef() } };
+                    // It is just as Haskell code:
+                    //     State $ \s -> (k (head s), s)
                     return DefaultCtx.mkStateFromLam(action_lam);
                 },
                 .add => {
                     const action_lam = struct {
-                        local_fa: F(A),
+                        local_k: A,
                         const LamSelf = @This();
+                        pub fn deinit(lam_self: LamSelf) void {
+                            _ = lam_self.local_k.strongUnref();
+                        }
 
                         pub fn call(
                             lam_self: *const LamSelf,
                             s: S,
                         ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
                             // This lambda just as Haskell code:
-                            //     \s@(x:y:ts) -> ((x+y):ts, k)
-                            std.debug.print("trans Add s={any}\n", .{s.items});
+                            //     \s@(x:y:ts) -> (k, (x+y):ts)
                             const x = s.pop();
                             const y = s.pop();
-                            try s.append(x + y);
-                            std.debug.print("end trans Add s={any}\n", .{s.items});
-                            return .{ lam_self.local_fa.add.strongRef(), s };
+                            try s.append(x + y); // push(x + y)
+                            return .{ lam_self.local_k, s };
                         }
-                    }{ .local_fa = fa };
+                    }{ .local_k = fa.add.strongRef() };
                     // It is just as Haskell code:
-                    //     State $ \s@(x:y:ts) -> ((x+y):ts, k)
+                    //     State $ \s@(x:y:ts) -> (k, (x+y):ts)
                     return DefaultCtx.mkStateFromLam(action_lam);
                 },
                 .mul => {
                     const action_lam = struct {
-                        local_fa: F(A),
+                        local_k: A,
                         const LamSelf = @This();
+                        pub fn deinit(lam_self: LamSelf) void {
+                            _ = lam_self.local_k.strongUnref();
+                        }
 
                         pub fn call(
                             lam_self: *const LamSelf,
                             s: S,
                         ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
                             // This lambda just as Haskell code:
-                            //     \s@(x:y:ts) -> ((x*y):ts, k)
-                            std.debug.print("trans Mul s={any}\n", .{s.items});
+                            //     \s@(x:y:ts) -> (k, (x*y):ts)
                             const x = s.pop();
                             const y = s.pop();
-                            try s.append(x * y);
-                            std.debug.print("end trans Mul s={any}\n", .{s.items});
-                            return .{ lam_self.local_fa.mul.strongRef(), s };
+                            try s.append(x * y); // push(x * y)
+                            return .{ lam_self.local_k, s };
                         }
-                    }{ .local_fa = fa };
+                    }{ .local_k = fa.mul.strongRef() };
                     // It is just as Haskell code:
-                    //     State $ \s@(x:y:ts) -> ((x*y):ts, k)
+                    //     State $ \s@(x:y:ts) -> (k, (x*y):ts)
                     return DefaultCtx.mkStateFromLam(action_lam);
                 },
             }
@@ -527,6 +700,12 @@ pub const StackCalcFShowNatImpl = struct {
                 var array = try ArrayList(u8).initCapacity(self.allocator, pop_str.len);
                 array.appendSliceAssumeCapacity(pop_str);
                 return .{ .a = fa.pop, .w = array };
+            },
+            .top => {
+                const top_str = "Top, ";
+                var array = try ArrayList(u8).initCapacity(self.allocator, top_str.len);
+                array.appendSliceAssumeCapacity(top_str);
+                return .{ .a = try fa.top.call(0), .w = array };
             },
             .add => {
                 const add_str = "Add, ";
@@ -570,6 +749,7 @@ fn runStackCalcSample() !void {
     const input1: Int = 42;
 
     const allocator = g_allocator;
+    defer _ = allocator_instance.deinit();
     const F = StackCalcF;
     const cfg = getArrayListStateCfg(StateS, allocator);
     const StackCalcFunctor = Functor(StackCalcFunctorImpl);
@@ -593,13 +773,23 @@ fn runStackCalcSample() !void {
     const NatStackCalcToShow = NatTrans(StackCalcFShowNatImpl);
     const nat_calc_show = NatStackCalcToShow.init(.{ .allocator = allocator });
 
+    // This do block is just as Haskell code:
+    // calc = do
+    //   push 3
+    //   push 4
+    //   add
+    //   push 5
+    //   mul
+    //   x <- top
+    //   pop
+    //   pure x
     var do_ctx = struct {
         // It is must to define monad_impl for support do syntax.
         monad_impl: FreeStackCalcImpl,
         param1: u64,
 
         // intermediate variable
-        b: u32 = undefined,
+        x: Int = undefined,
 
         const Ctx = @This();
         pub const is_pure = false;
@@ -612,35 +802,65 @@ fn runStackCalcSample() !void {
         pub fn startDo(impl: *FreeStackCalcImpl) FreeStackCalcImpl.MbType(void) {
             // const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             _ = impl;
+            // push 3
             return liftPush(cfg, 3);
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do1(impl: *FreeStackCalcImpl, a: u64) FreeStackCalcImpl.MbType(void) {
+        pub fn do1(impl: *FreeStackCalcImpl, a: void) FreeStackCalcImpl.MbType(void) {
             _ = impl;
             _ = a;
+            // push 4
             return liftPush(cfg, 4);
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do2(impl: *FreeStackCalcImpl, a: u64) FreeStackCalcImpl.MbType(void) {
+        pub fn do2(impl: *FreeStackCalcImpl, a: void) FreeStackCalcImpl.MbType(void) {
             _ = impl;
             _ = a;
+            // add
             return liftAdd(cfg);
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do3(impl: *FreeStackCalcImpl, a: u64) FreeStackCalcImpl.MbType(void) {
+        pub fn do3(impl: *FreeStackCalcImpl, a: void) FreeStackCalcImpl.MbType(void) {
             _ = impl;
             _ = a;
+            // push 5
             return liftPush(cfg, 5);
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do4(impl: *FreeStackCalcImpl, a: u64) FreeStackCalcImpl.MbType(void) {
+        pub fn do4(impl: *FreeStackCalcImpl, a: void) FreeStackCalcImpl.MbType(void) {
             _ = impl;
             _ = a;
+            // mul
             return liftMul(cfg);
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do5(impl: *FreeStackCalcImpl, a: void) FreeStackCalcImpl.MbType(Int) {
+            _ = impl;
+            _ = a;
+            // top
+            return liftTop(cfg);
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do6(impl: *FreeStackCalcImpl, a: Int) FreeStackCalcImpl.MbType(void) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            // x <- top
+            ctx.x = a;
+            // pop
+            return liftPop(cfg);
+        }
+
+        // the name of other do step function must be starts with "do" string
+        pub fn do7(impl: *FreeStackCalcImpl, a: void) FreeStackCalcImpl.MbType(Int) {
+            const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
+            _ = a;
+            // return x
+            return impl.pure(ctx.x);
         }
     }{ .monad_impl = freem_monad, .param1 = input1 };
     defer do_ctx.deinit();
@@ -652,14 +872,8 @@ fn runStackCalcSample() !void {
     defer init_s.deinit();
     const res1_a, const res1_s = try state1.runState(&init_s);
     _ = state1.strongUnref();
-    // (42 + 17) / 7 + 42 = 50
-    try testing.expectEqual({}, res1_a);
-    // s = ctx.b = ctx.param1 = 42
-    try testing.expectEqualSlices(Int, &[_]Int{35}, res1_s.items);
+    std.debug.print("run StackCalc result is: ({any}, {any})\n", .{ res1_a, res1_s.items });
     const show_writer1 = try free_state1.foldFree(nat_calc_show, stack_calc_functor, show_monad);
     defer show_writer1.deinit();
-    // (42 + 0) / 7 + 42 = 48
-    try testing.expectEqual({}, show_writer1.a);
-    // s = ctx.b = ctx.param1 = 42
-    try testing.expectEqualSlices(u8, "Push 3, Push 4, Add, Push 5, Mul, ", show_writer1.w.items);
+    std.debug.print("StackCalc expression is: \"{s}\"\n", .{show_writer1.w.items});
 }

@@ -414,7 +414,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         pub const MbType = MonadFxTypes(F, Error).MbType;
 
         pub fn deinitFa(
-            fa: anytype, // Maybe(A)
+            fa: anytype, // State(S, A)
             comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
         ) void {
             _ = free_fn;
@@ -755,13 +755,46 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             comptime A: type,
             mma: F(F(A)),
         ) MbType(A) {
-            const ident_k = struct {
-                fn idFn(k_self: *Self, ma: F(A)) MbType(A) {
-                    _ = k_self;
-                    return ma;
+            const TransCtx = struct {
+                // a pointer of state monad instance
+                monad_impl: *Self,
+                // a local temporary state value for mma
+                local_state: *State(S, *State(S, A)),
+            };
+
+            const JoinStateType = struct {
+                state: State(S, A),
+                trans_ctx: TransCtx,
+            };
+
+            const free_parent = struct {
+                fn freeParent(trans_lam: *State(S, A).TransLam) void {
+                    const state_parent: *JoinStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    ctx_cfg.allocator.destroy(state_parent);
                 }
-            }.idFn;
-            return self.bind(F(A), A, mma, &ident_k);
+            }.freeParent;
+
+            const trans_fn = struct {
+                const RetType = TransFnRetType(S, A);
+                fn f(trans_lam: *State(S, A).TransLam, input_s: S) RetType {
+                    const state_parent: *JoinStateType = @alignCast(@ptrCast(trans_lam.state_parent));
+                    const trans_ctx: *TransCtx = &state_parent.trans_ctx;
+                    const state, const s = try trans_ctx.local_state.runState(input_s);
+                    _ = trans_ctx.local_state.strongUnref();
+                    const out_a, const out_s = try state.runState(s);
+                    _ = state.strongUnref();
+                    return .{ out_a, out_s };
+                }
+            }.f;
+
+            var join_state = try ctx_cfg.allocator.create(JoinStateType);
+            join_state.state.ref_count = 1;
+            join_state.state.trans_lam.trans_fn = @constCast(&trans_fn);
+            join_state.state.trans_lam.free_parent = @constCast(&free_parent);
+            join_state.state.trans_lam.state_parent = @ptrCast(join_state);
+            join_state.trans_ctx.monad_impl = self;
+            join_state.trans_ctx.local_state = mma.strongRef();
+            return &join_state.state;
         }
     };
 }
@@ -1021,18 +1054,18 @@ pub fn StateF(comptime cfg: anytype, comptime S: type) TCtor {
         fn StateSA(comptime A: type) type {
             return union(enum) {
                 putf: struct { S, A },
-                getf: *GetLamType,
+                getf: *GetfLamType,
 
                 const Self = @This();
-                const GetLamType = base.ComposableLam(cfg, S, Error!A);
+                const GetfLamType = base.ComposableLam(cfg, S, Error!A);
                 pub const BaseType = A;
                 pub const Error = cfg.error_set;
                 pub const ExistentialType = S;
-                pub const OpCtorDefs = GetOpCtorDefs();
+                pub const OpCtorDefs = ValidateOpCtorDefs();
                 pub const StateS = S;
                 pub const StateA = A;
 
-                fn GetOpCtorDefs() type {
+                fn ValidateOpCtorDefs() type {
                     const op_ctor_defs = StateFCtorDefs(cfg, S, A);
                     const CtorEnum = std.meta.DeclEnum(op_ctor_defs);
                     const putf_e = @intFromEnum(std.meta.activeTag(Self{ .putf = undefined }));
@@ -1044,7 +1077,7 @@ pub fn StateF(comptime cfg: anytype, comptime S: type) TCtor {
                 }
 
                 pub fn effGetFfromFn(get_fn: *const fn (S) Error!A) Error!Self {
-                    return .{ .getf = try GetLamType.createByFn(get_fn) };
+                    return .{ .getf = try GetfLamType.createByFn(get_fn) };
                 }
 
                 pub fn effPutF(s: S, a: A) Self {
@@ -1079,8 +1112,8 @@ pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
         }
 
         /// Get base type of F(A), it is must just is A.
-        pub fn BaseType(comptime State: type) type {
-            return std.meta.Child(State).StateA;
+        pub fn BaseType(comptime StateSA: type) type {
+            return StateSA.BaseType;
         }
 
         pub const Error = Allocator.Error || cfg.error_set;
@@ -1248,12 +1281,12 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
 
         const GetFLam = struct {
             // composable function
-            lam_ctx: *GetLamType,
+            lam_ctx: *GetfLamType,
 
             const Self = @This();
             // This Op is just a function that return type is A
-            const is_fn_op = true;
-            const GetLamType = base.ComposableLam(cfg, S, Error!A);
+            pub const is_fn_op = true;
+            const GetfLamType = base.ComposableLam(cfg, S, Error!A);
 
             /// build GetF from function or lambda
             pub fn build(action: anytype) Error!Self {
@@ -1274,7 +1307,7 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
                         " found '" ++ @typeName(@TypeOf(action)) ++ "'");
                 }
 
-                const getf_lam = try GetLamType.create(action_lam);
+                const getf_lam = try GetfLamType.create(action_lam);
                 return .{ .lam_ctx = getf_lam };
             }
 

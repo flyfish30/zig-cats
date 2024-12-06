@@ -187,6 +187,22 @@ pub fn getIdentityLam(comptime A: type) IdentityLamType(A) {
     return IdentityLamType(A){};
 }
 
+pub fn ImpureIdentityLamType(E: type, T: type) type {
+    return struct {
+        lam_ctx: void = {},
+
+        const Self = @This();
+        fn call(self: *Self, val: T) E!T {
+            _ = self;
+            return val;
+        }
+    };
+}
+
+pub fn getImpureIdentityLam(E: type, A: type) ImpureIdentityLamType(E, A) {
+    return ImpureIdentityLamType(E, A){};
+}
+
 fn FnToImpureType(E: type, MapFn: type) type {
     return fn (MapFnInType(MapFn)) E!MapFnRetType(MapFn);
 }
