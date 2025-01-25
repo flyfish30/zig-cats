@@ -310,9 +310,9 @@ fn composeSample() void {
 
     const ArrayMaybeArrayApplicative = ComposeApplicative(ArrayMaybeApplicative, ArrayApplicative);
 
-    const arr3_appried = ArrayMaybeArrayApplicative.fapply(u32, u32, arr3_fns, arr3_ints);
-    std.debug.print("arr3_appried: ", .{});
-    prettyPrintArr3(arr3_appried);
+    const arr3_applied = ArrayMaybeArrayApplicative.fapply(u32, u32, arr3_fns, arr3_ints);
+    std.debug.print("arr3_applied: ", .{});
+    prettyPrintArr3(arr3_applied);
 }
 
 fn productSample() void {

@@ -46,10 +46,11 @@ const DEFAULT_LEN: usize = 8;
 
 // The OpLam is a natural transformation between Id a annd F a.
 pub const FOpEnumInt = u16;
+pub const AnyOpLamCtxType = std.meta.Int(.unsigned, @bitSizeOf(usize)); // u64 or u32
 
 // The AnyOpLam is a dummy type for specify OpLam
 const AnyOpLam = extern struct {
-    lam_ctx: u64,
+    lam_ctx: AnyOpLamCtxType,
     const Self = @This();
     pub fn call(self: Self) void {
         _ = self;
@@ -655,7 +656,7 @@ fn MaybeCtorDefs(comptime A: type) type {
         pub const Just = JustLam;
 
         const NothingLam = extern struct {
-            lam_ctx: u64,
+            lam_ctx: AnyOpLamCtxType,
 
             const Self = @This();
             pub fn build() Self {
@@ -681,7 +682,7 @@ fn MaybeCtorDefs(comptime A: type) type {
         };
 
         const JustLam = extern struct {
-            lam_ctx: u64,
+            lam_ctx: AnyOpLamCtxType,
 
             const Self = @This();
             pub fn build() Self {
@@ -1821,7 +1822,7 @@ pub fn ListCfg(comptime cfg: anytype) type {
                 pub const Cons = ConsLam;
 
                 const NilLam = extern struct {
-                    lam_ctx: u64,
+                    lam_ctx: AnyOpLamCtxType,
 
                     const Self = @This();
                     const NilLamCtx = void;

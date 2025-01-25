@@ -312,10 +312,10 @@ fn composeSample() !void {
         .instanceG = ArrayListApplicative.init(.{ .allocator = allocator }),
     } });
 
-    const arr3_appried = try array_maybe_array.fapply(u32, u32, arr3_fns, arr3_ints);
-    defer array3Deinit(arr3_appried);
-    std.debug.print("arr3_appried: ", .{});
-    array3PrettyPrint(arr3_appried);
+    const arr3_applied = try array_maybe_array.fapply(u32, u32, arr3_fns, arr3_ints);
+    defer array3Deinit(arr3_applied);
+    std.debug.print("arr3_applied: ", .{});
+    array3PrettyPrint(arr3_applied);
 }
 
 fn productSample() !void {

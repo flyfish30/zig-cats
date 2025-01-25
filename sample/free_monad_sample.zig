@@ -40,7 +40,7 @@ pub fn freeMonadSmaple() !void {
     try runStackCalcSample();
 }
 
-const Int = i64;
+const Int = std.meta.Int(.signed, @bitSizeOf(usize));
 
 // The Kont is a continuation type
 fn StackCalcF(Kont: type) type {
@@ -305,7 +305,7 @@ fn StackCalcFCtorDefs(comptime cfg: anytype, comptime A: type) type {
         };
 
         const PopLam = extern struct {
-            lam_ctx: u64 = 0,
+            lam_ctx: zcats.AnyOpLamCtxType = 0,
             const Self = @This();
             pub fn build() Error!Self {
                 return .{};
@@ -380,7 +380,7 @@ fn StackCalcFCtorDefs(comptime cfg: anytype, comptime A: type) type {
         };
 
         const AddLam = extern struct {
-            lam_ctx: u64 = 0,
+            lam_ctx: zcats.AnyOpLamCtxType = 0,
             const Self = @This();
             pub fn build() Error!Self {
                 return .{};
@@ -405,7 +405,7 @@ fn StackCalcFCtorDefs(comptime cfg: anytype, comptime A: type) type {
         };
 
         const MulLam = extern struct {
-            lam_ctx: u64 = 0,
+            lam_ctx: zcats.AnyOpLamCtxType = 0,
             const Self = @This();
             pub fn build() Error!Self {
                 return .{};
@@ -565,7 +565,7 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                         ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
                             // This lambda just as Haskell code:
                             //     \s -> (k, a:s)
-                            try s.append(lam_self.local_n); // push(n)
+                            try s.append(lam_self.local_n); // s.push(n)
                             return .{ lam_self.local_k, s };
                         }
                     }{ .local_n = fa.push[0], .local_k = fa.push[1].strongRef() };
@@ -634,7 +634,7 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                             //     \s@(x:y:ts) -> (k, (x+y):ts)
                             const x = s.pop();
                             const y = s.pop();
-                            try s.append(x + y); // push(x + y)
+                            try s.append(x + y); // s.push(x + y)
                             return .{ lam_self.local_k, s };
                         }
                     }{ .local_k = fa.add.strongRef() };
@@ -658,7 +658,7 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                             //     \s@(x:y:ts) -> (k, (x*y):ts)
                             const x = s.pop();
                             const y = s.pop();
-                            try s.append(x * y); // push(x * y)
+                            try s.append(x * y); // s.push(x * y)
                             return .{ lam_self.local_k, s };
                         }
                     }{ .local_k = fa.mul.strongRef() };
@@ -687,8 +687,8 @@ pub const StackCalcFShowNatImpl = struct {
             .push => {
                 const push_fmt_str = "Push {any}, ";
                 const len = std.fmt.count(push_fmt_str, .{fa.push[0]});
-                var array = try ArrayList(u8).initCapacity(self.allocator, len);
-                const push_buf = array.addManyAsSliceAssumeCapacity(len);
+                var array = try ArrayList(u8).initCapacity(self.allocator, @intCast(len));
+                const push_buf = array.addManyAsSliceAssumeCapacity(@intCast(len));
                 _ = std.fmt.bufPrint(push_buf, push_fmt_str, .{fa.push[0]}) catch |err|
                     switch (err) {
                     error.NoSpaceLeft => unreachable, // we just counted the size above
