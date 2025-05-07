@@ -121,7 +121,7 @@ pub const ArrayListMonadImpl = struct {
             @compileError("The bitsize of translated value is not equal origin value, failed to map it");
         }
 
-        const array = if (@typeInfo(@TypeOf(fa)) == .Pointer)
+        const array = if (@typeInfo(@TypeOf(fa)) == .pointer)
             @constCast(fa).moveToUnmanaged()
         else
             @constCast(&fa).moveToUnmanaged();

@@ -115,16 +115,16 @@ pub fn StateContext(comptime cfg: anytype) type {
             _ = has_err;
             const tuple_info = @typeInfo(TupleAS);
 
-            if (!(tuple_info == .Struct and
-                tuple_info.Struct.is_tuple and
-                tuple_info.Struct.fields.len == 2))
+            if (!(tuple_info == .@"struct" and
+                tuple_info.@"struct".is_tuple and
+                tuple_info.@"struct".fields.len == 2))
             {
                 @compileError("Expect return type of lam is a 2-tuple, found '" ++
                     @typeName(TupleAS) ++ "'");
             }
 
-            const A = tuple_info.Struct.fields[0].type;
-            comptime assert(S == tuple_info.Struct.fields[1].type);
+            const A = tuple_info.@"struct".fields[0].type;
+            comptime assert(S == tuple_info.@"struct".fields[1].type);
             return State(S, A);
         }
 
@@ -427,7 +427,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         ) type {
             const has_err, const _A = comptime isErrorUnionOrVal(RetA);
             const info = @typeInfo(RetA);
-            const RetE = Error || if (has_err) info.ErrorUnion.error_set else error{};
+            const RetE = Error || if (has_err) info.error_union.error_set else error{};
             return RetE!struct { _A, RetS };
         }
 
@@ -843,7 +843,8 @@ test "State(s, a) Functor fmap" {
     var array_st_functor = ArrayStFunctor.init(.{ .allocator = allocator });
 
     var array_st_a = try ArrayStCtx.get(ArrayListU32);
-    defer _ = array_st_a.strongUnref();
+    _ = &array_st_a;
+    // defer _ = array_st_a.strongUnref();
     var array_st_b = try array_st_functor.fmapLam(.NewValMap, struct {
         allocator: Allocator,
         const Self = @This();
@@ -1292,10 +1293,10 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
             pub fn build(action: anytype) Error!Self {
                 const info = @typeInfo(@TypeOf(action));
                 const is_valid, const action_lam = switch (info) {
-                    .Struct => .{ true, action },
+                    .@"struct" => .{ true, action },
 
-                    .Fn => .{ true, base.mapFnToLam(action) },
-                    .Pointer => if (@typeInfo(info.Pointer.child) == .Fn)
+                    .@"fn" => .{ true, base.mapFnToLam(action) },
+                    .pointer => if (@typeInfo(info.pointer.child) == .@"fn")
                         .{ true, base.mapFnToLam(action) }
                     else
                         .{ false, undefined },
@@ -1354,7 +1355,7 @@ pub fn liftPutF(
 fn LiftGetFType(comptime cfg: anytype, comptime ActionType: type) type {
     const info = @typeInfo(ActionType);
     switch (info) {
-        .Struct => {
+        .@"struct" => {
             const S = MapLamInType(ActionType);
             const A = MapLamRetType(ActionType);
             const has_err, const _A = isErrorUnionOrVal(A);
@@ -1362,14 +1363,14 @@ fn LiftGetFType(comptime cfg: anytype, comptime ActionType: type) type {
             return FreeMonad(cfg, StateF(cfg, S), _A);
         },
 
-        .Fn => {
+        .@"fn" => {
             const S = MapFnInType(ActionType);
             const A = MapFnRetType(ActionType);
             const has_err, const _A = isErrorUnionOrVal(A);
             _ = has_err;
             return FreeMonad(cfg, StateF(cfg, S), _A);
         },
-        .Pointer => if (@typeInfo(info.Pointer.child) == .Fn) {
+        .pointer => if (@typeInfo(info.pointer.child) == .@"fn") {
             const S = MapFnInType(ActionType);
             const A = MapFnRetType(ActionType);
             const has_err, const _A = isErrorUnionOrVal(A);
@@ -1392,10 +1393,10 @@ pub fn liftGetF(
 ) !LiftGetFType(cfg, @TypeOf(action)) {
     const info = @typeInfo(@TypeOf(action));
     const is_valid, const action_lam = switch (info) {
-        .Struct => .{ true, action },
+        .@"struct" => .{ true, action },
 
-        .Fn => .{ true, base.mapFnToLam(action) },
-        .Pointer => if (@typeInfo(info.Pointer.child) == .Fn)
+        .@"fn" => .{ true, base.mapFnToLam(action) },
+        .pointer => if (@typeInfo(info.pointer.child) == .@"fn")
             .{ true, base.mapFnToLam(action) }
         else
             .{ false, undefined },
@@ -1529,8 +1530,8 @@ pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
                 const put_buf = array.addManyAsSliceAssumeCapacity(len);
                 _ = std.fmt.bufPrint(put_buf, put_fmt_str, .{fa.putf[0]}) catch |err|
                     switch (err) {
-                    error.NoSpaceLeft => unreachable, // we just counted the size above
-                };
+                        error.NoSpaceLeft => unreachable, // we just counted the size above
+                    };
                 return .{ .a = fa.putf[1], .w = array };
             } else {
                 const get_str = "GetF, ";

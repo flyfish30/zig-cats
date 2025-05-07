@@ -34,11 +34,11 @@ pub fn CoproductFG(comptime F: TCtor, comptime G: TCtor) TCtor {
 /// Get tuple of left and right type of coproduct
 pub fn getCoproductTypeTuple(comptime U: type) struct { type, type } {
     const info = @typeInfo(U);
-    comptime assert(info == .Union);
-    comptime assert(info.Union.fields.len == 2);
+    comptime assert(info == .@"union");
+    comptime assert(info.@"union".fields.len == 2);
 
-    const l_type = info.Union.fields[0].type;
-    const r_type = info.Union.fields[1].type;
+    const l_type = info.@"union".fields[0].type;
+    const r_type = info.@"union".fields[1].type;
     return .{ l_type, r_type };
 }
 

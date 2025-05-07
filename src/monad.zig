@@ -77,7 +77,7 @@ const GetPointerChild = base.GetPointerChild;
 pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
     const DoCtx = GetPointerChild(@TypeOf(ctx_p));
     const info = comptime @typeInfo(DoCtx);
-    if (info != .Struct) {
+    if (info != .@"struct") {
         @compileError("The ctx for runDo must be a struct!");
     }
 
@@ -92,7 +92,7 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
     const MonadImpl = MonadImplType(DoCtx);
     // the first do step function
     const start_fn_info = @typeInfo(@TypeOf(@field(DoCtx, "startDo")));
-    if (start_fn_info.Fn.params.len != 1) {
+    if (start_fn_info.@"fn".params.len != 1) {
         @compileError("The first do step function must be only one parameters!");
     }
 
@@ -111,19 +111,19 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
     const T = MonadImpl.BaseType(_MT);
 
     comptime var MR = MT;
-    comptime var i = info.Struct.decls.len;
+    comptime var i = info.@"struct".decls.len;
     comptime var isLastDoFn = true;
     // A composed continuation of do step functions for bind start_m
     comptime var k: ?*const fn (*MonadImpl, T) MR = null;
     inline while (i > 0) : (i -= 1) {
-        const decl = info.Struct.decls[i - 1];
+        const decl = info.@"struct".decls[i - 1];
         if (comptime std.mem.startsWith(u8, decl.name, "do")) {
             const fn_info = @typeInfo(@TypeOf(@field(DoCtx, decl.name)));
-            if (fn_info.Fn.params.len != 2) {
+            if (fn_info.@"fn".params.len != 2) {
                 @compileError("The do step function must be only two parameters!");
             }
-            const A = fn_info.Fn.params[1].type.?;
-            const MB = fn_info.Fn.return_type.?;
+            const A = fn_info.@"fn".params[1].type.?;
+            const MB = fn_info.@"fn".return_type.?;
             if (isLastDoFn) {
                 MR = MB;
                 isLastDoFn = false;
@@ -156,28 +156,28 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
 
 fn DoRetType(comptime DoCtx: type) type {
     const info = comptime @typeInfo(DoCtx);
-    if (info != .Struct) {
+    if (info != .@"struct") {
         @compileError("The ctx for runDo must be a struct!");
     }
 
-    comptime var i = info.Struct.decls.len;
+    comptime var i = info.@"struct".decls.len;
     const MR = inline while (i > 0) : (i -= 1) {
-        const decl = info.Struct.decls[i - 1];
+        const decl = info.@"struct".decls[i - 1];
         if (comptime std.mem.startsWith(u8, decl.name, "do")) {
             const fn_info = @typeInfo(@TypeOf(@field(DoCtx, decl.name)));
-            break fn_info.Fn.return_type.?;
+            break fn_info.@"fn".return_type.?;
         }
     } else blk: {
         const fn_info = @typeInfo(@TypeOf(@field(DoCtx, "startDo")));
-        break :blk fn_info.Fn.return_type.?;
+        break :blk fn_info.@"fn".return_type.?;
     };
     return MR;
 }
 
 fn ContRetType(comptime K: type) type {
     const info = @typeInfo(K);
-    const fn_info = @typeInfo(@typeInfo(info.Optional.child).Pointer.child);
-    const MR = fn_info.Fn.return_type.?;
+    const fn_info = @typeInfo(@typeInfo(info.optional.child).pointer.child);
+    const MR = fn_info.@"fn".return_type.?;
     return MR;
 }
 

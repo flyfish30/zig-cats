@@ -36,11 +36,11 @@ pub fn FunctorFxTypes(comptime F: TCtor, comptime E: ?type) type {
             }
 
             const _E = E.?;
-            if (info != .ErrorUnion) {
+            if (info != .error_union) {
                 return _E!F(MapFnRetType(MapFn));
             }
 
-            return (_E || info.ErrorUnion.error_set)!F(info.ErrorUnion.payload);
+            return (_E || info.error_union.error_set)!F(info.error_union.payload);
         }
 
         pub fn FaLamType(comptime K: MapFnKind, comptime MapLam: type) type {
@@ -59,11 +59,11 @@ pub fn FunctorFxTypes(comptime F: TCtor, comptime E: ?type) type {
             }
 
             const _E = E.?;
-            if (info != .ErrorUnion) {
+            if (info != .error_union) {
                 return _E!F(MapLamRetType(MapLam));
             }
 
-            return (_E || info.ErrorUnion.error_set)!F(info.ErrorUnion.payload);
+            return (_E || info.error_union.error_set)!F(info.error_union.payload);
         }
     };
 }

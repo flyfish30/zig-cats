@@ -191,11 +191,10 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
                 fn fapply(
                     gf_p: *ImplG.F(FnOrLambdaType),
                 ) ApplyLam {
-                    const apply_lam = .{
+                    // apply lambda \ga -> fapply instanceG gf ga : G a -> G b
+                    return ApplyLam{
                         .apply_gf_p = gf_p,
                     };
-                    // apply lambda \ga -> fapply instanceG gf ga : G a -> G b
-                    return apply_lam;
                 }
             };
 

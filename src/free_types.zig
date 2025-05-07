@@ -169,16 +169,16 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                     // assert(f.op_kind == OpFunction)
                     const XToFreemType = @TypeOf(x_to_freem);
                     if (XToFreemType == *XToFreeFALam) {
-                        const fop = .{ .op_e = e, .op_lam = toAnyOpLam(fop_lam) };
+                        const fop = FOpInfo{ .op_e = e, .op_lam = toAnyOpLam(fop_lam) };
                         return .{ .free_fop = .{ x_to_freem.strongRef(), fop } };
                     }
 
                     const info = @typeInfo(@TypeOf(x_to_freem));
                     const is_valid, const x_to_freem_lam = switch (info) {
-                        .Struct => .{ true, x_to_freem },
+                        .@"struct" => .{ true, x_to_freem },
 
-                        .Fn => .{ true, base.mapFnToLam(x_to_freem) },
-                        .Pointer => if (@typeInfo(info.Pointer.child) == .Fn)
+                        .@"fn" => .{ true, base.mapFnToLam(x_to_freem) },
+                        .pointer => if (@typeInfo(info.pointer.child) == .@"fn")
                             .{ true, base.mapFnToLam(x_to_freem) }
                         else
                             .{ false, undefined },
@@ -197,7 +197,7 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                     _ = has_err;
                     comptime assert(X == _FX.BaseType);
 
-                    const fop = .{ .op_e = e, .op_lam = toAnyOpLam(fop_lam) };
+                    const fop = FOpInfo{ .op_e = e, .op_lam = toAnyOpLam(fop_lam) };
                     return .{ .free_fop = .{ try XToFreeFALam.create(x_to_freem_lam), fop } };
                 }
 
@@ -470,7 +470,7 @@ pub fn GetExistentialType(comptime F: TCtor) type {
     comptime {
         const A = void;
         switch (@typeInfo(F(A))) {
-            .Struct, .Enum, .Union, .Opaque => {
+            .@"struct", .@"enum", .@"union", .@"opaque" => {
                 if (@hasDecl(F(A), "ExistentialType")) {
                     return F(A).ExistentialType;
                 }
@@ -495,7 +495,7 @@ const MaybeExistentialType = u32;
 fn GetCtorDefs(comptime F: TCtor, comptime A: type) type {
     comptime {
         switch (@typeInfo(F(A))) {
-            .Struct, .Enum, .Union, .Opaque => {
+            .@"struct", .@"enum", .@"union", .@"opaque" => {
                 if (@hasDecl(F(A), "OpCtorDefs")) {
                     return F(A).OpCtorDefs;
                 }
@@ -530,7 +530,7 @@ fn OpCtorInfo(
     const first_op_e = @as(OpCtorE, @enumFromInt(0));
     const FirstOpLam = @field(OpDefs, @tagName(first_op_e));
     const first_fn_info = @typeInfo(@TypeOf(FirstOpLam.call));
-    const OpCtorRetType = first_fn_info.Fn.return_type.?;
+    const OpCtorRetType = first_fn_info.@"fn".return_type.?;
     return struct {
         ctor_e: OpCtorE,
         params_len: u8,
@@ -558,13 +558,13 @@ fn OpCtorInfo(
                     const args_fields = std.meta.fields(Args);
                     assert(args_fields.len - 1 == self.params_len);
                     // first parameter is lambda self
-                    if (@typeInfo(OpLam).Struct.layout == .auto) {
+                    if (@typeInfo(OpLam).@"struct".layout == .auto) {
                         args[0] = &toSpecificOpLam(OpLam, op_lam);
                     } else {
                         args[0] = @constCast(&@as(OpLam, @bitCast(op_lam)));
                     }
                     comptime var i = 1;
-                    inline while (i < @typeInfo(Args).Struct.fields.len) : (i += 1) {
+                    inline while (i < @typeInfo(Args).@"struct".fields.len) : (i += 1) {
                         args[i] = as[i - 1];
                     }
                     return @call(.auto, OpLam.call, args);
@@ -577,7 +577,7 @@ fn OpCtorInfo(
                 inline else => |e| {
                     // std.debug.print("deinit OpCtor enum: {any}\n", .{e});
                     const OpLam = @field(OpDefs, @tagName(e));
-                    const spec_op_lam = if (@typeInfo(OpLam).Struct.layout == .auto)
+                    const spec_op_lam = if (@typeInfo(OpLam).@"struct".layout == .auto)
                         &toSpecificOpLam(OpLam, op_lam)
                     else
                         @constCast(&@as(OpLam, @bitCast(op_lam)));
@@ -591,14 +591,14 @@ fn OpCtorInfo(
                 inline else => |e| {
                     // std.debug.print("clone OpCtor enum: {any}\n", .{e});
                     const OpLam = @field(OpDefs, @tagName(e));
-                    const spec_op_lam = if (@typeInfo(OpLam).Struct.layout == .auto)
+                    const spec_op_lam = if (@typeInfo(OpLam).@"struct".layout == .auto)
                         &toSpecificOpLam(OpLam, op_lam)
                     else
                         @constCast(&@as(OpLam, @bitCast(op_lam)));
 
                     if (@hasDecl(OpLam, "clone")) {
                         const new_op_lam = try spec_op_lam.clone();
-                        if (@typeInfo(OpLam).Struct.layout == .auto) {
+                        if (@typeInfo(OpLam).@"struct".layout == .auto) {
                             return toAnyOpLam(new_op_lam);
                         } else {
                             return @as(AnyOpLam, @bitCast(new_op_lam));
@@ -638,7 +638,7 @@ pub fn GetOpCtors(
         const name = field.name;
         const OpLam = @field(OpCtorDefs, name);
         const fn_info = @typeInfo(@TypeOf(OpLam.call));
-        const params_len = fn_info.Fn.params.len;
+        const params_len = fn_info.@"fn".params.len;
         const ctor_e = @as(CtorEnum, @enumFromInt(i));
         op_ctors[i].ctor_e = ctor_e;
         // The call function of OpLam has a self parameter, all real parameters are not

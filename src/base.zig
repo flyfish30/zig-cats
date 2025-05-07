@@ -13,27 +13,27 @@ const ArrayList = std.ArrayList;
 pub const TCtor = *const fn (comptime type) type;
 
 pub fn GetPointerChild(comptime P: type) type {
-    if (@typeInfo(P) != .Pointer) {
+    if (@typeInfo(P) != .pointer) {
         @compileError("The type P must be a Pointer type!");
     }
     return std.meta.Child(P);
 }
 
 pub fn MapFnInType(comptime MapFn: type) type {
-    const _MapFn = if (@typeInfo(MapFn) == .Pointer) std.meta.Child(MapFn) else MapFn;
+    const _MapFn = if (@typeInfo(MapFn) == .pointer) std.meta.Child(MapFn) else MapFn;
     const info = @typeInfo(_MapFn);
-    const len = info.Fn.params.len;
+    const len = info.@"fn".params.len;
 
     if (len != 1) {
         @compileError("The map function must has only one parameter!");
     }
 
-    return info.Fn.params[0].type.?;
+    return info.@"fn".params[0].type.?;
 }
 
 pub fn MapFnRetType(comptime MapFn: type) type {
-    const _MapFn = if (@typeInfo(MapFn) == .Pointer) std.meta.Child(MapFn) else MapFn;
-    const R = @typeInfo(_MapFn).Fn.return_type.?;
+    const _MapFn = if (@typeInfo(MapFn) == .pointer) std.meta.Child(MapFn) else MapFn;
+    const R = @typeInfo(_MapFn).@"fn".return_type.?;
 
     if (R == noreturn) {
         @compileError("The return type of map function must not be noreturn!");
@@ -42,34 +42,34 @@ pub fn MapFnRetType(comptime MapFn: type) type {
 }
 
 pub fn MapLamInType(comptime MapLam: type) type {
-    const _MapLam = if (@typeInfo(MapLam) == .Pointer) std.meta.Child(MapLam) else MapLam;
+    const _MapLam = if (@typeInfo(MapLam) == .pointer) std.meta.Child(MapLam) else MapLam;
     const info = @typeInfo(_MapLam);
-    if (info != .Struct) {
+    if (info != .@"struct") {
         @compileError("The map lambda must be a struct!");
     }
 
     const mapFnInfo = @typeInfo(@TypeOf(_MapLam.call));
-    const len = mapFnInfo.Fn.params.len;
+    const len = mapFnInfo.@"fn".params.len;
 
     if (len != 2) {
         @compileError("The call function of map lambda must have only two parameters!");
     }
-    if (mapFnInfo.Fn.params[0].type.? != *_MapLam and mapFnInfo.Fn.params[0].type.? != *const _MapLam) {
+    if (mapFnInfo.@"fn".params[0].type.? != *_MapLam and mapFnInfo.@"fn".params[0].type.? != *const _MapLam) {
         @compileError("The first parameter of call function must be a pointer of MapLam!");
     }
 
-    return mapFnInfo.Fn.params[1].type.?;
+    return mapFnInfo.@"fn".params[1].type.?;
 }
 
 pub fn MapLamRetType(comptime MapLam: type) type {
-    const _MapLam = if (@typeInfo(MapLam) == .Pointer) std.meta.Child(MapLam) else MapLam;
+    const _MapLam = if (@typeInfo(MapLam) == .pointer) std.meta.Child(MapLam) else MapLam;
     const info = @typeInfo(_MapLam);
-    if (info != .Struct) {
+    if (info != .@"struct") {
         @compileError("The map lambda must be a struct!");
     }
 
     const mapFnInfo = @typeInfo(@TypeOf(_MapLam.call));
-    const R = mapFnInfo.Fn.return_type.?;
+    const R = mapFnInfo.@"fn".return_type.?;
 
     if (R == noreturn) {
         @compileError("The return type of call function must not be noreturn!");
@@ -90,7 +90,7 @@ pub fn MapFnToLamType(comptime MapFn: type) type {
 
 pub fn mapFnToLam(map_fn: anytype) MapFnToLamType(@TypeOf(map_fn)) {
     const fn_info = @typeInfo(@TypeOf(map_fn));
-    if (fn_info == .Pointer) {
+    if (fn_info == .pointer) {
         return .{ .map_fn = map_fn };
     } else {
         return .{ .map_fn = &map_fn };
@@ -408,14 +408,14 @@ pub fn ComposableLam(
         fn AppendedRetType(comptime InType: type, comptime Lam: type) type {
             const in_info = @typeInfo(InType);
             const LamRet = MapLamRetType(Lam);
-            if (in_info != .ErrorUnion) {
+            if (in_info != .error_union) {
                 return LamRet;
             }
 
             const ret_info = @typeInfo(LamRet);
-            const InError = in_info.ErrorUnion.error_set;
-            const OutError, const RetType = if (ret_info == .ErrorUnion)
-                .{ InError || ret_info.ErrorUnion.error_set, ret_info.ErrorUnion.payload }
+            const InError = in_info.error_union.error_set;
+            const OutError, const RetType = if (ret_info == .error_union)
+                .{ InError || ret_info.error_union.error_set, ret_info.error_union.payload }
             else
                 .{ InError, LamRet };
             return OutError!RetType;
@@ -513,7 +513,7 @@ test ComposableLam {
 }
 
 pub fn LamWrapper(comptime cfg: anytype, comptime Lam: type) type {
-    if (@typeInfo(Lam) != .Struct) {
+    if (@typeInfo(Lam) != .@"struct") {
         @compileError("The parameter lam must be a struct!");
     }
 
@@ -551,27 +551,27 @@ pub fn anyLamFromLam(comptime cfg: anytype, lam: anytype) !AnyLamType {
 
 fn FnOrLamInType(comptime FnOrLam: type) type {
     switch (@typeInfo(FnOrLam)) {
-        .Fn => return MapFnInType(FnOrLam),
-        .Struct => return MapLamInType(FnOrLam),
+        .@"fn" => return MapFnInType(FnOrLam),
+        .@"struct" => return MapLamInType(FnOrLam),
         else => @compileError("Expect FnOrLam be a function or lambda, found '" ++ @typeName(FnOrLam) ++ "'"),
     }
 }
 
 fn FnOrLamRetType(comptime FnOrLam: type) type {
     switch (@typeInfo(FnOrLam)) {
-        .Fn => return MapFnRetType(FnOrLam),
-        .Struct => return MapLamRetType(FnOrLam),
+        .@"fn" => return MapFnRetType(FnOrLam),
+        .@"struct" => return MapLamRetType(FnOrLam),
         else => @compileError("Expect FnOrLam be a function or lambda, found '" ++ @typeName(FnOrLam) ++ "'"),
     }
 }
 
 fn manyTupleAllTypes(comptime ManyTuple: type) []const type {
     const tuple_info = @typeInfo(ManyTuple);
-    if (tuple_info != .Struct) {
+    if (tuple_info != .@"struct") {
         @compileError("Expect ManyTuple be a tuple, found '" ++ @typeName(ManyTuple) ++ "'");
     }
 
-    const fields = tuple_info.Struct.fields;
+    const fields = tuple_info.@"struct".fields;
     if (fields.len == 0) {
         @compileError("The ManyTuple(" ++ @typeName(ManyTuple) ++ ") is a empty tuple!");
     }
@@ -608,21 +608,21 @@ pub fn comptimeCompose(many_tuple: anytype) ComposedFnType(many_tuple) {
     const ManyTuple = @TypeOf(many_tuple);
     const tuple_info = @typeInfo(ManyTuple);
 
-    const fields = tuple_info.Struct.fields;
+    const fields = tuple_info.@"struct".fields;
     return struct {
         const A = FnOrLamInType(fields[0].type);
         const B = FnOrLamRetType(fields[fields.len - 1].type);
         fn callSubFns(comptime i: usize, in: A) FnOrLamRetType(fields[i].type) {
             const fn_or_lam = @field(many_tuple, fields[i].name);
             switch (@typeInfo(fields[i].type)) {
-                .Fn => {
+                .@"fn" => {
                     if (i == 0) {
                         return @call(.auto, fn_or_lam, .{in});
                     } else {
                         return @call(.auto, fn_or_lam, .{callSubFns(i - 1, in)});
                     }
                 },
-                .Struct => {
+                .@"struct" => {
                     const Lam = @TypeOf(fn_or_lam);
                     if (i == 0) {
                         return @call(.auto, Lam.call, .{ &fn_or_lam, in });
@@ -1224,20 +1224,20 @@ fn composeTwoFn(map_fn1: anytype, map_fn2: anytype) ComposeTwoFn(map_fn1, map_fn
 /// type of ErrorUnion, else just return type E.
 pub fn isErrorUnionOrVal(comptime E: type) struct { bool, type } {
     const info = @typeInfo(E);
-    const has_error = if (info == .ErrorUnion) true else false;
-    const A = if (has_error) info.ErrorUnion.payload else E;
+    const has_error = if (info == .error_union) true else false;
+    const A = if (has_error) info.error_union.payload else E;
     return .{ has_error, A };
 }
 
 pub fn castInplaceValue(comptime T: type, val: anytype) T {
     const info = @typeInfo(@TypeOf(val));
     switch (info) {
-        .Optional => {
+        .optional => {
             const v = val orelse return null;
             return castInplaceValue(std.meta.Child(T), v);
         },
-        .Struct => {
-            if (info.Struct.layout == .auto) {
+        .@"struct" => {
+            if (info.@"struct".layout == .auto) {
                 @compileError("Can't inplace cast struct with auto layout");
             }
             return @bitCast(val);
@@ -1250,9 +1250,9 @@ pub fn castInplaceValue(comptime T: type, val: anytype) T {
 
 pub fn defaultVal(comptime T: type) T {
     const info_a = @typeInfo(T);
-    if (info_a == .Fn) {
+    if (info_a == .@"fn") {
         return getDefaultFn(T);
-    } else if (info_a == .Pointer and @typeInfo(std.meta.Child(T)) == .Fn) {
+    } else if (info_a == .pointer and @typeInfo(std.meta.Child(T)) == .@"fn") {
         return getDefaultFn(std.meta.Child(T));
     }
     return std.mem.zeroes(T);
@@ -1305,14 +1305,14 @@ pub fn tryStrongRef(a: anytype) @TypeOf(a) {
     const T = @TypeOf(a);
     const info = @typeInfo(T);
     switch (info) {
-        .Pointer => {
-            const Child = info.Pointer.child;
+        .pointer => {
+            const Child = info.pointer.child;
             const child_info = @typeInfo(Child);
-            if (info.Pointer.size != .One) {
+            if (info.pointer.size != .one) {
                 @compileError("tryRef only for pointer that has only one element!");
             }
             switch (child_info) {
-                .Struct, .Enum, .Union, .Opaque => {
+                .@"struct", .@"enum", .@"union", .@"opaque" => {
                     if (@hasDecl(Child, "strongRef")) {
                         return a.strongRef();
                     }
@@ -1331,19 +1331,19 @@ pub fn copyOrCloneOrRef(a: anytype) !@TypeOf(a) {
     const T = @TypeOf(a);
     const info = @typeInfo(T);
     switch (info) {
-        .Struct, .Enum, .Union, .Opaque => {
+        .@"struct", .@"enum", .@"union", .@"opaque" => {
             if (@hasDecl(T, "clone")) {
                 return a.clone();
             }
         },
-        .Pointer => {
-            const Child = info.Pointer.child;
+        .pointer => {
+            const Child = info.pointer.child;
             const child_info = @typeInfo(Child);
-            if (info.Pointer.size != .One) {
+            if (info.pointer.size != .one) {
                 @compileError("copyOrCloneOrRef only for pointer that has only one element!");
             }
             switch (child_info) {
-                .Struct, .Enum, .Union, .Opaque => {
+                .@"struct", .@"enum", .@"union", .@"opaque" => {
                     if (@hasDecl(Child, "strongRef")) {
                         return a.strongRef();
                     }
@@ -1371,14 +1371,14 @@ pub fn tryStrongUnref(a: anytype) void {
     const T = @TypeOf(a);
     const info = @typeInfo(T);
     switch (info) {
-        .Pointer => {
-            const Child = info.Pointer.child;
+        .pointer => {
+            const Child = info.pointer.child;
             const child_info = @typeInfo(Child);
-            if (info.Pointer.size != .One) {
+            if (info.pointer.size != .one) {
                 @compileError("nothingOrUnref only for pointer that has only one element!");
             }
             switch (child_info) {
-                .Struct, .Enum, .Union, .Opaque => {
+                .@"struct", .@"enum", .@"union", .@"opaque" => {
                     if (@hasDecl(Child, "strongUnref")) {
                         _ = a.strongUnref();
                     }
@@ -1395,19 +1395,19 @@ pub fn deinitOrUnref(a: anytype) void {
     const T = @TypeOf(a);
     const info = @typeInfo(T);
     switch (info) {
-        .Struct, .Enum, .Union, .Opaque => {
+        .@"struct", .@"enum", .@"union", .@"opaque" => {
             if (@hasDecl(T, "deinit")) {
                 a.deinit();
             }
         },
-        .Pointer => {
-            const Child = info.Pointer.child;
+        .pointer => {
+            const Child = info.pointer.child;
             const child_info = @typeInfo(Child);
-            if (info.Pointer.size != .One) {
+            if (info.pointer.size != .one) {
                 @compileError("deinitOrUnref only for pointer that has only one element!");
             }
             switch (child_info) {
-                .Struct, .Enum, .Union, .Opaque => {
+                .@"struct", .@"enum", .@"union", .@"opaque" => {
                     if (@hasDecl(Child, "strongUnref")) {
                         _ = a.strongUnref();
                     }

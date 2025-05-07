@@ -43,7 +43,7 @@ pub fn freeMonadSmaple() !void {
 const Int = std.meta.Int(.signed, @bitSizeOf(usize));
 
 // The Kont is a continuation type
-fn StackCalcF(Kont: type) type {
+fn StackCalcF(comptime Kont: type) type {
     return union(enum) {
         push: struct { Int, Kont },
         pop: Kont,
@@ -340,10 +340,10 @@ fn StackCalcFCtorDefs(comptime cfg: anytype, comptime A: type) type {
             pub fn build(action: anytype) Error!Self {
                 const info = @typeInfo(@TypeOf(action));
                 const is_valid, const action_lam = switch (info) {
-                    .Struct => .{ true, action },
+                    .@"struct" => .{ true, action },
 
-                    .Fn => .{ true, zcats.mapFnToLam(action) },
-                    .Pointer => if (@typeInfo(info.Pointer.child) == .Fn)
+                    .@"fn" => .{ true, zcats.mapFnToLam(action) },
+                    .pointer => if (@typeInfo(info.pointer.child) == .@"fn")
                         .{ true, zcats.mapFnToLam(action) }
                     else
                         .{ false, undefined },
@@ -460,20 +460,20 @@ fn liftPop(comptime cfg: anytype) !FreeMonad(cfg, StackCalcF, void) {
 fn LiftTopType(comptime cfg: anytype, comptime ActionType: type) type {
     const info = @typeInfo(ActionType);
     switch (info) {
-        .Struct => {
+        .@"struct" => {
             const A = MapLamRetType(ActionType);
             const has_err, const _A = isErrorUnionOrVal(A);
             _ = has_err;
             return FreeMonad(cfg, StackCalcF, _A);
         },
 
-        .Fn => {
+        .@"fn" => {
             const A = MapFnRetType(ActionType);
             const has_err, const _A = isErrorUnionOrVal(A);
             _ = has_err;
             return FreeMonad(cfg, StackCalcF, _A);
         },
-        .Pointer => if (@typeInfo(info.Pointer.child) == .Fn) {
+        .pointer => if (@typeInfo(info.pointer.child) == .@"fn") {
             const A = MapFnRetType(ActionType);
             const has_err, const _A = isErrorUnionOrVal(A);
             _ = has_err;
@@ -587,7 +587,7 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                         ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
                             // This lambda just as Haskell code:
                             //     \s -> (k, tail s)
-                            _ = s.popOrNull() orelse @panic("Pop empty stack in calculator!");
+                            _ = s.pop() orelse @panic("Pop empty stack in calculator!");
                             return .{ lam_self.local_k, s };
                         }
                     }{ .local_k = fa.pop.strongRef() };
@@ -632,8 +632,8 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                         ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
                             // This lambda just as Haskell code:
                             //     \s@(x:y:ts) -> (k, (x+y):ts)
-                            const x = s.pop();
-                            const y = s.pop();
+                            const x = s.pop().?;
+                            const y = s.pop().?;
                             try s.append(x + y); // s.push(x + y)
                             return .{ lam_self.local_k, s };
                         }
@@ -656,8 +656,8 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                         ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
                             // This lambda just as Haskell code:
                             //     \s@(x:y:ts) -> (k, (x*y):ts)
-                            const x = s.pop();
-                            const y = s.pop();
+                            const x = s.pop().?;
+                            const y = s.pop().?;
                             try s.append(x * y); // s.push(x * y)
                             return .{ lam_self.local_k, s };
                         }
@@ -691,8 +691,8 @@ pub const StackCalcFShowNatImpl = struct {
                 const push_buf = array.addManyAsSliceAssumeCapacity(@intCast(len));
                 _ = std.fmt.bufPrint(push_buf, push_fmt_str, .{fa.push[0]}) catch |err|
                     switch (err) {
-                    error.NoSpaceLeft => unreachable, // we just counted the size above
-                };
+                        error.NoSpaceLeft => unreachable, // we just counted the size above
+                    };
                 return .{ .a = fa.push[1], .w = array };
             },
             .pop => {

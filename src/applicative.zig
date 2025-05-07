@@ -19,7 +19,7 @@ pub fn ApplicativeFxTypes(comptime F: TCtor, comptime E: type) type {
         pub fn APaType(comptime A: type) type {
             const has_err, const _A = comptime isErrorUnionOrVal(A);
             if (has_err) {
-                return (E || @typeInfo(A).ErrorUnion.error_set)!F(_A);
+                return (E || @typeInfo(A).error_union.error_set)!F(_A);
             } else {
                 return E!F(A);
             }
@@ -29,7 +29,7 @@ pub fn ApplicativeFxTypes(comptime F: TCtor, comptime E: type) type {
         pub fn AFbType(comptime B: type) type {
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             if (has_err) {
-                return (E || @typeInfo(B).ErrorUnion.error_set)!F(_B);
+                return (E || @typeInfo(B).error_union.error_set)!F(_B);
             } else {
                 return E!F(B);
             }

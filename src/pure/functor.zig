@@ -137,9 +137,9 @@ pub fn MaybeToArrayNatImpl(comptime len: usize) type {
                 return [1]A{a} ** len;
             } else {
                 const info_a = @typeInfo(A);
-                if (info_a == .Fn) {
+                if (info_a == .@"fn") {
                     return [1]A{getDefaultFn(A)} ** len;
-                } else if (info_a == .Pointer and @typeInfo(std.meta.Child(A)) == .Fn) {
+                } else if (info_a == .pointer and @typeInfo(std.meta.Child(A)) == .@"fn") {
                     return [1]A{getDefaultFn(std.meta.Child(A))} ** len;
                 }
                 return std.mem.zeroes([len]A);
