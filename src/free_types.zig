@@ -780,28 +780,7 @@ pub const MaybeShowNatImpl = struct {
 
 const MaybeToArrayListNatImpl = functor.MaybeToArrayListNatImpl;
 const MWriterMaybeMonadImpl = state.MWriterMaybeMonadImpl;
-
-pub fn ArrayListMonoidImpl(comptime T: type) type {
-    return struct {
-        allocator: Allocator,
-
-        const Self = @This();
-        pub const M = ArrayList(T);
-        pub const Error = Allocator.Error;
-
-        pub fn mempty(self: Self) Error!M {
-            return ArrayList(T).init(self.allocator);
-        }
-
-        pub fn mappend(self: Self, ma: M, mb: M) Error!M {
-            _ = self;
-            var mc = try ArrayList(T).initCapacity(ma.allocator, ma.items.len + mb.items.len);
-            mc.appendSliceAssumeCapacity(ma.items);
-            mc.appendSliceAssumeCapacity(mb.items);
-            return mc;
-        }
-    };
-}
+const ArrayListMonoidImpl = arraym.ArrayListMonoidImpl;
 
 test "FreeMonad(F, A) constructor functions and foldFree" {
     const allocator = testing.allocator;

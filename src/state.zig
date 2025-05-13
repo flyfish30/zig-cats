@@ -1657,7 +1657,7 @@ fn statefToA(
     }.iterFn;
 }
 
-const ArrayListMonoidImpl = freetypes.ArrayListMonoidImpl;
+const ArrayListMonoidImpl = arraym.ArrayListMonoidImpl;
 const FreeMonad = freetypes.FreeMonad;
 const FreeMonadImpl = freetypes.FreeMonadImpl;
 const FOpEnumInt = freetypes.FOpEnumInt;

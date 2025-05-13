@@ -31,6 +31,42 @@ const ApplicativeFxTypes = applicative.ApplicativeFxTypes;
 const MonadFxTypes = monad.MonadFxTypes;
 const runDo = monad.runDo;
 
+fn ArrayListBaseType(comptime ArrayA: type) type {
+    return std.meta.Child(ArrayA.Slice);
+}
+
+/// The instance of Monoid ArrayList(T).
+/// Like `instance Monoid ArrayList(T)` in haskell.
+pub fn ArrayListMonoidImpl(comptime T: type) type {
+    return struct {
+        allocator: Allocator,
+
+        const Self = @This();
+        pub const Error: ?type = Allocator.Error;
+        /// The type M is a monoid, so the Monoid(M) is a Constrait.
+        pub const M = ArrayList(T);
+        /// The result type of operator function in Monoid
+        /// This is just the type M that maybe with Error
+        pub const EM = if (Error) |Err| Err!M else M;
+
+        pub const F = ArrayList;
+        /// Get base type of M(A), it is must just is A.
+        pub const BaseType = ArrayListBaseType;
+
+        pub fn mempty(self: Self) EM {
+            return ArrayList(T).init(self.allocator);
+        }
+
+        pub fn mappend(self: Self, ma: M, mb: M) EM {
+            _ = self;
+            var mc = try ArrayList(T).initCapacity(ma.allocator, ma.items.len + mb.items.len);
+            mc.appendSliceAssumeCapacity(ma.items);
+            mc.appendSliceAssumeCapacity(mb.items);
+            return mc;
+        }
+    };
+}
+
 pub const ArrayListMonadImpl = struct {
     allocator: Allocator,
 
@@ -42,9 +78,7 @@ pub const ArrayListMonadImpl = struct {
     pub const F = ArrayList;
 
     /// Get base type of F(A), it is must just is A.
-    pub fn BaseType(comptime ArrayA: type) type {
-        return std.meta.Child(ArrayA.Slice);
-    }
+    pub const BaseType = ArrayListBaseType;
 
     pub const Error = Allocator.Error;
 

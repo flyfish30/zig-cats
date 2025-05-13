@@ -9,6 +9,17 @@ const ArrayList = std.ArrayList;
 
 // pub usingnamespace @import("base_types.zig");
 
+pub fn ConstraitType(comptime T: type) type {
+    if (@hasDecl(T, "is_constraint") and T.is_constraint) {
+        @compileError(std.fmt.comptimePrint("Type {any} is not a constrait!", .{@typeName(T)}));
+    }
+    return T;
+}
+
+pub fn isPureTypeClass(comptime Impl: type) bool {
+    return Impl.Error == null;
+}
+
 /// A single-argument type function for type constructor
 pub const TCtor = *const fn (comptime type) type;
 

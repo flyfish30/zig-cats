@@ -4,12 +4,15 @@
 
 const std = @import("std");
 const base = @import("base.zig");
+const semi_grp = @import("semigroup.zig");
+const monoid = @import("monoid.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 const monad = @import("monad.zig");
 const pure_functor = @import("pure/functor.zig");
 const pure_applicative = @import("pure/applicative.zig");
 const pure_monad = @import("pure/monad.zig");
+const array = @import("array_list_monad.zig");
 const testu = @import("test_utils.zig");
 
 const testing = std.testing;
@@ -40,6 +43,83 @@ const FunctorFxTypes = functor.FunctorFxTypes;
 const ApplicativeFxTypes = applicative.ApplicativeFxTypes;
 const MonadFxTypes = monad.MonadFxTypes;
 const runDo = monad.runDo;
+
+/// The instance of Monoid Maybe(T), the type T must be a SemiGroup.
+/// Like `instance SemiGroup T => Monoid (Maybe T)` in haskell.
+pub fn MaybeMonoidImpl(comptime T: type) type {
+    return struct {
+        child_semi_grp_impl: ChildSemiGroupImpl,
+
+        const Self = @This();
+        const ChildSemiGroupImpl = semi_grp.SemiGroupImplFromType(T);
+        pub const Error: ?type = ChildSemiGroupImpl.Error;
+
+        /// The type M is a monoid, so the Monoid(M) is a Constrait.
+        pub const M = Maybe(T);
+        /// The result type of operator function in Monoid
+        /// This is just the type M that maybe with Error
+        pub const EM = if (Error) |Err| Err!M else M;
+
+        pub fn mempty(self: Self) EM {
+            _ = self;
+            return null;
+        }
+
+        pub fn mappend(self: Self, ma: M, mb: M) EM {
+            if (ma == null) return mb;
+            if (mb == null) return ma;
+            if (Error == null) {
+                return self.child_semi_grp_impl.mappend(ma.?, mb.?);
+            } else {
+                return try self.child_semi_grp_impl.mappend(ma.?, mb.?);
+            }
+        }
+    };
+}
+
+const ArrayList = std.ArrayList;
+const MonoidImplFromType = monoid.MonoidImplFromType;
+test "Monoid Maybe(A) mempty and mappend" {
+    const semi_grp_u32 = semi_grp.SemiGroupImplFromType(u32){};
+    const maybe_u32_m = MonoidImplFromType(?u32){ .child_semi_grp_impl = semi_grp_u32 };
+    try testing.expect(base.isPureTypeClass(@TypeOf(maybe_u32_m)));
+
+    const maybe_unit = maybe_u32_m.mempty();
+    try testing.expectEqual(null, maybe_unit);
+
+    const m1: ?u32 = 42;
+    const m2: ?u32 = 37;
+    try testing.expectEqual(42, maybe_u32_m.mappend(maybe_unit, m1));
+    try testing.expectEqual(79, maybe_u32_m.mappend(m1, m2));
+
+    const allocator = testing.allocator;
+    const semi_grp_array = semi_grp.SemiGroupImplFromType(ArrayList(u32)){
+        .allocator = allocator,
+    };
+    const maybe_array_m = MonoidImplFromType(?ArrayList(u32)){
+        .child_semi_grp_impl = semi_grp_array,
+    };
+    try testing.expect(!base.isPureTypeClass(@TypeOf(maybe_array_m)));
+
+    const maybe_array_unit = try maybe_array_m.mempty();
+    try testing.expectEqual(null, maybe_array_unit);
+    const array1: [2]u32 = @splat(42);
+    const array2: [2]u32 = @splat(37);
+    var array_m1: ?ArrayList(u32) = .init(allocator);
+    defer array_m1.?.deinit();
+    var array_m2: ?ArrayList(u32) = .init(allocator);
+    defer array_m2.?.deinit();
+
+    try array_m1.?.appendSlice(&array1);
+    try array_m2.?.appendSlice(&array2);
+    const appended_unit_m1 = try maybe_array_m.mappend(maybe_array_unit, array_m1);
+    // mappend with a unit in Maybe(A) monoid, the returned Maybe(A) is just same as
+    // the inpute Maybe(A), so it don't call appended_unit_m1.?.deinit().
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42 }, appended_unit_m1.?.items);
+    const append_m1m2 = try maybe_array_m.mappend(array_m1, array_m2);
+    defer append_m1m2.?.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 37, 37 }, append_m1m2.?.items);
+}
 
 pub const MaybeMonadImpl = struct {
     none: void,

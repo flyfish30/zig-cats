@@ -3,8 +3,8 @@ A category and functional programing library for Zig: Monoid, Functor, Applicati
 The Monoid/Functor/Applicative/Monad has support pure data type.
 
 ## current supported feature list
-- [ ] SemiGroup
-- [ ] Monoid
+- [x] SemiGroup
+- [x] Monoid
 
 - [x] Functor
 - [x] Natural Transformation
