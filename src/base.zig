@@ -16,6 +16,27 @@ pub fn ConstraitType(comptime T: type) type {
     return T;
 }
 
+pub fn TypeWithConstraits(comptime T: type, constraits: anytype) type {
+    const Constraits = @TypeOf(constraits);
+    const constraits_info = @typeInfo(Constraits);
+    if (constraits_info != .@"struct") {
+        @compileError("expected tuple or struct argument for constraits, found " ++ @typeName(Constraits));
+    }
+
+    const fields_info = constraits_info.@"struct".fields;
+    if (constraits_info.@"struct".is_tuple) {
+        inline for (0..fields_info.len) |i| {
+            _ = ConstraitType(constraits[i]);
+        }
+    } else {
+        inline for (fields_info) |field| {
+            _ = ConstraitType(@field(constraits, field.name));
+        }
+    }
+
+    return T;
+}
+
 pub fn isPureTypeClass(comptime Impl: type) bool {
     return Impl.Error == null;
 }

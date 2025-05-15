@@ -1,5 +1,6 @@
 const std = @import("std");
 const base = @import("base.zig");
+const semi_grp = @import("semigroup.zig");
 const maybe = @import("maybe.zig");
 const array = @import("array_list_monad.zig");
 
@@ -7,6 +8,7 @@ const array = @import("array_list_monad.zig");
 /// A is just a type of Monoid typeclass, such as u32, List.
 /// The return type is a Constrait, just like a constrait `Monoid a` in haskell.
 pub fn Monoid(comptime A: type) type {
+    _ = semi_grp.SemiGroup(A);
     const MonoidImpl = MonoidImplFromType(A);
     std.debug.assert(A == MonoidImpl.M);
     const T = struct {
@@ -42,6 +44,17 @@ pub fn Monoid(comptime A: type) type {
                 _ = b;
             }
         }.mappendFn);
+
+        /// Typeclass function for mconcat
+        const MconcatType = @TypeOf(struct {
+            fn mconcatFn(
+                instance: *InstanceImpl,
+                xs: []const M,
+            ) EM {
+                _ = instance;
+                _ = xs;
+            }
+        }.mconcatFn);
     };
 
     if (@TypeOf(MonoidImpl.mempty) != T.MemptyType) {
@@ -60,22 +73,28 @@ const VoidMonoidImpl = struct {
     const M = void;
     const EM = void;
 
-    pub fn mempty(self: Self) void {
+    pub fn mempty(self: *Self) void {
         _ = self;
         return {};
     }
 
-    pub fn mappend(self: Self, a: void, b: void) void {
+    pub fn mappend(self: *Self, a: M, b: M) M {
         _ = self;
         _ = a;
         _ = b;
         return {};
     }
 
+    pub fn mconcat(self: *Self, xs: []const M) EM {
+        _ = self;
+        _ = xs;
+        return {};
+    }
+
     pub const default: Self = .{};
 };
 
-// instance Monoid number, type of number is int, float, etc.
+// instance Monoid number, type of number is int, float, vector, etc.
 fn NumberMonoidImpl(comptime Num: type) type {
     return struct {
         const Self = @This();
@@ -83,14 +102,23 @@ fn NumberMonoidImpl(comptime Num: type) type {
         pub const M = Num;
         pub const EM = Num;
 
-        pub fn mempty(self: Self) u32 {
+        pub fn mempty(self: *Self) EM {
             _ = self;
             return 0;
         }
 
-        pub fn mappend(self: Self, a: Num, b: Num) Num {
+        pub fn mappend(self: *Self, a: M, b: M) EM {
             _ = self;
             return a + b;
+        }
+
+        pub fn mconcat(self: *Self, xs: []const M) EM {
+            _ = self;
+            var acc: M = 0;
+            for (xs) |x| {
+                acc += x;
+            }
+            return acc;
         }
     };
 }
@@ -130,6 +158,31 @@ pub fn MonoidImplFromType(comptime T: type) type {
     }
 }
 
-// pub fn sumAll(xs: std.ArrayList[u32])
-//    TypeWithContraits(u32, .{Monoid(u32)}) {
-// }
+pub fn commonMconcat(
+    comptime M: type,
+    comptime EM: type,
+    monoid_impl: anytype,
+    xs: []const M,
+) EM {
+    // The monoid_impl is must be a pointer
+    const MonoidImpl = std.meta.Child(@TypeOf(monoid_impl));
+    const Error = MonoidImpl.Error;
+    var acc = if (Error == null) monoid_impl.mempty() else try monoid_impl.mempty();
+    for (xs) |x| {
+        if (Error == null) {
+            acc = monoid_impl.mappend(acc, x);
+        } else {
+            acc = try monoid_impl.mappend(acc, x);
+        }
+    }
+
+    return acc;
+}
+
+const testing = std.testing;
+test "mconcat u32 mumbers" {
+    var monoid_impl = MonoidImplFromType(u32){};
+    const numbs = &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    const sum = monoid_impl.mconcat(numbs);
+    try testing.expectEqual(55, sum);
+}

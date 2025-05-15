@@ -1,5 +1,6 @@
 const std = @import("std");
 const base = @import("base.zig");
+const monoid = @import("monoid.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 const monad = @import("monad.zig");
@@ -53,18 +54,52 @@ pub fn ArrayListMonoidImpl(comptime T: type) type {
         /// Get base type of M(A), it is must just is A.
         pub const BaseType = ArrayListBaseType;
 
-        pub fn mempty(self: Self) EM {
+        pub fn mempty(self: *Self) EM {
             return ArrayList(T).init(self.allocator);
         }
 
-        pub fn mappend(self: Self, ma: M, mb: M) EM {
+        pub fn mappend(self: *Self, ma: M, mb: M) EM {
             _ = self;
             var mc = try ArrayList(T).initCapacity(ma.allocator, ma.items.len + mb.items.len);
             mc.appendSliceAssumeCapacity(ma.items);
             mc.appendSliceAssumeCapacity(mb.items);
             return mc;
         }
+
+        pub fn mconcat(self: *Self, xs: []const M) EM {
+            var acc = try self.mempty();
+            for (xs) |x| {
+                try acc.appendSlice(x.items);
+            }
+
+            return acc;
+        }
     };
+}
+
+test "Monoid ArrayList(A) mconcat" {
+    const allocator = testing.allocator;
+    var array_m = monoid.MonoidImplFromType(ArrayList(u32)){
+        .allocator = allocator,
+    };
+
+    const array1: [2]u32 = @splat(42);
+    const array2: [2]u32 = @splat(37);
+    const array3: [3]u32 = @splat(13);
+    var array_m1: ArrayList(u32) = .init(allocator);
+    defer array_m1.deinit();
+    var array_m2: ArrayList(u32) = .init(allocator);
+    defer array_m2.deinit();
+    var array_m3: ArrayList(u32) = .init(allocator);
+    defer array_m3.deinit();
+
+    try array_m1.appendSlice(&array1);
+    try array_m2.appendSlice(&array2);
+    try array_m3.appendSlice(&array3);
+    const arrays = &[_]ArrayList(u32){ array_m1, array_m2, array_m3 };
+    const concated = try array_m.mconcat(arrays);
+    defer concated.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 37, 37, 13, 13, 13 }, concated.items);
 }
 
 pub const ArrayListMonadImpl = struct {

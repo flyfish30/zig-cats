@@ -60,12 +60,12 @@ pub fn MaybeMonoidImpl(comptime T: type) type {
         /// This is just the type M that maybe with Error
         pub const EM = if (Error) |Err| Err!M else M;
 
-        pub fn mempty(self: Self) EM {
+        pub fn mempty(self: *Self) EM {
             _ = self;
             return null;
         }
 
-        pub fn mappend(self: Self, ma: M, mb: M) EM {
+        pub fn mappend(self: *Self, ma: M, mb: M) EM {
             if (ma == null) return mb;
             if (mb == null) return ma;
             if (Error == null) {
@@ -74,6 +74,10 @@ pub fn MaybeMonoidImpl(comptime T: type) type {
                 return try self.child_semi_grp_impl.mappend(ma.?, mb.?);
             }
         }
+
+        pub fn mconcat(self: *Self, xs: []const M) EM {
+            return monoid.commonMconcat(M, EM, self, xs);
+        }
     };
 }
 
@@ -81,7 +85,7 @@ const ArrayList = std.ArrayList;
 const MonoidImplFromType = monoid.MonoidImplFromType;
 test "Monoid Maybe(A) mempty and mappend" {
     const semi_grp_u32 = semi_grp.SemiGroupImplFromType(u32){};
-    const maybe_u32_m = MonoidImplFromType(?u32){ .child_semi_grp_impl = semi_grp_u32 };
+    var maybe_u32_m = MonoidImplFromType(?u32){ .child_semi_grp_impl = semi_grp_u32 };
     try testing.expect(base.isPureTypeClass(@TypeOf(maybe_u32_m)));
 
     const maybe_unit = maybe_u32_m.mempty();
@@ -96,7 +100,7 @@ test "Monoid Maybe(A) mempty and mappend" {
     const semi_grp_array = semi_grp.SemiGroupImplFromType(ArrayList(u32)){
         .allocator = allocator,
     };
-    const maybe_array_m = MonoidImplFromType(?ArrayList(u32)){
+    var maybe_array_m = MonoidImplFromType(?ArrayList(u32)){
         .child_semi_grp_impl = semi_grp_array,
     };
     try testing.expect(!base.isPureTypeClass(@TypeOf(maybe_array_m)));
@@ -119,6 +123,36 @@ test "Monoid Maybe(A) mempty and mappend" {
     const append_m1m2 = try maybe_array_m.mappend(array_m1, array_m2);
     defer append_m1m2.?.deinit();
     try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 37, 37 }, append_m1m2.?.items);
+}
+
+test "Monoid Maybe(A) mconcat" {
+    const allocator = testing.allocator;
+    const semi_grp_array = semi_grp.SemiGroupImplFromType(ArrayList(u32)){
+        .allocator = allocator,
+    };
+    var maybe_array_m = MonoidImplFromType(?ArrayList(u32)){
+        .child_semi_grp_impl = semi_grp_array,
+    };
+    try testing.expect(!base.isPureTypeClass(@TypeOf(maybe_array_m)));
+
+    const array1: [2]u32 = @splat(42);
+    const array2: [2]u32 = @splat(37);
+    var array_m1: ?ArrayList(u32) = .init(allocator);
+    defer array_m1.?.deinit();
+    var array_m2: ?ArrayList(u32) = .init(allocator);
+    defer array_m2.?.deinit();
+
+    try array_m1.?.appendSlice(&array1);
+    try array_m2.?.appendSlice(&array2);
+    const maybe_arrays = &[_]?ArrayList(u32){
+        array_m1,
+        null,
+        array_m2,
+    };
+
+    const concated = try maybe_array_m.mconcat(maybe_arrays);
+    defer concated.?.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 37, 37 }, concated.?.items);
 }
 
 pub const MaybeMonadImpl = struct {

@@ -48,7 +48,7 @@ const VoidSemiGroupImpl = struct {
     const M = void;
     const EM = void;
 
-    pub fn mappend(self: Self, a: void, b: void) void {
+    pub fn mappend(self: *Self, a: void, b: void) void {
         _ = self;
         _ = a;
         _ = b;
@@ -66,7 +66,7 @@ fn NumberSemiGroupImpl(comptime Num: type) type {
         pub const M = Num;
         pub const EM = Num;
 
-        pub fn mappend(self: Self, a: Num, b: Num) Num {
+        pub fn mappend(self: *Self, a: Num, b: Num) Num {
             _ = self;
             return a + b;
         }
