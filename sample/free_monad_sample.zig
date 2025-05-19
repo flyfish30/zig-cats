@@ -18,11 +18,14 @@ const MapFnKind = zcats.MapFnKind;
 const isMapRef = zcats.isMapRef;
 const isInplaceMap = zcats.isInplaceMap;
 const isErrorUnionOrVal = zcats.isErrorUnionOrVal;
+const EffectVal = zcats.EffectVal;
 
+const Monoid = zcats.Monoid;
 const Functor = zcats.Functor;
 const NatTrans = zcats.NatTrans;
 const Applicative = zcats.Applicative;
 const Monad = zcats.Monad;
+const MonadFromImpl = zcats.MonadFromImpl;
 const ArrayListMonadImpl = zcats.ArrayListMonadImpl;
 
 const FunctorFxTypes = zcats.FunctorFxTypes;
@@ -53,10 +56,11 @@ fn StackCalcF(comptime Kont: type) type {
 
         const Self = @This();
         const cfg = zcats.getDefaultBaseCfg(g_allocator);
-        const TopLamType = zcats.ComposableLam(cfg, Int, Error!Kont);
+        const TopLamType = zcats.ComposableLam(cfg, Int, EffectVal(Error, Kont));
 
         pub const BaseType = Kont;
-        pub const Error = cfg.error_set;
+        pub const Error: ?type = cfg.errors;
+        pub const FunctorImpl = StackCalcFunctorImpl;
         pub const ExistentialType = Int;
         pub const OpCtorDefs = ValidateOpCtorDefs();
 
@@ -98,7 +102,7 @@ const StackCalcFunctorImpl = struct {
         return StackCalcFA.BaseType;
     }
 
-    pub const Error = Allocator.Error;
+    pub const Error: ?type = Allocator.Error;
 
     pub const FxTypes = FunctorFxTypes(F, Error);
     pub const FaType = FxTypes.FaType;
@@ -490,7 +494,7 @@ fn LiftTopType(comptime cfg: anytype, comptime ActionType: type) type {
 }
 
 pub fn liftTop(comptime cfg: anytype) !FreeMonad(cfg, StackCalcF, Int) {
-    const Error = cfg.error_set;
+    const Error = cfg.errors;
     const F = StackCalcF;
     const ExistType = zcats.GetExistentialType(F);
     comptime assert(ExistType == Int);
@@ -498,11 +502,11 @@ pub fn liftTop(comptime cfg: anytype) !FreeMonad(cfg, StackCalcF, Int) {
     const Top: FOpEnumInt = @intFromEnum(CtorEnum.Top);
     const buildTop = StackCalcFCtorDefs(cfg, ExistType).Top.build;
 
-    const action_lam = zcats.getImpureIdentityLam(Error, Int);
-    const comp_action_lam = try zcats.ComposableLam(cfg, Int, Error!Int).create(action_lam);
+    const action_lam = zcats.getEffectIdentityLam(Error, Int);
+    const comp_action_lam = try zcats.ComposableLam(cfg, Int, EffectVal(Error, Int)).create(action_lam);
     const top_lam = try comp_action_lam.appendFn(FreeMonad(cfg, F, Int).pureM);
     defer _ = top_lam.strongUnref();
-    return FreeMonad(cfg, F, Int).freeFOp(top_lam, Top, try buildTop(zcats.getImpureIdentityFn(Error, Int)));
+    return FreeMonad(cfg, F, Int).freeFOp(top_lam, Top, try buildTop(zcats.getEffectIdentityFn(Error, Int)));
 }
 
 fn liftAdd(comptime cfg: anytype) !FreeMonad(cfg, StackCalcF, void) {
@@ -545,9 +549,9 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
 
         pub const F = StackCalcF;
         pub const G = StateMonadImpl(cfg, S).F;
-        pub const Error = Allocator.Error;
+        pub const Error: ?type = Allocator.Error;
 
-        pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+        pub fn trans(self: Self, comptime A: type, fa: F(A)) Error.?!G(A) {
             _ = self;
             switch (fa) {
                 .push => {
@@ -562,7 +566,7 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                         pub fn call(
                             lam_self: *const LamSelf,
                             s: S,
-                        ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
+                        ) EffectVal(DefaultCtx.Error, DefaultCtx.State(S, A).StateAS) {
                             // This lambda just as Haskell code:
                             //     \s -> (k, a:s)
                             try s.append(lam_self.local_n); // s.push(n)
@@ -584,7 +588,7 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                         pub fn call(
                             lam_self: *const LamSelf,
                             s: S,
-                        ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
+                        ) EffectVal(DefaultCtx.Error, DefaultCtx.State(S, A).StateAS) {
                             // This lambda just as Haskell code:
                             //     \s -> (k, tail s)
                             _ = s.pop() orelse @panic("Pop empty stack in calculator!");
@@ -606,7 +610,7 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                         pub fn call(
                             lam_self: *const LamSelf,
                             s: S,
-                        ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
+                        ) EffectVal(DefaultCtx.Error, DefaultCtx.State(S, A).StateAS) {
                             // This lambda just as Haskell code:
                             //     \s -> (k (head s), s)
                             if (s.items.len == 0)
@@ -629,7 +633,7 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                         pub fn call(
                             lam_self: *const LamSelf,
                             s: S,
-                        ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
+                        ) EffectVal(DefaultCtx.Error, DefaultCtx.State(S, A).StateAS) {
                             // This lambda just as Haskell code:
                             //     \s@(x:y:ts) -> (k, (x+y):ts)
                             const x = s.pop().?;
@@ -653,7 +657,7 @@ fn StackCalcFStateNatImpl(comptime cfg: anytype) type {
                         pub fn call(
                             lam_self: *const LamSelf,
                             s: S,
-                        ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
+                        ) EffectVal(DefaultCtx.Error, DefaultCtx.State(S, A).StateAS) {
                             // This lambda just as Haskell code:
                             //     \s@(x:y:ts) -> (k, (x*y):ts)
                             const x = s.pop().?;
@@ -680,9 +684,9 @@ pub const StackCalcFShowNatImpl = struct {
 
     pub const F = StackCalcF;
     pub const G = MWriterMaybe(ArrayList(u8));
-    pub const Error = Allocator.Error;
+    pub const Error: ?type = Allocator.Error;
 
-    pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+    pub fn trans(self: Self, comptime A: type, fa: F(A)) Error.?!G(A) {
         switch (fa) {
             .push => {
                 const push_fmt_str = "Push {any}, ";
@@ -741,7 +745,7 @@ fn getArrayListStateCfg(comptime T: type, allocator: Allocator) zcats.StateCtxCf
         .clone_s = &cloneStateS,
         .free_s = &freeStateS,
         .allocator = allocator,
-        .error_set = Allocator.Error,
+        .errors = Allocator.Error,
     };
 }
 
@@ -752,26 +756,27 @@ fn runStackCalcSample() !void {
     defer _ = allocator_instance.deinit();
     const F = StackCalcF;
     const cfg = getArrayListStateCfg(StateS, allocator);
-    const StackCalcFunctor = Functor(StackCalcFunctorImpl);
-    const stack_calc_functor = StackCalcFunctor.init(.{});
-    const FreeStackCalcImpl = FreeMonadImpl(cfg, F, StackCalcFunctorImpl);
-    const FStateMonad = Monad(FreeStackCalcImpl);
-    const freem_monad = FStateMonad.init(.{
+    const StackCalcFunctor = Functor(F);
+    const stack_calc_functor = StackCalcFunctor.InstanceImpl{};
+    const FStateMonad = Monad(zcats.FreeM(cfg, F));
+    const freem_monad = FStateMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = stack_calc_functor,
-    });
+    };
+    const FreeStackCalcImpl = @TypeOf(freem_monad);
 
-    const StateMonad = Monad(StateMonadImpl(cfg, StateS));
-    const state_monad = StateMonad.init(.{ .allocator = allocator });
+    const StateMonad = Monad(zcats.StateContext(cfg).StateM(StateS));
+    const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStackCalcFToState = NatTrans(StackCalcFStateNatImpl(cfg));
-    const nat_calc_state = NatStackCalcFToState.init(.{});
+    const nat_calc_state = NatStackCalcFToState.InstanceImpl{};
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatStackCalcToShow = NatTrans(StackCalcFShowNatImpl);
-    const nat_calc_show = NatStackCalcToShow.init(.{ .allocator = allocator });
+    const nat_calc_show = NatStackCalcToShow.InstanceImpl{ .allocator = allocator };
 
     // This do block is just as Haskell code:
     // calc = do

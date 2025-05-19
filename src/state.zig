@@ -3,10 +3,12 @@
 
 const std = @import("std");
 const base = @import("base.zig");
+const monoid = @import("monoid.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 const monad = @import("monad.zig");
 const freetypes = @import("free_types.zig");
+const maybe = @import("maybe.zig");
 const arraym = @import("array_list_monad.zig");
 const testu = @import("test_utils.zig");
 
@@ -17,6 +19,7 @@ const Maybe = base.Maybe;
 const ArrayList = std.ArrayList;
 
 const TCtor = base.TCtor;
+var maybe_error = maybe.maybe_error;
 
 const MapFnInType = base.MapFnInType;
 const MapFnRetType = base.MapFnRetType;
@@ -28,11 +31,14 @@ const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
 const isInplaceMap = base.isInplaceMap;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
+const EffectVal = base.EffectVal;
 
+const Monoid = monoid.Monoid;
 const Functor = functor.Functor;
 const NatTrans = functor.NatTrans;
 const Applicative = applicative.Applicative;
 const Monad = monad.Monad;
+const MonadFromImpl = monad.MonadFromImpl;
 const ArrayListMonadImpl = arraym.ArrayListMonadImpl;
 
 const FunctorFxTypes = functor.FunctorFxTypes;
@@ -53,7 +59,7 @@ const StateParentOp = enum {
 pub fn StateContext(comptime cfg: anytype) type {
     return struct {
         pub const ctx_cfg = cfg;
-        pub const Error = ctx_cfg.error_set;
+        pub const Error: ?type = ctx_cfg.errors;
 
         // the currying form of State function
         pub fn StateM(comptime S: type) TCtor {
@@ -73,13 +79,16 @@ pub fn StateContext(comptime cfg: anytype) type {
                             parent_op_fn: *const fn (self: *TransLam, op: StateParentOp) void,
                             trans_fn: *const fn (self: *TransLam, s: S) RetType,
 
-                            const RetType = Error!StateAS;
+                            const RetType = EffectVal(Error, StateAS);
                             // translate action function for State
                             pub inline fn call(trans_lam: *TransLam, s: S) RetType {
                                 return trans_lam.trans_fn(trans_lam, s);
                             }
                         };
                         pub const free_s = ctx_cfg.free_s;
+                        pub const FunctorImpl = StateMonadImpl(cfg, S);
+                        pub const ApplicativeImpl = FunctorImpl;
+                        pub const MonadImpl = FunctorImpl;
 
                         pub fn strongRef(state_self: *Self) *Self {
                             state_self.trans_lam.parent_op_fn(&state_self.trans_lam, .inc_ref);
@@ -103,7 +112,7 @@ pub fn StateContext(comptime cfg: anytype) type {
                         /// and return result of trans_fn.
                         /// The parameter s is initial value of S for runState, this
                         /// functin should consume parameter s.
-                        pub fn runState(state_self: *Self, s: S) Error!StateAS {
+                        pub fn runState(state_self: *Self, s: S) EffectVal(Error, StateAS) {
                             const trans_lam = &state_self.trans_lam;
                             return trans_lam.call(s);
                         }
@@ -138,7 +147,7 @@ pub fn StateContext(comptime cfg: anytype) type {
         }
 
         /// Create a State from a lambda, this function will consume the parameter lam.
-        pub fn mkStateFromLam(lam: anytype) Error!*StateTypeFromLam(@TypeOf(lam)) {
+        pub fn mkStateFromLam(lam: anytype) EffectVal(Error, *StateTypeFromLam(@TypeOf(lam))) {
             const LamType = @TypeOf(lam);
             const StateType = StateTypeFromLam(LamType);
             const S = StateType.StateS;
@@ -166,7 +175,7 @@ pub fn StateContext(comptime cfg: anytype) type {
             }.stateParentOp;
 
             const trans_fn = struct {
-                const RetType = Error!State(S, A).StateAS;
+                const RetType = EffectVal(Error, State(S, A).StateAS);
                 fn f(trans_lam: *State(S, A).TransLam, input_s: S) RetType {
                     ctx_cfg.free_s(ctx_cfg.allocator, input_s);
                     const state_parent = getStateParentByTransLam(State(S, A), FromLamStateType, trans_lam);
@@ -183,7 +192,7 @@ pub fn StateContext(comptime cfg: anytype) type {
             return &const_state.state;
         }
 
-        pub fn mkConstantState(comptime S: type, comptime A: type, s: S, a: A) Error!*State(S, A) {
+        pub fn mkConstantState(comptime S: type, comptime A: type, s: S, a: A) EffectVal(Error, *State(S, A)) {
             const TransCtx = struct {
                 local_s: ?S,
                 local_a: A,
@@ -210,7 +219,7 @@ pub fn StateContext(comptime cfg: anytype) type {
             }.stateParentOp;
 
             const trans_fn = struct {
-                const RetType = Error!State(S, A).StateAS;
+                const RetType = EffectVal(Error, State(S, A).StateAS);
                 fn f(trans_lam: *State(S, A).TransLam, input_s: S) RetType {
                     ctx_cfg.free_s(ctx_cfg.allocator, input_s);
                     const state_parent = getStateParentByTransLam(State(S, A), ConstStateType, trans_lam);
@@ -229,7 +238,7 @@ pub fn StateContext(comptime cfg: anytype) type {
             return &const_state.state;
         }
 
-        pub fn get(comptime S: type) Error!*State(S, S) {
+        pub fn get(comptime S: type) EffectVal(Error, *State(S, S)) {
             const GetStateType = struct {
                 state: State(S, S),
             };
@@ -247,7 +256,7 @@ pub fn StateContext(comptime cfg: anytype) type {
             }.stateParentOp;
 
             const trans_fn = struct {
-                const RetType = Error!struct { S, S };
+                const RetType = EffectVal(Error, struct { S, S });
                 fn f(trans_lam: *State(S, S).TransLam, s: S) RetType {
                     _ = trans_lam;
                     return .{ try ctx_cfg.clone_s(s), s };
@@ -261,7 +270,7 @@ pub fn StateContext(comptime cfg: anytype) type {
             return &get_state.state;
         }
 
-        pub fn put(comptime S: type, s: S) Error!*State(S, void) {
+        pub fn put(comptime S: type, s: S) EffectVal(Error, *State(S, void)) {
             const TransCtx = struct {
                 local_s: ?S,
             };
@@ -287,7 +296,7 @@ pub fn StateContext(comptime cfg: anytype) type {
             }.stateParentOp;
 
             const trans_fn = struct {
-                const RetType = Error!struct { void, S };
+                const RetType = EffectVal(Error, struct { void, S });
                 fn f(trans_lam: *State(S, void).TransLam, input_s: S) RetType {
                     ctx_cfg.free_s(ctx_cfg.allocator, input_s);
                     const state_parent = getStateParentByTransLam(State(S, void), PutStateType, trans_lam);
@@ -327,7 +336,7 @@ pub fn StateCtxCfg(comptime S: type) type {
         allocator: Allocator,
         clone_s: CloneStateSFn(S),
         free_s: FreeStateSFn(S),
-        error_set: type,
+        errors: ?type,
     };
 }
 
@@ -353,7 +362,7 @@ fn getDefaultStateCfg(comptime S: type, allocator: Allocator) StateCtxCfg(S) {
         .clone_s = getCopyAsClone(S),
         .free_s = getFreeNothing(S),
         .allocator = allocator,
-        .error_set = Allocator.Error,
+        .errors = Allocator.Error,
     };
 }
 
@@ -387,7 +396,7 @@ pub fn getDeinitCfg(comptime S: type, allocator: Allocator) StateCtxCfg(S) {
         .clone_s = getNormalClone(S),
         .free_s = getDeinitOneT(S),
         .allocator = allocator,
-        .error_set = Allocator.Error,
+        .errors = Allocator.Error,
     };
 }
 
@@ -422,6 +431,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         const ctx_cfg = Ctx.ctx_cfg;
         const State = Ctx.State;
 
+        pub const fa_is_ptr = true;
         /// Constructor Type for Functor, Applicative, Monad, ...
         pub fn F(comptime A: type) type {
             return *Ctx.State(S, A);
@@ -432,7 +442,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             return std.meta.Child(PState).StateA;
         }
 
-        pub const Error = Allocator.Error || cfg.error_set;
+        pub const Error: ?type = maybe_error.mappend(Allocator.Error, cfg.errors);
 
         pub const FxTypes = FunctorFxTypes(F, Error);
         pub const FaType = FxTypes.FaType;
@@ -460,7 +470,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         ) type {
             const has_err, const _A = comptime isErrorUnionOrVal(RetA);
             const info = @typeInfo(RetA);
-            const RetE = Error || if (has_err) info.error_union.error_set else error{};
+            const RetE = Error.? || if (has_err) info.error_union.error_set else error{};
             return RetE!struct { _A, RetS };
         }
 
@@ -891,6 +901,10 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
     };
 }
 
+const FunctorImplFromTCtor = functor.FunctorImplFromTCtor;
+const ApplicativeImplFromTCtor = functor.ApplicativeImplFromTCtor;
+const MonadImplFromTCtor = functor.MonadImplFromTCtor;
+
 // These functions are used for unit test
 const add10 = testu.add10;
 const add_pi_f32 = testu.add_pi_f32;
@@ -905,8 +919,9 @@ test "State(s, a) Functor fmap" {
     const allocator = testing.allocator;
     const default_cfg = comptime getDefaultStateCfg(u32, allocator);
     const DefaultCtx = StateContext(default_cfg);
-    const StateFunctor = Functor(StateMonadImpl(default_cfg, u32));
-    var state_functor = StateFunctor.init(.{ .allocator = allocator });
+    const StateU32 = DefaultCtx.StateM(u32);
+    const StateFunctor = Functor(StateU32);
+    var state_functor = StateFunctor.InstanceImpl{ .allocator = allocator };
 
     // test fmap
     var state_a = try DefaultCtx.get(u32);
@@ -931,8 +946,9 @@ test "State(s, a) Functor fmap" {
     const ArrayListU32 = ArrayList(u32);
     const array_cfg = comptime getDeinitCfg(ArrayListU32, allocator);
     const ArrayStCtx = StateContext(array_cfg);
-    const ArrayStFunctor = Functor(StateMonadImpl(array_cfg, ArrayListU32));
-    var array_st_functor = ArrayStFunctor.init(.{ .allocator = allocator });
+    const StateArrayU32 = ArrayStCtx.StateM(ArrayListU32);
+    _ = Functor(StateArrayU32);
+    var array_st_functor = FunctorImplFromTCtor(StateArrayU32){ .allocator = allocator };
 
     var array_st_a = try ArrayStCtx.get(ArrayListU32);
     defer _ = array_st_a.strongUnref();
@@ -979,9 +995,9 @@ test "State(s, a) Applicative pure and fapply" {
     const allocator = testing.allocator;
     const default_cfg = comptime getDefaultStateCfg(u32, allocator);
     const DefaultCtx = StateContext(default_cfg);
-    _ = DefaultCtx;
-    const StateApplicative = Applicative(StateMonadImpl(default_cfg, u32));
-    var state_applicative = StateApplicative.init(.{ .allocator = allocator });
+    const StateU32 = DefaultCtx.StateM(u32);
+    const StateApplicative = Applicative(StateU32);
+    var state_applicative = StateApplicative.InstanceImpl{ .allocator = allocator };
 
     var state_a = try state_applicative.pure(@as(u32, 13));
     defer _ = state_a.strongUnref();
@@ -1014,8 +1030,9 @@ test "State(s, a) Monad bind" {
     const allocator = testing.allocator;
     const default_cfg = comptime getDefaultStateCfg(u32, allocator);
     const DefaultCtx = StateContext(default_cfg);
-    const StateMonad = Monad(StateMonadImpl(default_cfg, u32));
-    var state_monad = StateMonad.init(.{ .allocator = allocator });
+    const StateU32 = DefaultCtx.StateM(u32);
+    const StateMonad = Monad(StateU32);
+    var state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
 
     var state_a = try state_monad.pure(@as(u32, 13));
     defer _ = state_a.strongUnref();
@@ -1041,14 +1058,15 @@ test "runDo State(Arraylist(i32), A)" {
     const input1: i32 = 42;
 
     const allocator = testing.allocator;
-    const ArrayListMonad = Monad(ArrayListMonadImpl);
-    const arraylist_m = ArrayListMonad.init(.{ .allocator = allocator });
+    const ArrayMonad = Monad(ArrayList);
+    const array_monad = ArrayMonad.InstanceImpl{ .allocator = allocator };
 
     const array_cfg = comptime getDeinitCfg(ArrayList(i32), allocator);
     const ArrayStCtx = StateContext(array_cfg);
-    const ArrayStImpl = StateMonadImpl(array_cfg, ArrayList(i32));
-    const StateMonad = Monad(ArrayStImpl);
-    const state_monad = StateMonad.init(.{ .allocator = allocator });
+    const StateArrayI32 = ArrayStCtx.StateM(ArrayList(i32));
+    const StateMonad = Monad(StateArrayI32);
+    const state_array_monad = StateMonad.InstanceImpl{ .allocator = allocator };
+    const ArrayStImpl = @TypeOf(state_array_monad);
 
     var do_ctx = struct {
         // It is must to define monad_impl for support do syntax.
@@ -1122,7 +1140,7 @@ test "runDo State(Arraylist(i32), A)" {
                 }
             }.f, state_a);
         }
-    }{ .monad_impl = state_monad, .arrayl_monad = arraylist_m, .param1 = input1 };
+    }{ .monad_impl = state_array_monad, .arrayl_monad = array_monad, .param1 = input1 };
     defer do_ctx.deinit();
     var out = try runDo(&do_ctx);
     defer _ = out.strongUnref();
@@ -1149,13 +1167,15 @@ pub fn StateF(comptime cfg: anytype, comptime S: type) TCtor {
                 getf: *GetfLamType,
 
                 const Self = @This();
-                const GetfLamType = base.ComposableLam(cfg, S, Error!A);
+                const GetfLamType = base.ComposableLam(cfg, S, EffectVal(Error, A));
                 pub const BaseType = A;
-                pub const Error = cfg.error_set;
+                pub const Error: ?type = cfg.errors;
                 pub const ExistentialType = S;
                 pub const OpCtorDefs = ValidateOpCtorDefs();
                 pub const StateS = S;
                 pub const StateA = A;
+
+                pub const FunctorImpl = StateFFunctorImpl(cfg, S);
 
                 fn ValidateOpCtorDefs() type {
                     const op_ctor_defs = StateFCtorDefs(cfg, S, A);
@@ -1168,7 +1188,7 @@ pub fn StateF(comptime cfg: anytype, comptime S: type) TCtor {
                     return op_ctor_defs;
                 }
 
-                pub fn effGetFfromFn(get_fn: *const fn (S) Error!A) Error!Self {
+                pub fn effGetFfromFn(get_fn: *const fn (S) EffectVal(Error, A)) EffectVal(Error, Self) {
                     return .{ .getf = try GetfLamType.createByFn(get_fn) };
                 }
 
@@ -1208,7 +1228,7 @@ pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
             return StateSA.BaseType;
         }
 
-        pub const Error = Allocator.Error || cfg.error_set;
+        pub const Error: ?type = maybe_error.mappend(Allocator.Error, cfg.errors);
 
         pub const FxTypes = FunctorFxTypes(F, Error);
         pub const FaType = FxTypes.FaType;
@@ -1314,7 +1334,7 @@ pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
 
 /// All value constructors for StateF Functor
 fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) type {
-    const Error = cfg.error_set;
+    const Error = cfg.errors;
 
     // Define Op constructor lambdas for StateF
     return struct {
@@ -1331,13 +1351,13 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
             lam_ctx: ?*S = null,
 
             const Self = @This();
-            pub fn build(s: S) Error!Self {
+            pub fn build(s: S) EffectVal(Error, Self) {
                 const put_s = try cfg.allocator.create(S);
                 put_s.* = try base.copyOrCloneOrRef(s);
                 return .{ .lam_ctx = put_s };
             }
 
-            pub fn fpureToFreem(FreeMType: type, fpure: StateFA(cfg, S, A)) Error!FreeMType {
+            pub fn fpureToFreem(FreeMType: type, fpure: StateFA(cfg, S, A)) EffectVal(Error, FreeMType) {
                 const ops_array = [_]FOpInfo{
                     .{ .op_e = PutF_E, .op_lam = @bitCast(try build(fpure.putf[0])) },
                 };
@@ -1352,7 +1372,7 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
                 }
             }
 
-            pub fn clone(self: Self) Error!Self {
+            pub fn clone(self: Self) EffectVal(Error, Self) {
                 if (self.lam_ctx != null) {
                     const new_put_s = try cfg.allocator.create(S);
                     new_put_s.* = try base.copyOrCloneOrRef(self.lam_ctx.?.*);
@@ -1378,10 +1398,10 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
             const Self = @This();
             // This Op is just a function that return type is A
             pub const is_fn_op = true;
-            const GetfLamType = base.ComposableLam(cfg, S, Error!A);
+            const GetfLamType = base.ComposableLam(cfg, S, EffectVal(Error, A));
 
             /// build GetF from function or lambda
-            pub fn build(action: anytype) Error!Self {
+            pub fn build(action: anytype) EffectVal(Error, Self) {
                 const info = @typeInfo(@TypeOf(action));
                 const is_valid, const action_lam = switch (info) {
                     .@"struct" => .{ true, action },
@@ -1403,10 +1423,10 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
                 return .{ .lam_ctx = getf_lam };
             }
 
-            pub fn fpureToFreem(FreeMType: type, fpure: StateFA(cfg, S, A)) Error!FreeMType {
+            pub fn fpureToFreem(FreeMType: type, fpure: StateFA(cfg, S, A)) EffectVal(Error, FreeMType) {
                 comptime assert(S == FreeMType.ExistType);
-                const impureId = base.getImpureIdentityFn(Error, S);
-                const getf_lam = try base.ComposableLam(cfg, S, Error!S).createByFn(impureId);
+                const impureId = base.getEffectIdentityFn(Error, S);
+                const getf_lam = try base.ComposableLam(cfg, S, EffectVal(Error, S)).createByFn(impureId);
                 return FreeMType.freeFOp(fpure.getf, GetF_E, .{ .lam_ctx = getf_lam });
             }
 
@@ -1414,11 +1434,11 @@ fn StateFCtorDefs(comptime cfg: anytype, comptime S: type, comptime A: type) typ
                 _ = self.lam_ctx.strongUnref();
             }
 
-            pub fn clone(self: Self) Error!Self {
+            pub fn clone(self: Self) EffectVal(Error, Self) {
                 return .{ .lam_ctx = self.lam_ctx.strongRef() };
             }
 
-            pub fn call(self: *const Self) Error!StateFA(cfg, S, A) {
+            pub fn call(self: *const Self) EffectVal(Error, StateFA(cfg, S, A)) {
                 return StateFA(cfg, S, A){ .getf = self.lam_ctx.strongRef() };
             }
         };
@@ -1499,7 +1519,7 @@ pub fn liftGetF(
             " found '" ++ @typeName(@TypeOf(action)) ++ "'");
     }
 
-    const Error = cfg.error_set;
+    const Error = cfg.errors;
     const S = MapLamInType(@TypeOf(action_lam));
     const A = MapLamRetType(@TypeOf(action_lam));
     const has_err, const _A = isErrorUnionOrVal(A);
@@ -1513,7 +1533,7 @@ pub fn liftGetF(
     const comp_action_lam = try base.ComposableLam(cfg, S, A).create(action_lam);
     const getf_lam = try comp_action_lam.appendFn(FreeMonad(cfg, F, _A).pureM);
     defer _ = getf_lam.strongUnref();
-    return FreeMonad(cfg, F, _A).freeFOp(getf_lam, GetF, try buildGetF(base.getImpureIdentityFn(Error, S)));
+    return FreeMonad(cfg, F, _A).freeFOp(getf_lam, GetF, try buildGetF(base.getEffectIdentityFn(Error, S)));
 }
 
 test "FreeMonad(StateF, A) liftFree" {
@@ -1521,16 +1541,16 @@ test "FreeMonad(StateF, A) liftFree" {
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
     const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
-    var statef_functor = StateFFunctor.init(.{ .allocator = allocator });
-    _ = &statef_functor;
+    const StateFFunctor = Functor(F);
+    var statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
-    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+    const nat_statef_show = NatStateFToShow.InstanceImpl{ .allocator = allocator };
 
     const s: StateS = 17;
     const a: u32 = 42;
@@ -1544,8 +1564,8 @@ test "FreeMonad(StateF, A) liftFree" {
     try testing.expectEqualSlices(u8, "PutF 17, ", show1_writer.w.items);
 
     const get_fn = struct {
-        const Error = cfg.error_set;
-        fn get(get_s: u64) Error!u32 {
+        const Error = cfg.errors;
+        fn get(get_s: u64) EffectVal(Error, u32) {
             return @intCast(get_s + 10);
         }
     }.get;
@@ -1567,9 +1587,9 @@ pub fn StateFToStateNatImpl(comptime cfg: anytype, comptime S: type) type {
 
         pub const F = StateF(cfg, S);
         pub const G = StateMonadImpl(cfg, S).F;
-        pub const Error = Allocator.Error;
+        pub const Error: ?type = Allocator.Error;
 
-        pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+        pub fn trans(self: Self, comptime A: type, fa: F(A)) Error.?!G(A) {
             _ = self;
             if (fa == .putf) {
                 // fa.putf is tuple of (S, State(S, A))
@@ -1587,7 +1607,7 @@ pub fn StateFToStateNatImpl(comptime cfg: anytype, comptime S: type) type {
                     pub fn call(
                         lam_self: *const LamSelf,
                         s: S,
-                    ) DefaultCtx.Error!DefaultCtx.State(S, A).StateAS {
+                    ) EffectVal(DefaultCtx.Error, DefaultCtx.State(S, A).StateAS) {
                         // This lambda just as Haskell code:
                         //     \s -> (GetF.g s, s)
                         return .{ try lam_self.local_fa.getf.call(s), s };
@@ -1611,9 +1631,9 @@ pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
 
         pub const F = InF;
         pub const G = MWriterMaybe(ArrayList(u8));
-        pub const Error = Allocator.Error;
+        pub const Error: ?type = Allocator.Error;
 
-        pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+        pub fn trans(self: Self, comptime A: type, fa: F(A)) Error.?!G(A) {
             if (fa == .putf) {
                 const put_fmt_str = "PutF {any}, ";
                 const len = std.fmt.count(put_fmt_str, .{fa.putf[0]});
@@ -1667,20 +1687,22 @@ test "FreeMonad(StateF, A) foldFree and iter" {
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
     const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
-    const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
+    const StateFFunctor = Functor(F);
+    const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
 
-    const StateMonad = Monad(StateMonadImpl(cfg, StateS));
-    const state_monad = StateMonad.init(.{ .allocator = allocator });
+    const StateU64 = StateContext(cfg).StateM(StateS);
+    const StateMonad = Monad(StateU64);
+    const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
-    const nat_statef_state = NatStateFToState.init(.{});
+    const nat_statef_state = NatStateFToState.InstanceImpl{};
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
-    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+    const nat_statef_show = NatStateFToShow.InstanceImpl{ .allocator = allocator };
 
     const ExistType = freetypes.GetExistentialType(F);
     const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, StateS, u32));
@@ -1709,14 +1731,14 @@ test "FreeMonad(StateF, A) foldFree and iter" {
 
     const get_fn = struct {
         const Error = FreeMonad(cfg, F, ExistType).Error;
-        fn get(s: u64) Error!ExistType {
+        fn get(s: u64) EffectVal(Error, ExistType) {
             return @intCast(s + 10);
         }
     }.get;
 
     const x_to_free_state = struct {
         const Error = FreeMonad(cfg, F, u32).Error;
-        fn xToFreeState(x: ExistType) Error!FreeMonad(cfg, F, u32) {
+        fn xToFreeState(x: ExistType) EffectVal(Error, FreeMonad(cfg, F, u32)) {
             const x_state_ops = &[_]FOpInfo{
                 .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37 + x)) },
             };
@@ -1768,26 +1790,26 @@ test "FreeMonad(StateF, A) fmap and fmapLam" {
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
     const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
-    const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
-    const FreeStateFImpl = FreeMonadImpl(cfg, F, StateFFunctorImpl(cfg, StateS));
-    const FStateMonad = Monad(FreeStateFImpl);
-    var freem_monad = FStateMonad.init(.{
+    const StateFFunctor = Functor(F);
+    const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
+    const FStateMonad = Monad(freetypes.FreeM(cfg, F));
+    var freem_monad = FStateMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = statef_functor,
-    });
+    };
 
-    const StateMonad = Monad(StateMonadImpl(cfg, StateS));
-    const state_monad = StateMonad.init(.{ .allocator = allocator });
+    const StateMonad = Monad(StateContext(cfg).StateM(StateS));
+    const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
-    const nat_statef_state = NatStateFToState.init(.{});
+    const nat_statef_state = NatStateFToState.InstanceImpl{};
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
-    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+    const nat_statef_show = NatStateFToShow.InstanceImpl{ .allocator = allocator };
 
     const ExistType = freetypes.GetExistentialType(F);
     const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, StateS, u32));
@@ -1803,14 +1825,14 @@ test "FreeMonad(StateF, A) fmap and fmapLam" {
 
     const get_fn = struct {
         const Error = FreeMonad(cfg, F, ExistType).Error;
-        fn get(s: u64) Error!ExistType {
+        fn get(s: u64) EffectVal(Error, ExistType) {
             return @intCast(s + 10);
         }
     }.get;
 
     const x_to_free_state = struct {
         const Error = FreeMonad(cfg, F, u32).Error;
-        fn xToFreeState(x: u64) Error!FreeMonad(cfg, F, u32) {
+        fn xToFreeState(x: u64) EffectVal(Error, FreeMonad(cfg, F, u32)) {
             const x_state_ops = &[_]FOpInfo{
                 .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37 + x)) },
             };
@@ -1880,26 +1902,26 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
     const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
-    const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
-    const FreeStateFImpl = FreeMonadImpl(cfg, F, StateFFunctorImpl(cfg, StateS));
-    const FStateMonad = Monad(FreeStateFImpl);
-    var freem_monad = FStateMonad.init(.{
+    const StateFFunctor = Functor(F);
+    const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
+    const FStateMonad = Monad(freetypes.FreeM(cfg, F));
+    var freem_monad = FStateMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = statef_functor,
-    });
+    };
 
-    const StateMonad = Monad(StateMonadImpl(cfg, StateS));
-    const state_monad = StateMonad.init(.{ .allocator = allocator });
+    const StateMonad = Monad(StateContext(cfg).StateM(StateS));
+    const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
-    const nat_statef_state = NatStateFToState.init(.{});
+    const nat_statef_state = NatStateFToState.InstanceImpl{};
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
-    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+    const nat_statef_show = NatStateFToShow.InstanceImpl{ .allocator = allocator };
 
     const ExistType = freetypes.GetExistentialType(F);
     const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, StateS, u32));
@@ -1973,7 +1995,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     // test all variants of FreeMonad StateF A with GetF operator
     const x_to_free_state = struct {
         const Error = FreeMonad(cfg, F, u32).Error;
-        fn xToFreeState(x: u64) Error!FreeMonad(cfg, F, u32) {
+        fn xToFreeState(x: u64) EffectVal(Error, FreeMonad(cfg, F, u32)) {
             const x_state_ops = &[_]FOpInfo{
                 .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37 + x)) },
             };
@@ -1984,7 +2006,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
 
     const get_fn = struct {
         const Error = FreeMonad(cfg, F, ExistType).Error;
-        fn get(s: u64) Error!ExistType {
+        fn get(s: u64) EffectVal(Error, ExistType) {
             return @intCast(s + 10);
         }
     }.get;
@@ -2064,7 +2086,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     const FnType1 = *const fn (u32) f64;
     const x_to_free_state_fn = struct {
         const Error = FreeMonad(cfg, F, FnType1).Error;
-        fn xToFreeState(x: u64) Error!FreeMonad(cfg, F, FnType1) {
+        fn xToFreeState(x: u64) EffectVal(Error, FreeMonad(cfg, F, FnType1)) {
             const x_state_ops = &[_]FOpInfo{
                 .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(19 + x)) },
             };
@@ -2104,7 +2126,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     };
     const x_to_free_state_lam = struct {
         const Error = FreeMonad(cfg, F, LamType1).Error;
-        fn xToFreeState(x: u64) Error!FreeMonad(cfg, F, LamType1) {
+        fn xToFreeState(x: u64) EffectVal(Error, FreeMonad(cfg, F, LamType1)) {
             const x_state_ops = &[_]FOpInfo{
                 .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(19 + x)) },
             };
@@ -2185,26 +2207,27 @@ test "FreeMonad(StateF, A) bind and join" {
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
     const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
-    const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
-    const FreeStateFImpl = FreeMonadImpl(cfg, F, StateFFunctorImpl(cfg, StateS));
-    const FStateMonad = Monad(FreeStateFImpl);
-    var freem_monad = FStateMonad.init(.{
+    const StateFFunctor = Functor(F);
+    const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
+    const FStateMonad = Monad(freetypes.FreeM(cfg, F));
+    var freem_monad = FStateMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = statef_functor,
-    });
+    };
+    const FreeStateFImpl = @TypeOf(freem_monad);
 
-    const StateMonad = Monad(StateMonadImpl(cfg, StateS));
-    const state_monad = StateMonad.init(.{ .allocator = allocator });
+    const StateMonad = Monad(StateContext(cfg).StateM(StateS));
+    const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
-    const nat_statef_state = NatStateFToState.init(.{});
+    const nat_statef_state = NatStateFToState.InstanceImpl{};
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
-    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+    const nat_statef_show = NatStateFToShow.InstanceImpl{ .allocator = allocator };
 
     const ExistType = freetypes.GetExistentialType(F);
     const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, StateS, u32));
@@ -2339,7 +2362,7 @@ test "FreeMonad(StateF, A) bind and join" {
     // test all variants of FreeMonad(StateF, A) with GetF operator
     const x_to_free_state_even = struct {
         const Error = FreeMonad(cfg, F, u32).Error;
-        fn xToFreeState(x: u64) Error!FreeMonad(cfg, F, u32) {
+        fn xToFreeState(x: u64) EffectVal(Error, FreeMonad(cfg, F, u32)) {
             const x_state_ops = &[_]FOpInfo{
                 .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37 + x)) },
             };
@@ -2351,7 +2374,7 @@ test "FreeMonad(StateF, A) bind and join" {
 
     const x_to_free_state_odd = struct {
         const Error = FreeMonad(cfg, F, u32).Error;
-        fn xToFreeState(x: u64) Error!FreeMonad(cfg, F, u32) {
+        fn xToFreeState(x: u64) EffectVal(Error, FreeMonad(cfg, F, u32)) {
             const x_state_ops = &[_]FOpInfo{
                 .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(37 + x)) },
             };
@@ -2363,7 +2386,7 @@ test "FreeMonad(StateF, A) bind and join" {
 
     const get_fn = struct {
         const Error = FreeMonad(cfg, F, ExistType).Error;
-        fn get(s: u64) Error!ExistType {
+        fn get(s: u64) EffectVal(Error, ExistType) {
             return @intCast(s + 7);
         }
     }.get;
@@ -2382,7 +2405,7 @@ test "FreeMonad(StateF, A) bind and join" {
 
             const k_x_to_freem = struct {
                 const Error = FreeMonad(cfg, F, f64).Error;
-                fn xToFreeState(x: u64) Error!FreeMonad(cfg, F, f64) {
+                fn xToFreeState(x: u64) EffectVal(Error, FreeMonad(cfg, F, f64)) {
                     const x_state_ops = &[_]FOpInfo{
                         .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(19 + x)) },
                     };
@@ -2394,7 +2417,7 @@ test "FreeMonad(StateF, A) bind and join" {
 
             const k_get_fn = struct {
                 const Error = FreeMonad(cfg, F, ExistType).Error;
-                fn get(s: u64) Error!ExistType {
+                fn get(s: u64) EffectVal(Error, ExistType) {
                     // std.debug.print("k_get_fn, s={d}\n", .{s});
                     return @intCast(s + 29);
                 }
@@ -2420,7 +2443,7 @@ test "FreeMonad(StateF, A) bind and join" {
 
             const map_x_to_freem = struct {
                 const Error = FreeMonad(cfg, F, f64).Error;
-                fn xToFreeState(x: u64) Error!FreeMonad(cfg, F, f64) {
+                fn xToFreeState(x: u64) EffectVal(Error, FreeMonad(cfg, F, f64)) {
                     const x_state_ops = &[_]FOpInfo{
                         .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(19 + x)) },
                     };
@@ -2431,7 +2454,7 @@ test "FreeMonad(StateF, A) bind and join" {
 
             const map_get_fn = struct {
                 const Error = FreeMonad(cfg, F, ExistType).Error;
-                fn get(s: u64) Error!ExistType {
+                fn get(s: u64) EffectVal(Error, ExistType) {
                     return @intCast(s + 29);
                 }
             }.get;
@@ -2634,28 +2657,29 @@ test "runDo FreeMonad(StateF, A) " {
     const allocator = testing.allocator;
     const StateS = u32;
     const cfg = getDefaultStateCfg(StateS, allocator);
-    const Error = cfg.error_set;
+    const Error = cfg.errors;
     const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(StateFFunctorImpl(cfg, StateS));
-    const statef_functor = StateFFunctor.init(.{ .allocator = allocator });
-    const FreeStateFImpl = FreeMonadImpl(cfg, F, StateFFunctorImpl(cfg, StateS));
-    const FStateMonad = Monad(FreeStateFImpl);
-    const freem_monad = FStateMonad.init(.{
+    const StateFFunctor = Functor(F);
+    const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
+    const FStateMonad = Monad(freetypes.FreeM(cfg, F));
+    const freem_monad = FStateMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = statef_functor,
-    });
+    };
+    const FreeStateFImpl = @TypeOf(freem_monad);
 
-    const StateMonad = Monad(StateMonadImpl(cfg, StateS));
-    const state_monad = StateMonad.init(.{ .allocator = allocator });
+    const StateMonad = Monad(StateContext(cfg).StateM(StateS));
+    const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
-    const nat_statef_state = NatStateFToState.init(.{});
+    const nat_statef_state = NatStateFToState.InstanceImpl{};
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatStateFToShow = NatTrans(StateFShowNatImpl(cfg, StateS));
-    const nat_statef_show = NatStateFToShow.init(.{ .allocator = allocator });
+    const nat_statef_show = NatStateFToShow.InstanceImpl{ .allocator = allocator };
 
     var do_ctx = struct {
         // It is must to define monad_impl for support do syntax.
@@ -2687,7 +2711,7 @@ test "runDo FreeMonad(StateF, A) " {
             const add_x_f64 = struct {
                 _x: f64,
                 const Self = @This();
-                pub fn call(self: *const Self, in: u32) Error!f64 {
+                pub fn call(self: *const Self, in: u32) EffectVal(Error, f64) {
                     return @as(f64, @floatFromInt(in)) + self._x;
                 }
             }{ ._x = @floatFromInt(a) };
@@ -2761,7 +2785,7 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
             return WriterWA.BaseType;
         }
 
-        pub const Error = Allocator.Error;
+        pub const Error: ?type = Allocator.Error;
 
         pub const FxTypes = FunctorFxTypes(F, Error);
         pub const FaType = FxTypes.FaType;
@@ -2908,6 +2932,8 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
 ///////////////////////////////////////////////////
 /// The type is just MWriter(W, Maybe(A))
 pub fn MWriterMaybe(comptime W: type) TCtor {
+    const WriterMonoid = Monoid(W);
+    const WriterMonoidImpl = WriterMonoid.InstanceImpl;
     return struct {
         fn MWriterMaybeF(comptime A: type) type {
             return struct {
@@ -2915,7 +2941,11 @@ pub fn MWriterMaybe(comptime W: type) TCtor {
                 w: W,
 
                 const Self = @This();
-                const BaseType = A;
+                pub const BaseType = A;
+
+                pub const FunctorImpl = MWriterMaybeMonadImpl(WriterMonoidImpl, W);
+                pub const ApplicativeImpl = FunctorImpl;
+                pub const MonadImpl = FunctorImpl;
 
                 pub fn deinit(self: Self) void {
                     base.deinitOrUnref(self.w);
@@ -2939,7 +2969,7 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
             return WriterWA.BaseType;
         }
 
-        pub const Error = Allocator.Error;
+        pub const Error: ?type = Allocator.Error;
 
         pub const FxTypes = FunctorFxTypes(F, Error);
         pub const FaType = FxTypes.FaType;

@@ -11,6 +11,10 @@ pub fn Monoid(comptime A: type) type {
     _ = semi_grp.SemiGroup(A);
     const MonoidImpl = MonoidImplFromType(A);
     std.debug.assert(A == MonoidImpl.M);
+    return MonoidFromImpl(MonoidImpl);
+}
+
+pub fn MonoidFromImpl(comptime MonoidImpl: type) type {
     const T = struct {
         pub const is_constrait = true;
         const Self = @This();
@@ -150,11 +154,11 @@ pub fn MonoidImplFromType(comptime T: type) type {
             else => {},
         }
 
-        const impl_fn = monoidImplMap.get(@typeName(T));
-        if (impl_fn == null) {
+        const impl = monoidImplMap.get(@typeName(T));
+        if (impl == null) {
             @compileError("The customered Monoid(" ++ @typeName(T) ++ ") must has MonoidImpl!");
         }
-        return impl_fn.?;
+        return impl.?;
     }
 }
 
@@ -181,7 +185,8 @@ pub fn commonMconcat(
 
 const testing = std.testing;
 test "mconcat u32 mumbers" {
-    var monoid_impl = MonoidImplFromType(u32){};
+    const MonoidImpl = Monoid(u32);
+    var monoid_impl = MonoidImpl.InstanceImpl{};
     const numbs = &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
     const sum = monoid_impl.mconcat(numbs);
     try testing.expectEqual(55, sum);

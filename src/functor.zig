@@ -1,6 +1,8 @@
 const std = @import("std");
 const base = @import("base.zig");
 const applicative = @import("applicative.zig");
+const maybe = @import("maybe.zig");
+const arraym = @import("array_list_monad.zig");
 
 const TCtor = base.TCtor;
 
@@ -32,7 +34,10 @@ pub fn FunctorFxTypes(comptime F: TCtor, comptime E: ?type) type {
         pub fn FbType(comptime MapFn: type) type {
             const info = @typeInfo(MapFnRetType(MapFn));
             if (E == null) {
-                return F(MapFnRetType(MapFn));
+                if (info != .error_union) {
+                    return F(MapFnRetType(MapFn));
+                }
+                return info.error_union.error_set!F(info.error_union.payload);
             }
 
             const _E = E.?;
@@ -55,7 +60,10 @@ pub fn FunctorFxTypes(comptime F: TCtor, comptime E: ?type) type {
         pub fn FbLamType(comptime MapLam: type) type {
             const info = @typeInfo((MapLamRetType(MapLam)));
             if (E == null) {
-                return F(MapLamRetType(MapLam));
+                if (info != .error_union) {
+                    return F(MapLamRetType(MapLam));
+                }
+                return info.error_union.error_set!F(info.error_union.payload);
             }
 
             const _E = E.?;
@@ -70,7 +78,20 @@ pub fn FunctorFxTypes(comptime F: TCtor, comptime E: ?type) type {
 
 /// Functor typeclass like in Haskell.
 /// F is Constructor Type of Functor typeclass, such as Maybe, List.
-pub fn Functor(comptime FunctorImpl: type) type {
+pub fn Functor(comptime F: TCtor) type {
+    const FunctorImpl = FunctorImplFromTCtor(F);
+    const ImplFVoid = if (@typeInfo(FunctorImpl.F(void)) == .pointer)
+        std.meta.Child(FunctorImpl.F(void))
+    else
+        FunctorImpl.F(void);
+    const FVoid = if (@typeInfo(F(void)) == .pointer) std.meta.Child(F(void)) else F(void);
+    if (FVoid != ImplFVoid) {
+        @compileError("F type=" ++ @typeName(F(void)) ++ ", FunctorImpl.F type=" ++ @typeName(FunctorImpl.F(void)));
+    }
+    return FunctorFromImpl(FunctorImpl);
+}
+
+pub fn FunctorFromImpl(comptime FunctorImpl: type) type {
     if (!@hasDecl(FunctorImpl, "F")) {
         @compileError("The Functor instance must has F type!");
     }
@@ -88,10 +109,10 @@ pub fn Functor(comptime FunctorImpl: type) type {
     }
 
     // const F = FunctorImpl.F;
-    return struct {
+    const T = struct {
+        pub const is_constrait = true;
         const Self = @This();
         pub const InstanceImpl = FunctorImpl;
-
         pub const Error = InstanceImpl.Error;
 
         pub const FaType = InstanceImpl.FaType;
@@ -126,25 +147,53 @@ pub fn Functor(comptime FunctorImpl: type) type {
                 _ = fa;
             }
         }.fmapLam);
-
-        pub fn init(instance: InstanceImpl) InstanceImpl {
-            if (@TypeOf(InstanceImpl.fmap) != FMapType) {
-                @compileError("Incorrect type of fmap for Functor instance " ++ @typeName(InstanceImpl));
-            }
-            if (@TypeOf(InstanceImpl.fmapLam) != FMapLamType) {
-                @compileError("Incorrect type of fmapLam for Functor instance " ++ @typeName(InstanceImpl));
-            }
-            return instance;
-        }
     };
+
+    if (@TypeOf(FunctorImpl.fmap) != T.FMapType) {
+        @compileError("Incorrect type of fmap for Functor instance " ++ @typeName(FunctorImpl));
+    }
+    if (@TypeOf(FunctorImpl.fmapLam) != T.FMapLamType) {
+        @compileLog("Functor: Impl.fmapLam type=" ++ @typeName(@TypeOf(FunctorImpl.fmapLam)));
+        @compileLog("Functor: T.FMapLamType=" ++ @typeName(T.FMapLamType));
+        @compileError("Incorrect type of fmapLam for Functor instance " ++ @typeName(FunctorImpl));
+    }
+    return base.ConstraitType(T);
 }
 
-pub fn NatTransType(comptime F: TCtor, comptime G: TCtor) type {
-    return @TypeOf(struct {
-        fn transFn(comptime A: type, fa: F(A)) G(A) {
-            _ = fa;
+const functorImplMap = std.StaticStringMap(type).initComptime(.{
+    .{ @typeName(Maybe(void)), maybe.MaybeMonadImpl },
+    .{ @typeName(ArrayList(void)), arraym.ArrayListMonadImpl },
+    // Add more FunctorImply and associated type
+});
+
+pub fn FunctorImplFromTCtor(comptime F: TCtor) type {
+    comptime {
+        const T = F(void);
+        switch (@typeInfo(T)) {
+            .@"struct", .@"enum", .@"union", .@"opaque" => {
+                if (@hasDecl(T, "FunctorImpl")) {
+                    return T.FunctorImpl;
+                }
+            },
+            .optional => return maybe.MaybeMonadImpl,
+            .pointer => return std.meta.Child(T).FunctorImpl,
+            else => {},
         }
-    }.transFn);
+
+        const impl = functorImplMap.get(@typeName(T));
+        if (impl == null) {
+            @compileError("The customered Functor(" ++ @typeName(T) ++ ") must has FunctorImpl!");
+        }
+        return impl.?;
+    }
+}
+
+pub fn NatGxTypes(comptime G: TCtor, comptime E: ?type) type {
+    return struct {
+        fn GaType(comptime A: type) type {
+            return if (E == null) G(A) else E.?!G(A);
+        }
+    };
 }
 
 /// Natural Transformation typeclass like in Haskell.
@@ -161,14 +210,17 @@ pub fn NatTrans(
     }
 
     const F = NatTransImpl.F;
+    _ = Functor(F);
     const G = NatTransImpl.G;
+    _ = Functor(G);
     const Error = NatTransImpl.Error;
 
-    return struct {
+    const T = struct {
+        pub const is_constrait = true;
         const Self = @This();
         pub const InstanceImpl = NatTransImpl;
 
-        const FTransType = @TypeOf(struct {
+        const NatTransType = @TypeOf(struct {
             fn transFn(
                 instance: InstanceImpl,
                 comptime A: type,
@@ -178,16 +230,14 @@ pub fn NatTrans(
                 _ = fa;
             }
         }.transFn);
-
-        pub fn init(instance: InstanceImpl) InstanceImpl {
-            if (@TypeOf(InstanceImpl.trans) != FTransType) {
-                @compileLog("Impl trans type: " ++ @typeName(@TypeOf(InstanceImpl.trans)));
-                @compileLog("FTransType: " ++ @typeName(FTransType));
-                @compileError("Incorrect type of trans for NatTrans instance: " ++ @typeName(InstanceImpl));
-            }
-            return instance;
-        }
     };
+
+    if (@TypeOf(NatTransImpl.trans) != T.NatTransType) {
+        @compileLog("Impl trans type: " ++ @typeName(@TypeOf(NatTransImpl.trans)));
+        @compileLog("NatTransType: " ++ @typeName(T.NatTransType));
+        @compileError("Incorrect type of trans for NatTrans instance: " ++ @typeName(NatTransImpl));
+    }
+    return base.ConstraitType(T);
 }
 
 pub const MaybeToArrayListNatImpl = struct {
@@ -197,9 +247,11 @@ pub const MaybeToArrayListNatImpl = struct {
 
     pub const F = Maybe;
     pub const G = ArrayList;
-    pub const Error = Functor(ArrayListFunctorImpl).Error;
+    pub const Error = Functor(G).Error;
 
-    pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+    const GaType = NatGxTypes(G, Error).GaType;
+
+    pub fn trans(self: Self, comptime A: type, fa: F(A)) GaType(A) {
         if (fa) |a| {
             var array = try ArrayList(A).initCapacity(self.instanceArray.allocator, 1);
             array.appendAssumeCapacity(a);
@@ -216,9 +268,11 @@ pub const ArrayListToMaybeNatImpl = struct {
 
     pub const F = ArrayList;
     pub const G = Maybe;
-    pub const Error = Functor(MaybeFunctorImpl).Error;
+    pub const Error = Functor(G).Error;
 
-    pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+    const GaType = NatGxTypes(G, Error).GaType;
+
+    pub fn trans(self: Self, comptime A: type, fa: F(A)) GaType(A) {
         _ = self;
         if (fa.items.len > 0) {
             return fa.items[0];

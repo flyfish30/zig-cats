@@ -1,35 +1,49 @@
 const std = @import("std");
 const base = @import("base.zig");
 const applicative = @import("applicative.zig");
+const maybe = @import("maybe.zig");
+const arraym = @import("array_list_monad.zig");
 
 const TCtor = base.TCtor;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 
 const Applicative = applicative.Applicative;
+const Maybe = base.Maybe;
+const ArrayList = std.ArrayList;
 
-pub fn MonadFxTypes(comptime F: TCtor, comptime E: type) type {
+pub fn MonadFxTypes(comptime F: TCtor, comptime E: ?type) type {
     return struct {
         /// return type of bind
         pub fn MbType(comptime B: type) type {
-            return E!F(B);
+            if (E == null) return F(B);
+            return E.?!F(B);
         }
     };
 }
 
 /// Monad typeclass like in Haskell, it inherit from Applicative Functor.
 /// M is instance of Monad typeclass, such as Maybe, List
-pub fn Monad(comptime MonadImpl: type) type {
-    const M = MonadImpl.F;
-    const has_sup_impl = @hasField(MonadImpl, "applicative_sup");
+pub fn Monad(comptime M: TCtor) type {
+    const MonadImpl = MonadImplFromTCtor(M);
+    const ImplFVoid = if (@typeInfo(MonadImpl.F(void)) == .pointer)
+        std.meta.Child(MonadImpl.F(void))
+    else
+        MonadImpl.F(void);
+    const MVoid = if (@typeInfo(M(void)) == .pointer) std.meta.Child(M(void)) else M(void);
+    if (MVoid != ImplFVoid) {
+        @compileError("M type=" ++ @typeName(M(void)) ++ ", MonadImpl.F type=" ++ @typeName(MonadImpl.F(void)));
+    }
+    return MonadFromImpl(MonadImpl);
+}
 
-    return struct {
+pub fn MonadFromImpl(comptime MonadImpl: type) type {
+    _ = applicative.ApplicativeFromImpl(MonadImpl);
+    const T = struct {
+        pub const is_constrait = true;
         // TODO: like std.io.Reader interface, add "monad_ctx: MonadCtx" field in it.
         const Self = @This();
+        const M = MonadImpl.F;
         pub const InstanceImpl = MonadImpl;
-        const ApplicativeSup = if (has_sup_impl)
-            Applicative(InstanceImpl.SupImpl)
-        else
-            Applicative(InstanceImpl);
 
         pub const Error = InstanceImpl.Error;
         pub const MbType = InstanceImpl.MbType;
@@ -48,24 +62,40 @@ pub fn Monad(comptime MonadImpl: type) type {
                 _ = k;
             }
         }.bindFn);
-
-        pub fn init(instance: InstanceImpl) InstanceImpl {
-            var inst: InstanceImpl = undefined;
-
-            if (has_sup_impl) {
-                const sup = ApplicativeSup.init(instance.applicative_sup);
-                inst = instance;
-                inst.applicative_sup = sup;
-            } else {
-                inst = ApplicativeSup.init(instance);
-            }
-
-            if (@TypeOf(InstanceImpl.bind) != BindType) {
-                @compileError("Incorrect type of bind for Monad instance " ++ @typeName(InstanceImpl));
-            }
-            return inst;
-        }
     };
+
+    if (@TypeOf(MonadImpl.bind) != T.BindType) {
+        @compileError("Incorrect type of bind for Monad instance " ++ @typeName(MonadImpl));
+    }
+    return base.ConstraitType(T);
+}
+
+const monadImplMap = std.StaticStringMap(type).initComptime(.{
+    .{ @typeName(Maybe(void)), maybe.MaybeMonadImpl },
+    .{ @typeName(ArrayList(void)), arraym.ArrayListMonadImpl },
+    // Add more MonadImply and associated type
+});
+
+pub fn MonadImplFromTCtor(comptime F: TCtor) type {
+    comptime {
+        const T = F(void);
+        switch (@typeInfo(T)) {
+            .@"struct", .@"enum", .@"union", .@"opaque" => {
+                if (@hasDecl(T, "MonadImpl")) {
+                    return T.MonadImpl;
+                }
+            },
+            .optional => return maybe.MaybeMonadImpl,
+            .pointer => return std.meta.Child(T).MonadImpl,
+            else => {},
+        }
+
+        const impl = monadImplMap.get(@typeName(T));
+        if (impl == null) {
+            @compileError("The customered Functor(" ++ @typeName(T) ++ ") must has MonadImpl!");
+        }
+        return impl.?;
+    }
 }
 
 const GetPointerChild = base.GetPointerChild;
@@ -96,7 +126,7 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
         @compileError("The first do step function must be only one parameters!");
     }
 
-    const is_pure = DoCtx.is_pure;
+    const is_pure = DoCtx.is_pure or @TypeOf(ctx_p.monad_impl).Error == null;
     var impl_p = @constCast(&ctx_p.monad_impl);
     _ = &impl_p;
     const start_m = if (is_pure)
@@ -144,8 +174,10 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
         // free intermediate monad for avoid memory leak
         defer MonadImpl.deinitFa(start_m, base.getFreeNothing(T));
         const final_k: *const fn (*MonadImpl, T) MR = @ptrCast(_k);
-        if (is_pure) {
+        if (DoCtx.is_pure) {
             return MonadImpl.bindWithCtx(T, R, impl_p, start_m, final_k);
+        } else if (is_pure) {
+            return impl_p.bind(T, R, start_m, final_k);
         } else {
             return try impl_p.bind(T, R, start_m, final_k);
         }
@@ -197,7 +229,7 @@ fn mkDoContFn(
     const has_err_r, const _MR = comptime isErrorUnionOrVal(MR);
     _ = has_err_r;
     const R = MonadImpl.BaseType(_MR);
-    const is_pure = DoCtx.is_pure;
+    const is_pure = DoCtx.is_pure or MonadImpl.Error == null;
     const do_cont = struct {
         fn doCont(impl: *MonadImpl, a: A) MR {
             const has_err1, const _MB = comptime isErrorUnionOrVal(MB);
@@ -222,8 +254,10 @@ fn mkDoContFn(
             if (k) |_k| {
                 // free intermediate monad for avoid memory leak
                 defer MonadImpl.deinitFa(mb, base.getFreeNothing(B));
-                if (is_pure) {
+                if (DoCtx.is_pure) {
                     return MonadImpl.bindWithCtx(B, R, impl, mb, _k);
+                } else if (is_pure) {
+                    return @constCast(impl).bind(B, R, mb, _k);
                 } else {
                     return try @constCast(impl).bind(B, R, mb, _k);
                 }

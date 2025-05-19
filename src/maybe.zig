@@ -32,6 +32,7 @@ const isMapRef = base.isMapRef;
 const isInplaceMap = base.isInplaceMap;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 
+const Monoid = monoid.Monoid;
 const Functor = functor.Functor;
 const Applicative = applicative.Applicative;
 const Monad = monad.Monad;
@@ -81,11 +82,37 @@ pub fn MaybeMonoidImpl(comptime T: type) type {
     };
 }
 
+const MaybeErrorImpl = struct {
+    const Self = @This();
+    pub const Error: ?type = null;
+
+    // the M is Maybe(error_set)
+    pub const M = ?type;
+    pub const EM = M;
+
+    pub fn mempty(self: *Self) ?type {
+        _ = self;
+        return null;
+    }
+
+    pub fn mappend(self: *Self, ma: M, mb: M) EM {
+        _ = self;
+        if (ma == null) return mb;
+        if (mb == null) return ma;
+        return ma.? || mb.?;
+    }
+};
+
+pub const maybe_error: MaybeErrorImpl = MaybeErrorImpl{};
+
 const ArrayList = std.ArrayList;
-const MonoidImplFromType = monoid.MonoidImplFromType;
+const SemiGroup = semi_grp.SemiGroup;
+
 test "Monoid Maybe(A) mempty and mappend" {
-    const semi_grp_u32 = semi_grp.SemiGroupImplFromType(u32){};
-    var maybe_u32_m = MonoidImplFromType(?u32){ .child_semi_grp_impl = semi_grp_u32 };
+    const U32SemiGroup = SemiGroup(u32);
+    const semi_grp_u32 = U32SemiGroup.InstanceImpl{};
+    const MaybeU32Monoid = Monoid(?u32);
+    var maybe_u32_m = MaybeU32Monoid.InstanceImpl{ .child_semi_grp_impl = semi_grp_u32 };
     try testing.expect(base.isPureTypeClass(@TypeOf(maybe_u32_m)));
 
     const maybe_unit = maybe_u32_m.mempty();
@@ -97,10 +124,12 @@ test "Monoid Maybe(A) mempty and mappend" {
     try testing.expectEqual(79, maybe_u32_m.mappend(m1, m2));
 
     const allocator = testing.allocator;
-    const semi_grp_array = semi_grp.SemiGroupImplFromType(ArrayList(u32)){
+    const ArrayU32SemiGroup = SemiGroup(ArrayList(u32));
+    const semi_grp_array = ArrayU32SemiGroup.InstanceImpl{
         .allocator = allocator,
     };
-    var maybe_array_m = MonoidImplFromType(?ArrayList(u32)){
+    const MaybeArrayMonoid = Monoid(?ArrayList(u32));
+    var maybe_array_m = MaybeArrayMonoid.InstanceImpl{
         .child_semi_grp_impl = semi_grp_array,
     };
     try testing.expect(!base.isPureTypeClass(@TypeOf(maybe_array_m)));
@@ -127,10 +156,12 @@ test "Monoid Maybe(A) mempty and mappend" {
 
 test "Monoid Maybe(A) mconcat" {
     const allocator = testing.allocator;
-    const semi_grp_array = semi_grp.SemiGroupImplFromType(ArrayList(u32)){
+    const ArrayU32SemiGroup = SemiGroup(ArrayList(u32));
+    const semi_grp_array = ArrayU32SemiGroup.InstanceImpl{
         .allocator = allocator,
     };
-    var maybe_array_m = MonoidImplFromType(?ArrayList(u32)){
+    const MaybeArrayMonoid = Monoid(?ArrayList(u32));
+    var maybe_array_m = MaybeArrayMonoid.InstanceImpl{
         .child_semi_grp_impl = semi_grp_array,
     };
     try testing.expect(!base.isPureTypeClass(@TypeOf(maybe_array_m)));
@@ -156,8 +187,6 @@ test "Monoid Maybe(A) mconcat" {
 }
 
 pub const MaybeMonadImpl = struct {
-    none: void,
-
     const Self = @This();
 
     /// Constructor Type for Functor, Applicative, Monad, ...
@@ -168,7 +197,7 @@ pub const MaybeMonadImpl = struct {
         return std.meta.Child(MaybeA);
     }
 
-    pub const Error = error{};
+    pub const Error: ?type = null;
 
     pub const FxTypes = FunctorFxTypes(F, Error);
     pub const FaType = FxTypes.FaType;
@@ -442,52 +471,52 @@ const mul_e_f64 = testu.mul_e_f64;
 
 // unit tests for impure Maybe monad
 test "Maybe Functor fmap" {
-    const MaybeFunctor = Functor(MaybeMonadImpl);
-    var maybe_functor = MaybeFunctor.init(.{ .none = {} });
+    const MaybeFunctor = Functor(Maybe);
+    var maybe_functor = MaybeFunctor.InstanceImpl{};
 
     var maybe_a: ?u32 = null;
-    maybe_a = try maybe_functor.fmap(.InplaceMap, add10, maybe_a);
+    maybe_a = maybe_functor.fmap(.InplaceMap, add10, maybe_a);
     try testing.expectEqual(null, maybe_a);
 
     maybe_a = 32;
-    maybe_a = try maybe_functor.fmap(.InplaceMap, add10, maybe_a);
+    maybe_a = maybe_functor.fmap(.InplaceMap, add10, maybe_a);
     try testing.expectEqual(42, maybe_a);
 
     maybe_a = null;
-    var maybe_b = try maybe_functor.fmap(.NewValMap, add_pi_f64, maybe_a);
+    var maybe_b = maybe_functor.fmap(.NewValMap, add_pi_f64, maybe_a);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 32;
-    maybe_b = try maybe_functor.fmap(.NewValMap, add_pi_f64, maybe_a);
+    maybe_b = maybe_functor.fmap(.NewValMap, add_pi_f64, maybe_a);
     try testing.expectEqual(32 + 3.14, maybe_b);
 }
 
 test "Maybe Applicative pure and fapply" {
-    const MaybeApplicative = Applicative(MaybeMonadImpl);
-    var maybe_applicative = MaybeApplicative.init(.{ .none = {} });
+    const MaybeApplicative = Applicative(Maybe);
+    var maybe_applicative = MaybeApplicative.InstanceImpl{};
 
     const add24_from_f64 = &struct {
         fn f(x: f64) u32 {
             return @intFromFloat(@floor(x) + 24);
         }
     }.f;
-    const fapply_fn = try maybe_applicative.pure(add24_from_f64);
+    const fapply_fn = maybe_applicative.pure(add24_from_f64);
 
     var maybe_a: ?f64 = null;
-    var maybe_b = try maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
+    var maybe_b = maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 1.68;
-    maybe_b = try maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
+    maybe_b = maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
     try testing.expectEqual(1 + 24, maybe_b);
 
-    maybe_b = try maybe_applicative.fapply(u32, u32, null, maybe_b);
+    maybe_b = maybe_applicative.fapply(u32, u32, null, maybe_b);
     try testing.expectEqual(null, maybe_b);
 }
 
 test "Maybe Monad bind" {
-    const MaybeMonad = Monad(MaybeMonadImpl);
-    var maybe_monad = MaybeMonad.init(.{ .none = {} });
+    const MaybeMonad = Monad(Maybe);
+    var maybe_monad = MaybeMonad.InstanceImpl{};
 
     const cont_fn = &struct {
         fn k(self: *MaybeMonadImpl, x: f64) MaybeMonad.MbType(u32) {
@@ -501,23 +530,23 @@ test "Maybe Monad bind" {
     }.k;
 
     var maybe_a: ?f64 = null;
-    var maybe_b = try maybe_monad.bind(f64, u32, maybe_a, cont_fn);
+    var maybe_b = maybe_monad.bind(f64, u32, maybe_a, cont_fn);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 3.14;
-    maybe_b = try maybe_monad.bind(f64, u32, maybe_a, cont_fn);
+    maybe_b = maybe_monad.bind(f64, u32, maybe_a, cont_fn);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 8.0;
-    maybe_b = try maybe_monad.bind(f64, u32, maybe_a, cont_fn);
+    maybe_b = maybe_monad.bind(f64, u32, maybe_a, cont_fn);
     try testing.expectEqual(32, maybe_b);
 }
 
 test "runDo Maybe" {
     const input1: i32 = 42;
 
-    const MaybeMonad = Monad(MaybeMonadImpl);
-    const maybe_m = MaybeMonad.init(.{ .none = {} });
+    const MaybeMonad = Monad(Maybe);
+    const maybe_m = MaybeMonad.InstanceImpl{};
     var do_ctx = struct {
         // It is must to define monad_impl for support do syntax.
         monad_impl: MaybeMonadImpl,

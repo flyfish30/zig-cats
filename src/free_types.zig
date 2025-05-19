@@ -3,9 +3,11 @@
 
 const std = @import("std");
 const base = @import("base.zig");
+const monoid = @import("monoid.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 const monad = @import("monad.zig");
+const freetypes = @import("free_types.zig");
 const maybe = @import("maybe.zig");
 const arraym = @import("array_list_monad.zig");
 const state = @import("state.zig");
@@ -30,10 +32,14 @@ const isMapRef = base.isMapRef;
 const isInplaceMap = base.isInplaceMap;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 
+const Monoid = monoid.Monoid;
 const Functor = functor.Functor;
 const NatTrans = functor.NatTrans;
 const Applicative = applicative.Applicative;
 const Monad = monad.Monad;
+const MonadFromImpl = monad.MonadFromImpl;
+
+const FunctorImplFromTCtor = functor.FunctorImplFromTCtor;
 const MaybeMonadImpl = maybe.MaybeMonadImpl;
 const ArrayListMonadImpl = arraym.ArrayListMonadImpl;
 
@@ -126,13 +132,16 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
 
                 const Self = @This();
                 pub const BaseType = A;
-                pub const Error = Allocator.Error;
+                pub const Error: ?type = Allocator.Error;
                 pub const cfg = in_cfg;
                 pub const ExistType = if (@hasField(@TypeOf(cfg), "ExistentialType"))
                     cfg.ExistentialType
                 else
                     GetExistentialType(F);
-                const XToFreeFALam = base.ComposableLam(cfg, ExistType, Error!Self);
+                const XToFreeFALam = base.ComposableLam(cfg, ExistType, Error.?!Self);
+                pub const FunctorImpl = FreeMonadImpl(in_cfg, F, FunctorImplFromTCtor(F));
+                pub const ApplicativeImpl = FunctorImpl;
+                pub const MonadImpl = FunctorImpl;
 
                 pub fn deinit(self: Self) void {
                     if (self == .free_m) {
@@ -305,7 +314,7 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                 }
 
                 /// Tear down a FreeMonad(F, A) using iteration.
-                pub fn iter(self: Self, f_impl: anytype, f: *const fn (F(A)) A) Error!A {
+                pub fn iter(self: Self, f_impl: anytype, f: *const fn (F(A)) A) Error.?!A {
                     if (self == .pure_m) {
                         return self.pure_m;
                     } else if (self == .free_fop) {
@@ -324,7 +333,7 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                             iter_f: *const fn (F(A)) A,
 
                             const SelfIter = @This();
-                            pub fn call(self_iter: *const SelfIter, freem: Self) Error!A {
+                            pub fn call(self_iter: *const SelfIter, freem: Self) Error.?!A {
                                 // recusive call iter for inner free monad
                                 defer freem.deinit();
                                 return freem.iter(self_iter.iter_fimpl, self_iter.iter_f);
@@ -720,8 +729,8 @@ fn maybeToA(comptime A: type) *const fn (a: Maybe(A)) A {
 test "FreeMonad(F, A) constructor functions and iter" {
     const allocator = testing.allocator;
     const cfg = base.getDefaultBaseCfg(allocator);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
-    const maybe_functor = MaybeFunctor.init(.{ .none = {} });
+    const MaybeFunctor = Functor(Maybe);
+    const maybe_functor = MaybeFunctor.InstanceImpl{};
 
     var a: u32 = 42;
     _ = &a;
@@ -762,9 +771,9 @@ pub const MaybeShowNatImpl = struct {
 
     pub const F = Maybe;
     pub const G = MWriterMaybe(ArrayList(u8));
-    pub const Error = Allocator.Error;
+    pub const Error: ?type = Allocator.Error;
 
-    pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+    pub fn trans(self: Self, comptime A: type, fa: F(A)) Error.?!G(A) {
         if (fa) |a| {
             const just_str = "Just ";
             var array = try ArrayList(u8).initCapacity(self.allocator, just_str.len);
@@ -785,19 +794,20 @@ const ArrayListMonoidImpl = arraym.ArrayListMonoidImpl;
 test "FreeMonad(F, A) constructor functions and foldFree" {
     const allocator = testing.allocator;
     const cfg = base.getDefaultBaseCfg(allocator);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
-    const maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    const ArrayListMonad = Monad(ArrayListMonadImpl);
-    const array_monad = ArrayListMonad.init(.{ .allocator = allocator });
+    const MaybeFunctor = Functor(Maybe);
+    const maybe_functor = MaybeFunctor.InstanceImpl{};
+    const ArrayListMonad = Monad(ArrayList);
+    const array_monad = ArrayListMonad.InstanceImpl{ .allocator = allocator };
     const NatMaybeToArray = NatTrans(MaybeToArrayListNatImpl);
-    const nat_maybe_array = NatMaybeToArray.init(.{ .instanceArray = .{ .allocator = allocator } });
+    const nat_maybe_array = NatMaybeToArray.InstanceImpl{ .instanceArray = array_monad };
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
-    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+    const nat_maybe_show = NatMaybeToShow.InstanceImpl{ .allocator = allocator };
 
     var a: u32 = 42;
     _ = &a;
@@ -872,16 +882,16 @@ pub fn liftJust(comptime cfg: anytype, a: anytype) !FreeMonad(cfg, Maybe, @TypeO
 test "FreeMonad(Maybe, A) liftNothing and liftJust" {
     const allocator = testing.allocator;
     const cfg = base.getDefaultBaseCfg(allocator);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
-    var maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    _ = &maybe_functor;
+    const MaybeFunctor = Functor(Maybe);
+    const maybe_functor = MaybeFunctor.InstanceImpl{};
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
-    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+    const nat_maybe_show = NatMaybeToShow.InstanceImpl{ .allocator = allocator };
 
     const a: u32 = 42;
     const just1 = try liftJust(cfg, a);
@@ -919,7 +929,7 @@ pub fn FreeMonadImpl(
             return FreeFA.BaseType;
         }
 
-        pub const Error = Allocator.Error;
+        pub const Error: ?type = Allocator.Error;
 
         pub const FxTypes = FunctorFxTypes(F, Error);
         pub const FaType = FxTypes.FaType;
@@ -1453,20 +1463,21 @@ const Add_x_f64_Lam = testu.Add_x_f64_Lam;
 test "FreeMonad(F, A) fmap" {
     const allocator = testing.allocator;
     const cfg = base.getDefaultBaseCfg(allocator);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
-    const maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    const FreeMFunctor = Functor(FreeMonadImpl(cfg, Maybe, MaybeMonadImpl));
-    var freem_functor = FreeMFunctor.init(.{
+    const MaybeFunctor = Functor(Maybe);
+    const maybe_functor = MaybeFunctor.InstanceImpl{};
+    const FreeMFunctor = Functor(freetypes.FreeM(cfg, Maybe));
+    var freem_functor = FreeMFunctor.InstanceImpl{
         .allocator = allocator,
         .funf_impl = maybe_functor,
-    });
+    };
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
-    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+    const nat_maybe_show = NatMaybeToShow.InstanceImpl{ .allocator = allocator };
 
     var a: u32 = 42;
     _ = &a;
@@ -1510,20 +1521,21 @@ test "FreeMonad(F, A) fmap" {
 test "FreeMonad(F, A) pure and fapply" {
     const allocator = testing.allocator;
     const cfg = base.getDefaultBaseCfg(allocator);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
-    const maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    const FreeMApplicative = Applicative(FreeMonadImpl(cfg, Maybe, MaybeMonadImpl));
-    var freem_applicative = FreeMApplicative.init(.{
+    const MaybeFunctor = Functor(Maybe);
+    const maybe_functor = MaybeFunctor.InstanceImpl{};
+    const FreeMApplicative = Applicative(freetypes.FreeM(cfg, Maybe));
+    var freem_applicative = FreeMApplicative.InstanceImpl{
         .allocator = allocator,
         .funf_impl = maybe_functor,
-    });
+    };
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
-    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+    const nat_maybe_show = NatMaybeToShow.InstanceImpl{ .allocator = allocator };
 
     var a: u32 = 42;
     _ = &a;
@@ -1588,21 +1600,22 @@ test "FreeMonad(F, A) pure and fapply" {
 test "FreeMonad(F, A) bind" {
     const allocator = testing.allocator;
     const cfg = base.getDefaultBaseCfg(allocator);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
-    const maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    const FreeMaybeImpl = FreeMonadImpl(cfg, Maybe, MaybeMonadImpl);
-    const FMaybeMonad = Monad(FreeMaybeImpl);
-    var freem_monad = FMaybeMonad.init(.{
+    const MaybeFunctor = Functor(Maybe);
+    const maybe_functor = MaybeFunctor.InstanceImpl{};
+    const FMaybeMonad = Monad(freetypes.FreeM(cfg, Maybe));
+    var freem_monad = FMaybeMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = maybe_functor,
-    });
+    };
+    const FreeMaybeImpl = @TypeOf(freem_monad);
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
-    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+    const nat_maybe_show = NatMaybeToShow.InstanceImpl{ .allocator = allocator };
 
     const MaybeCtorEnum = std.meta.DeclEnum(MaybeCtorDefs(u32));
     const Nothing: FOpEnumInt = @intFromEnum(MaybeCtorEnum.Nothing);
@@ -1684,21 +1697,21 @@ test "FreeMonad(F, A) bind" {
 test "FreeMonad(F, A) join" {
     const allocator = testing.allocator;
     const cfg = base.getDefaultBaseCfg(allocator);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
-    const maybe_functor = MaybeFunctor.init(.{ .none = {} });
-    const FreeMaybeImpl = FreeMonadImpl(cfg, Maybe, MaybeMonadImpl);
-    const FMaybeMonad = Monad(FreeMaybeImpl);
-    var freem_monad = FMaybeMonad.init(.{
+    const MaybeFunctor = Functor(Maybe);
+    const maybe_functor = MaybeFunctor.InstanceImpl{};
+    const FMaybeMonad = Monad(freetypes.FreeM(cfg, Maybe));
+    var freem_monad = FMaybeMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = maybe_functor,
-    });
+    };
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-    const ShowMonad = Monad(ShowMonadImpl);
-    const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-    const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
+    const ShowMonad = MonadFromImpl(ShowMonadImpl);
+    const ArrayMonoid = Monoid(ArrayList(u8));
+    const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+    const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
     const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
-    const nat_maybe_show = NatMaybeToShow.init(.{ .allocator = allocator });
+    const nat_maybe_show = NatMaybeToShow.InstanceImpl{ .allocator = allocator };
 
     const MaybeCtorEnum = std.meta.DeclEnum(MaybeCtorDefs(u32));
     const Nothing: FOpEnumInt = @intFromEnum(MaybeCtorEnum.Nothing);
@@ -1870,9 +1883,9 @@ pub const ListShowtNatImpl = struct {
 
     pub const F = List;
     pub const G = MWriterMaybe(ArrayList(u8));
-    pub const Error = Allocator.Error;
+    pub const Error: ?type = Allocator.Error;
 
-    pub fn trans(self: Self, comptime A: type, fa: F(A)) Error!G(A) {
+    pub fn trans(self: Self, comptime A: type, fa: F(A)) Error.?!G(A) {
         var array = ArrayList(u8).init(self.allocator);
         if (fa.first) |first| {
             try array.appendSlice("[ ");
@@ -1910,20 +1923,21 @@ fn listToA(comptime A: type) *const fn (a: List(A)) A {
 // test "FreeMonad(List, A) fmap" {
 //     const allocator = testing.allocator;
 //     const cfg = base.getDefaultBaseCfg(allocator);
-//     const ListFunctor = Functor(ListFunctorImpl);
-//     const list_functor = ListFunctor.init(.{ .none = {} });
-//     const FreeMFunctor = Functor(FreeMonadImpl(cfg, List, ListFunctorImpl));
-//     var freem_functor = FreeMFunctor.init(.{
+//     const ListFunctor = Functor(List);
+//     const list_functor = ListFunctor.InstanceImpl{};
+//     const FreeMFunctor = Functor(freetypes.FreeM(cfg, List));
+//     var freem_functor = FreeMFunctor.InstanceImpl{
 //         .allocator = allocator,
 //         .funf_impl = list_functor,
-//     });
+//     };
 //
 //     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
-//     const ShowMonad = Monad(ShowMonadImpl);
-//     const array_monoid = ArrayListMonoidImpl(u8){ .allocator = allocator };
-//     const show_monad = ShowMonad.init(.{ .monoid_impl = array_monoid });
-//     const NatListToShow = NatTrans(ListShowtNatImpl);
-//     const nat_list_show = NatListToShow.init(.{ .allocator = allocator });
+//     const ShowMonad = MonadFromImpl(ShowMonadImpl);
+//     const ArrayMonoid = Monoid(ArrayList(u8));
+//     const array_monoid = ArrayMonoid.InstanceImpl{ .allocator = allocator };
+//     const show_monad = ShowMonad.InstanceImpl{ .monoid_impl = array_monoid };
+//     const NatMaybeToShow = NatTrans(MaybeShowNatImpl);
+//     const nat_maybe_show = NatMaybeToShow.InstanceImpl{ .allocator = allocator };
 //
 //     var a: u32 = 42;
 //     _ = &a;

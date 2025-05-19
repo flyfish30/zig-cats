@@ -85,14 +85,6 @@ pub fn Functor(comptime FunctorImpl: type) type {
     return InstanceType;
 }
 
-pub fn NatTransType(comptime F: TCtor, comptime G: TCtor) type {
-    return @TypeOf(struct {
-        fn transFn(comptime A: type, fa: F(A)) G(A) {
-            _ = fa;
-        }
-    }.transFn);
-}
-
 /// Natural Translation typeclass like in Haskell.
 /// F and G is Constructor Type of Functor typeclass, such as Maybe, List.
 pub fn NatTrans(

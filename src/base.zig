@@ -195,9 +195,12 @@ pub fn getIdentityFn(comptime A: type) *const fn (A) A {
     }.id;
 }
 
-pub fn getImpureIdentityFn(comptime E: type, comptime A: type) *const fn (A) E!A {
+pub fn getEffectIdentityFn(
+    comptime E: ?type,
+    comptime A: type,
+) *const fn (A) EffectVal(E, A) {
     return &struct {
-        fn impureId(a: A) E!A {
+        fn impureId(a: A) EffectVal(E, A) {
             return a;
         }
     }.impureId;
@@ -219,20 +222,20 @@ pub fn getIdentityLam(comptime A: type) IdentityLamType(A) {
     return IdentityLamType(A){};
 }
 
-pub fn ImpureIdentityLamType(E: type, T: type) type {
+pub fn EffectIdentityLamType(E: ?type, T: type) type {
     return struct {
         lam_ctx: void = {},
 
         const Self = @This();
-        fn call(self: *Self, val: T) E!T {
+        fn call(self: *Self, val: T) EffectVal(E, T) {
             _ = self;
             return val;
         }
     };
 }
 
-pub fn getImpureIdentityLam(E: type, A: type) ImpureIdentityLamType(E, A) {
-    return ImpureIdentityLamType(E, A){};
+pub fn getEffectIdentityLam(E: ?type, A: type) EffectIdentityLamType(E, A) {
+    return EffectIdentityLamType(E, A){};
 }
 
 fn FnToImpureType(E: type, MapFn: type) type {
@@ -246,6 +249,10 @@ pub fn pureFnToImpure(E: type, comptime map_fn: anytype) FnToImpureType(E, @Type
             return map_fn(a);
         }
     }.impureFn;
+}
+
+pub fn EffectVal(comptime E: ?type, comptime A: type) type {
+    return if (E == null) A else E.?!A;
 }
 
 /// Any signle-argument function type
@@ -264,13 +271,13 @@ pub const AnyLamType = struct {
 
 const BaseContextCfg = struct {
     allocator: Allocator,
-    error_set: type,
+    errors: ?type,
 };
 
 pub fn getDefaultBaseCfg(allocator: Allocator) BaseContextCfg {
     return .{
         .allocator = allocator,
-        .error_set = Allocator.Error,
+        .errors = Allocator.Error,
     };
 }
 
@@ -757,7 +764,7 @@ pub fn ComposableFn(comptime cfg: anytype, comptime N: comptime_int, TS: [N]type
         composed_many: if (N > 3) ComposedManyFn(N, TS) else void,
 
         const Self = @This();
-        const Error = cfg.error_set;
+        const Error: ?type = cfg.errors;
         const CompN = N;
         const CompTS = TS;
         const A = TS[0];
@@ -793,7 +800,7 @@ pub fn ComposableFn(comptime cfg: anytype, comptime N: comptime_int, TS: [N]type
         pub fn compose(
             self: Self,
             compfn1: anytype,
-        ) Error!ComposeType(@TypeOf(compfn1)) {
+        ) EffectVal(Error, ComposeType(@TypeOf(compfn1))) {
             const M = @TypeOf(compfn1).CompN;
             const TS1 = @TypeOf(compfn1).CompTS;
             const InType = TS1[0];
@@ -888,7 +895,7 @@ pub fn ComposableFn(comptime cfg: anytype, comptime N: comptime_int, TS: [N]type
         pub fn append(
             self: Self,
             map_fn: anytype,
-        ) Error!ComposableFn(cfg, N + 1, TS ++ [1]type{MapFnRetType(@TypeOf(map_fn))}) {
+        ) EffectVal(Error, ComposableFn(cfg, N + 1, TS ++ [1]type{MapFnRetType(@TypeOf(map_fn))})) {
             const InType = MapFnInType(@TypeOf(map_fn));
             const RetType = MapFnRetType(@TypeOf(map_fn));
             comptime assert(B == InType);
@@ -918,7 +925,7 @@ pub fn ComposableFn(comptime cfg: anytype, comptime N: comptime_int, TS: [N]type
             }
         }
 
-        pub fn clone(self: Self) Error!Self {
+        pub fn clone(self: Self) EffectVal(Error, Self) {
             if (N > 3) {
                 return .{ .composed_many = .{
                     .fns_array = try self.composed_many.fns_array.clone(),
@@ -1055,11 +1062,11 @@ pub fn ComposeManyLams(
         call_slice: *const fn (struct { []AnyLamType, A }) struct { []AnyLamType, B },
 
         const Self = @This();
-        const Error = cfg.error_set;
+        const Error: ?type = cfg.errors;
         const A = InType;
         const B = RetType;
 
-        pub fn init(comptime ManyLamType: type, lams_tuple: anytype) Error!Self {
+        pub fn init(comptime ManyLamType: type, lams_tuple: anytype) EffectVal(Error, Self) {
             const len: usize = @max(4, lams_tuple.len);
             var lams_array = try ArrayList(AnyLamType).initCapacity(cfg.allotcator, len);
             _ = &lams_array;
@@ -1087,7 +1094,7 @@ pub fn ComposeManyLams(
         pub fn compose(
             self: Self,
             complam1: anytype,
-        ) Error!ComposedType(@TypeOf(complam1)) {
+        ) EffectVal(Error, ComposedType(@TypeOf(complam1))) {
             const CompLam = @TypeOf(complam1);
             const C = CompLam.A;
             const D = CompLam.B;
@@ -1119,7 +1126,7 @@ pub fn ComposeManyLams(
         pub fn append(
             self: Self,
             map_lam: anytype,
-        ) Error!AppendedType(@TypeOf(map_lam)) {
+        ) EffectVal(Error, AppendedType(@TypeOf(map_lam))) {
             const MapLam = @TypeOf(map_lam);
             const C = MapLamInType(MapLam);
             // const D = MapLamRetType(MapLam);
@@ -1130,7 +1137,7 @@ pub fn ComposeManyLams(
             try self.lams_array.append(map_lam_wrapped);
         }
 
-        pub fn clone(self: Self) Error!Self {
+        pub fn clone(self: Self) EffectVal(Error, Self) {
             return .{
                 .lams_array = try self.lams_array.clone(),
                 .deinit_slice = self.deinit_slice,
@@ -1252,12 +1259,12 @@ fn composeTwoFn(map_fn1: anytype, map_fn2: anytype) ComposeTwoFn(map_fn1, map_fn
     return .{ .first_fn = map_fn1, .second_fn = map_fn2 };
 }
 
-/// Check the type E whether it is a ErrorUnion, if true then return a under
-/// type of ErrorUnion, else just return type E.
-pub fn isErrorUnionOrVal(comptime E: type) struct { bool, type } {
-    const info = @typeInfo(E);
+/// Check the type EA whether it is a ErrorUnion, if true then return a under
+/// type of ErrorUnion, else just return type EA.
+pub fn isErrorUnionOrVal(comptime EA: type) struct { bool, type } {
+    const info = @typeInfo(EA);
     const has_error = if (info == .error_union) true else false;
-    const A = if (has_error) info.error_union.payload else E;
+    const A = if (has_error) info.error_union.payload else EA;
     return .{ has_error, A };
 }
 

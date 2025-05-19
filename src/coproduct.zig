@@ -9,12 +9,15 @@ const testu = @import("test_utils.zig");
 const testing = std.testing;
 const assert = std.debug.assert;
 const TCtor = base.TCtor;
+var maybe_error = maybe.maybe_error;
 
 const MapFnKind = base.MapFnKind;
 
 const Functor = functor.Functor;
+const FunctorFromImpl = functor.FunctorFromImpl;
 const FunctorFxTypes = functor.FunctorFxTypes;
 const Applicative = applicative.Applicative;
+const ApplicativeFromImpl = applicative.ApplicativeFromImpl;
 const ApplicativeFxTypes = applicative.ApplicativeFxTypes;
 
 /// Get a Coproduct Type constructor from two Type constructor, the parameter
@@ -47,6 +50,8 @@ pub fn CoproductFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
         instanceG: ImplG,
 
         const Self = @This();
+        const FunctorF = FunctorFromImpl(ImplF);
+        const FunctorG = FunctorFromImpl(ImplG);
 
         /// Constructor Type for Functor, Applicative, Monad, ...
         pub const F = CoproductFG(ImplF.F, ImplG.F);
@@ -62,7 +67,7 @@ pub fn CoproductFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
 
         /// Error set of CoproductFunctorImpl, it is a merge set of error sets in
         /// ImplF and ImplG
-        pub const Error = ImplF.Error || ImplG.Error;
+        pub const Error: ?type = maybe_error.mappend(ImplF.Error, ImplG.Error);
 
         const FxTypes = FunctorFxTypes(F, Error);
         pub const FaType = FxTypes.FaType;
@@ -85,8 +90,14 @@ pub fn CoproductFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
             fga: FaType(K, @TypeOf(map_fn)),
         ) FbType(@TypeOf(map_fn)) {
             return switch (fga) {
-                .inl => |fa| .{ .inl = try self.instanceF.fmap(K, map_fn, fa) },
-                .inr => |ga| .{ .inr = try self.instanceG.fmap(K, map_fn, ga) },
+                .inl => |fa| if (ImplF.Error == null)
+                    .{ .inl = self.instanceF.fmap(K, map_fn, fa) }
+                else
+                    .{ .inl = try self.instanceF.fmap(K, map_fn, fa) },
+                .inr => |ga| if (ImplG.Error == null)
+                    .{ .inr = self.instanceG.fmap(K, map_fn, ga) }
+                else
+                    .{ .inr = try self.instanceG.fmap(K, map_fn, ga) },
             };
         }
 
@@ -97,8 +108,14 @@ pub fn CoproductFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
             fga: FaLamType(K, @TypeOf(map_lam)),
         ) FbLamType(@TypeOf(map_lam)) {
             return switch (fga) {
-                .inl => |fa| .{ .inl = try self.instanceF.fmapLam(K, map_lam, fa) },
-                .inr => |ga| .{ .inr = try self.instanceG.fmapLam(K, map_lam, ga) },
+                .inl => |fa| if (ImplF.Error == null)
+                    .{ .inl = self.instanceF.fmapLam(K, map_lam, fa) }
+                else
+                    .{ .inl = try self.instanceF.fmapLam(K, map_lam, fa) },
+                .inr => |ga| if (ImplG.Error == null)
+                    .{ .inr = self.instanceG.fmapLam(K, map_lam, ga) }
+                else
+                    .{ .inr = try self.instanceG.fmapLam(K, map_lam, ga) },
             };
         }
     };
@@ -123,11 +140,11 @@ pub fn CoproductApplicativeImpl(
         /// Get base type of F(A), it is must just is A.
         /// In this instance, type F(A) is product (F(A), G(A)) by ImplF and
         /// ImplG.
-        const BaseType = SupImpl.BaseType;
+        pub const BaseType = SupImpl.BaseType;
 
         /// Error set of CoproductApplicativeImpl, it is a merge set of error sets in
         /// ImplF and ImplG
-        pub const Error = SupImpl.Error;
+        pub const Error: ?type = SupImpl.Error;
 
         pub const FaType = SupImpl.FaType;
         pub const FbType = SupImpl.FbType;
@@ -155,7 +172,7 @@ pub fn CoproductApplicativeImpl(
         }
 
         pub fn fmapLam(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_lam: anytype,
             fga: FaLamType(K, @TypeOf(map_lam)),
@@ -164,7 +181,10 @@ pub fn CoproductApplicativeImpl(
         }
 
         pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
-            return .{ .inr = try self.functor_sup.instanceG.pure(a) };
+            return if (ImplG.Error == null)
+                .{ .inr = self.functor_sup.instanceG.pure(a) }
+            else
+                .{ .inr = try self.functor_sup.instanceG.pure(a) };
         }
 
         pub fn fapply(
@@ -178,22 +198,40 @@ pub fn CoproductApplicativeImpl(
             const FnType = BaseType(@TypeOf(fgf));
             return switch (fgf) {
                 .inl => |ff| switch (fga) {
-                    .inl => |fa| .{ .inl = try self.functor_sup.instanceF.fapply(A, B, ff, fa) },
+                    .inl => |fa| if (ImplF.Error == null)
+                        .{ .inl = self.functor_sup.instanceF.fapply(A, B, ff, fa) }
+                    else
+                        .{ .inl = try self.functor_sup.instanceF.fapply(A, B, ff, fa) },
                     .inr => |ga| {
                         // fa is ArrayList(A), so we should be free it.
-                        const fa = try self.natural_gf.trans(A, ga);
+                        const fa = if (ImplNat.Error == null)
+                            self.natural_gf.trans(A, ga)
+                        else
+                            try self.natural_gf.trans(A, ga);
                         defer fa.deinit();
-                        return .{ .inl = try self.functor_sup.instanceF.fapply(A, B, ff, fa) };
+                        return if (ImplF.Error == null)
+                            .{ .inl = self.functor_sup.instanceF.fapply(A, B, ff, fa) }
+                        else
+                            .{ .inl = try self.functor_sup.instanceF.fapply(A, B, ff, fa) };
                     },
                 },
                 .inr => |gf| switch (fga) {
                     .inl => |fa| {
                         // ff is ArrayList(FnType), so we should be free it.
-                        const ff = try self.natural_gf.trans(FnType, gf);
+                        const ff = if (ImplNat.Error == null)
+                            self.natural_gf.trans(FnType, gf)
+                        else
+                            try self.natural_gf.trans(FnType, gf);
                         defer ff.deinit();
-                        return .{ .inl = try self.functor_sup.instanceF.fapply(A, B, ff, fa) };
+                        return if (ImplF.Error == null)
+                            .{ .inl = self.functor_sup.instanceF.fapply(A, B, ff, fa) }
+                        else
+                            .{ .inl = try self.functor_sup.instanceF.fapply(A, B, ff, fa) };
                     },
-                    .inr => |ga| .{ .inr = try self.functor_sup.instanceG.fapply(A, B, gf, ga) },
+                    .inr => |ga| if (ImplG.Error == null)
+                        .{ .inr = self.functor_sup.instanceG.fapply(A, B, gf, ga) }
+                    else
+                        .{ .inr = try self.functor_sup.instanceG.fapply(A, B, gf, ga) },
                 },
             };
         }
@@ -209,22 +247,40 @@ pub fn CoproductApplicativeImpl(
             const LamType = BaseType(@TypeOf(fgf));
             return switch (fgf) {
                 .inl => |ff| switch (fga) {
-                    .inl => |fa| .{ .inl = try self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) },
+                    .inl => |fa| if (ImplF.Error == null)
+                        .{ .inl = self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) }
+                    else
+                        .{ .inl = try self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) },
                     .inr => |ga| {
                         // fa is ArrayList(A), so we should be free it.
-                        const fa = try self.natural_gf.trans(A, ga);
+                        const fa = if (ImplNat.Error == null)
+                            self.natural_gf.trans(A, ga)
+                        else
+                            try self.natural_gf.trans(A, ga);
                         defer fa.deinit();
-                        return .{ .inl = try self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) };
+                        return if (ImplF.Error == null)
+                            .{ .inl = self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) }
+                        else
+                            .{ .inl = try self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) };
                     },
                 },
                 .inr => |gf| switch (fga) {
                     .inl => |fa| {
                         // ff is ArrayList(FnType), so we should be free it.
-                        const ff = try self.natural_gf.trans(LamType, gf);
+                        const ff = if (ImplNat.Error == null)
+                            self.natural_gf.trans(LamType, gf)
+                        else
+                            try self.natural_gf.trans(LamType, gf);
                         defer ff.deinit();
-                        return .{ .inl = try self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) };
+                        return if (ImplF.Error == null)
+                            .{ .inl = self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) }
+                        else
+                            .{ .inl = try self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) };
                     },
-                    .inr => |ga| .{ .inr = try self.functor_sup.instanceG.fapplyLam(A, B, gf, ga) },
+                    .inr => |ga| if (ImplG.Error == null)
+                        .{ .inr = self.functor_sup.instanceG.fapplyLam(A, B, gf, ga) }
+                    else
+                        .{ .inr = try self.functor_sup.instanceG.fapplyLam(A, B, gf, ga) },
                 },
             };
         }
@@ -235,7 +291,7 @@ pub fn CoproductApplicativeImpl(
 /// are Functor type.
 pub fn CoproductFunctor(comptime FunctorF: type, comptime FunctorG: type) type {
     const FGImpl = CoproductFunctorImpl(FunctorF.InstanceImpl, FunctorG.InstanceImpl);
-    return Functor(FGImpl);
+    return FunctorFromImpl(FGImpl);
 }
 
 /// Get a Coproduct Applicative from two Applicative, the parameter
@@ -250,7 +306,7 @@ pub fn CoproductApplicative(
         ApplicativeG.InstanceImpl,
         NaturalGF.InstanceImpl,
     );
-    return Applicative(FGImpl);
+    return ApplicativeFromImpl(FGImpl);
 }
 
 // These functions are defined for unit test
@@ -275,14 +331,14 @@ test "Compose Functor fmap" {
     // test (ArrayList, Maybe) product functor
     const allocator = testing.allocator;
     const ArrayOrMaybe = CoproductFG(ArrayList, Maybe);
-    const ArrayListFunctor = Functor(ArrayListMonadImpl);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
+    const ArrayListFunctor = Functor(ArrayList);
+    const MaybeFunctor = Functor(Maybe);
     const ArrayListOrMaybeFunctor = CoproductFunctor(ArrayListFunctor, MaybeFunctor);
 
-    var array_or_maybe = ArrayListOrMaybeFunctor.init(.{
+    var array_or_maybe = ArrayListOrMaybeFunctor.InstanceImpl{
         .instanceF = .{ .allocator = allocator },
-        .instanceG = .{ .none = {} },
-    });
+        .instanceG = .{},
+    };
 
     var array_a = ArrayList(u32).init(allocator);
     defer array_a.deinit();
@@ -318,8 +374,8 @@ test "Compose Applicative pure and fapply" {
     // test (ArrayList, Maybe) product applicative
     const allocator = testing.allocator;
     const ArrayOrMaybe = CoproductFG(ArrayList, Maybe);
-    const ArrayListApplicative = Applicative(ArrayListMonadImpl);
-    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayListApplicative = Applicative(ArrayList);
+    const MaybeApplicative = Applicative(Maybe);
     const NatMaybeToArray = NatTrans(MaybeToArrayListNatImpl);
     const ArrayListOrMaybeApplicative = CoproductApplicative(
         ArrayListApplicative,
@@ -327,16 +383,16 @@ test "Compose Applicative pure and fapply" {
         NatMaybeToArray,
     );
 
-    var array_or_maybe = ArrayListOrMaybeApplicative.init(.{
+    var array_or_maybe = ArrayListOrMaybeApplicative.InstanceImpl{
         .functor_sup = .{
             // ArrayList Applicative instance
             .instanceF = .{ .allocator = allocator },
             // Maybe Applicative instance
-            .instanceG = .{ .none = {} },
+            .instanceG = .{},
         },
         // NatMaybeToArray Applicative instance
         .natural_gf = .{ .instanceArray = .{ .allocator = allocator } },
-    });
+    };
 
     const arr_maybe_pured = try array_or_maybe.pure(@as(f32, 3.14));
     try testing.expectEqual(3.14, arr_maybe_pured.inr);

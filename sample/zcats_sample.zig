@@ -30,17 +30,17 @@ pub fn runZCatsSamples() !void {
 }
 
 fn maybeSample() !void {
-    const MaybeMonad = Monad(MaybeMonadImpl);
-    var maybe_m = MaybeMonad.init(.{ .none = {} });
+    const MaybeMonad = Monad(Maybe);
+    var maybe_m = MaybeMonad.InstanceImpl{};
 
     var maybe_a: ?u32 = 42;
-    maybe_a = try maybe_m.fmap(.InplaceMap, struct {
+    maybe_a = maybe_m.fmap(.InplaceMap, struct {
         fn f(a: u32) u32 {
             return a + 10;
         }
     }.f, maybe_a);
 
-    const maybe_b = try maybe_m.fmap(.NewValMap, struct {
+    const maybe_b = maybe_m.fmap(.NewValMap, struct {
         fn f(a: u32) f64 {
             return @as(f64, @floatFromInt(a)) + 3.14;
         }
@@ -52,12 +52,12 @@ fn maybeSample() !void {
             return @intFromFloat(@floor(x));
         }
     }.f;
-    var maybe_applied = try maybe_m.fapply(f64, u32, maybe_fn, maybe_b);
+    var maybe_applied = maybe_m.fapply(f64, u32, maybe_fn, maybe_b);
     std.debug.print("maybe_applied: {any}\n", .{maybe_applied});
-    maybe_applied = try maybe_m.fapply(u32, u32, null, maybe_applied);
+    maybe_applied = maybe_m.fapply(u32, u32, null, maybe_applied);
     std.debug.print("applied with null function: {any}\n", .{maybe_applied});
 
-    const maybe_binded = try maybe_m.bind(f64, u32, maybe_b, struct {
+    const maybe_binded = maybe_m.bind(f64, u32, maybe_b, struct {
         fn f(self: *MaybeMonadImpl, x: f64) MaybeMonad.MbType(u32) {
             _ = self;
             return @intFromFloat(@ceil(x * 4.0));
@@ -71,8 +71,8 @@ fn arraylistSample() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const ArrayListMonad = Monad(ArrayListMonadImpl);
-    var array_m = ArrayListMonad.init(.{ .allocator = allocator });
+    const ArrayListMonad = Monad(ArrayList);
+    var array_m = ArrayListMonad.InstanceImpl{ .allocator = allocator };
 
     var arr = ArrayList(u32).init(allocator);
     defer arr.deinit();
@@ -188,14 +188,16 @@ fn composeSample() !void {
     defer _ = gpa.deinit();
 
     const allocator = gpa.allocator();
-    const ArrayListApplicative = Applicative(ArrayListMonadImpl);
-    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayListApplicative = Applicative(ArrayList);
+    const MaybeApplicative = Applicative(Maybe);
     const ArrayListMaybeApplicative = ComposeApplicative(ArrayListApplicative, MaybeApplicative);
 
-    var array_maybe = ArrayListMaybeApplicative.init(.{ .functor_sup = .{
-        .instanceF = .{ .allocator = allocator },
-        .instanceG = .{ .none = {} },
-    } });
+    var array_maybe = ArrayListMaybeApplicative.InstanceImpl{
+        .functor_sup = .{
+            .instanceF = .{ .allocator = allocator },
+            .instanceG = .{},
+        },
+    };
     var arr = try ArrayList(Maybe(u32)).initCapacity(allocator, 8);
     defer arr.deinit();
 
@@ -307,10 +309,10 @@ fn composeSample() !void {
     // array3PrettyPrint(arr3_ints);
 
     const ArrayMaybeArrayApplicative = ComposeApplicative(ArrayListMaybeApplicative, ArrayListApplicative);
-    var array_maybe_array = ArrayMaybeArrayApplicative.init(.{ .functor_sup = .{
+    var array_maybe_array = ArrayMaybeArrayApplicative.InstanceImpl{ .functor_sup = .{
         .instanceF = array_maybe,
-        .instanceG = ArrayListApplicative.init(.{ .allocator = allocator }),
-    } });
+        .instanceG = ArrayListApplicative.InstanceImpl{ .allocator = allocator },
+    } };
 
     const arr3_applied = try array_maybe_array.fapply(u32, u32, arr3_fns, arr3_ints);
     defer array3Deinit(arr3_applied);
@@ -324,14 +326,16 @@ fn productSample() !void {
 
     const allocator = gpa.allocator();
     const ArrayAndMaybe = ProductFG(ArrayList, Maybe);
-    const ArrayListApplicative = Applicative(ArrayListMonadImpl);
-    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayListApplicative = Applicative(ArrayList);
+    const MaybeApplicative = Applicative(Maybe);
     const ArrayListAndMaybeApplicative = ProductApplicative(ArrayListApplicative, MaybeApplicative);
 
-    var array_and_maybe = ArrayListAndMaybeApplicative.init(.{ .functor_sup = .{
-        .instanceF = .{ .allocator = allocator },
-        .instanceG = .{ .none = {} },
-    } });
+    var array_and_maybe = ArrayListAndMaybeApplicative.InstanceImpl{
+        .functor_sup = .{
+            .instanceF = .{ .allocator = allocator },
+            .instanceG = .{},
+        },
+    };
 
     // pretty print the arr3 with type { ArrayList(A), Maybe(A) }
     const prettyArrayAndMaybe = struct {
@@ -400,8 +404,8 @@ fn coproductSample() !void {
 
     const allocator = gpa.allocator();
     const ArrayOrMaybe = CoproductFG(ArrayList, Maybe);
-    const ArrayListApplicative = Applicative(ArrayListMonadImpl);
-    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayListApplicative = Applicative(ArrayList);
+    const MaybeApplicative = Applicative(Maybe);
     const NatMaybeToArray = NatTrans(MaybeToArrayListNatImpl);
     const ArrayListOrMaybeApplicative = CoproductApplicative(
         ArrayListApplicative,
@@ -409,16 +413,16 @@ fn coproductSample() !void {
         NatMaybeToArray,
     );
 
-    var array_or_maybe = ArrayListOrMaybeApplicative.init(.{
+    var array_or_maybe = ArrayListOrMaybeApplicative.InstanceImpl{
         .functor_sup = .{
             // ArrayList Applicative instance
             .instanceF = .{ .allocator = allocator },
             // Maybe Applicative instance
-            .instanceG = .{ .none = {} },
+            .instanceG = .{},
         },
         // NatMaybeToArray Applicative instance
         .natural_gf = .{ .instanceArray = .{ .allocator = allocator } },
-    });
+    };
 
     // pretty print the arr_or_maybe with type Coproduct(ArrayList, Maybe)
     const prettyArrayOrMaybe = struct {

@@ -9,6 +9,7 @@ const testu = @import("test_utils.zig");
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const TCtor = base.TCtor;
+var maybe_error = maybe.maybe_error;
 
 const MapFnInType = base.MapFnInType;
 const MapFnRetType = base.MapFnRetType;
@@ -19,8 +20,10 @@ const MapFnKind = base.MapFnKind;
 const FMapMode = base.FMapMode;
 
 const Functor = functor.Functor;
+const FunctorFromImpl = functor.FunctorFromImpl;
 const FunctorFxTypes = functor.FunctorFxTypes;
 const Applicative = applicative.Applicative;
+const ApplicativeFromImpl = applicative.ApplicativeFromImpl;
 const ApplicativeFxTypes = applicative.ApplicativeFxTypes;
 
 const getFreeNothing = base.getFreeNothing;
@@ -41,8 +44,8 @@ pub fn ComposeFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
         instanceG: ImplG,
 
         const Self = @This();
-        const FunctorF = Functor(ImplF);
-        const FunctorG = Functor(ImplG);
+        const FunctorF = FunctorFromImpl(ImplF);
+        const FunctorG = FunctorFromImpl(ImplG);
 
         /// Constructor Type for Functor, Applicative, Monad, ...
         pub const F = ComposeFG(ImplF.F, ImplG.F);
@@ -56,7 +59,7 @@ pub fn ComposeFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
 
         /// Error set of ComposeFunctorImpl, it is a merge set of error sets in
         /// ImplF and ImplG
-        pub const Error = ImplF.Error || ImplG.Error;
+        pub const Error: ?type = maybe_error.mappend(ImplF.Error, ImplG.Error);
 
         const FxTypes = FunctorFxTypes(F, Error);
         pub const FaType = FxTypes.FaType;
@@ -136,11 +139,11 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
         /// Get base type of F(A), it is must just is A.
         /// In this instance, type F(A) is composed FG(A) by ImplF and
         /// ImplG.
-        const BaseType = SupImpl.BaseType;
+        pub const BaseType = SupImpl.BaseType;
 
         /// Error set of ComposeApplicativeImpl, it is a merge set of error sets in
         /// ImplF and ImplG
-        pub const Error = SupImpl.Error;
+        pub const Error: ?type = SupImpl.Error;
 
         pub const FaType = SupImpl.FaType;
         pub const FbType = SupImpl.FbType;
@@ -158,7 +161,7 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
             return SupImpl.deinitFa(fga, free_fn);
         }
 
-        pub inline fn fmap(
+        pub fn fmap(
             self: *Self,
             comptime K: MapFnKind,
             map_fn: anytype,
@@ -167,8 +170,8 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
             return self.functor_sup.fmap(K, map_fn, fga);
         }
 
-        pub inline fn fmapLam(
-            self: *Self,
+        pub fn fmapLam(
+            self: *const Self,
             comptime K: MapFnKind,
             map_lam: anytype,
             fga: FaLamType(K, @TypeOf(map_lam)),
@@ -269,14 +272,14 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
 /// are Functor type.
 pub fn ComposeFunctor(comptime FunctorF: type, comptime FunctorG: type) type {
     const FGImpl = ComposeFunctorImpl(FunctorF.InstanceImpl, FunctorG.InstanceImpl);
-    return Functor(FGImpl);
+    return FunctorFromImpl(FGImpl);
 }
 
 /// Compose two Applicative Functor to one Applicative Functor, the parameter
 /// ApplicativeF and ApplicativeG are Applicative Functor type.
 pub fn ComposeApplicative(comptime ApplicativeF: type, comptime ApplicativeG: type) type {
     const FGImpl = ComposeApplicativeImpl(ApplicativeF.InstanceImpl, ApplicativeG.InstanceImpl);
-    return Applicative(FGImpl);
+    return ApplicativeFromImpl(FGImpl);
 }
 
 // These functions are defined for unit test
@@ -352,13 +355,13 @@ fn array3ToSlices(
 test "Compose Functor fmap" {
     // test (ArrayList ∘ Maybe) composed functor
     const allocator = testing.allocator;
-    const ArrayListFunctor = Functor(ArrayListMonadImpl);
-    const MaybeFunctor = Functor(MaybeMonadImpl);
+    const ArrayListFunctor = Functor(ArrayList);
+    const MaybeFunctor = Functor(Maybe);
     const ArrayMaybeFunctor = ComposeFunctor(ArrayListFunctor, MaybeFunctor);
-    var array_maybe = ArrayMaybeFunctor.init(.{
+    var array_maybe = ArrayMaybeFunctor.InstanceImpl{
         .instanceF = .{ .allocator = allocator },
-        .instanceG = .{ .none = {} },
-    });
+        .instanceG = .{},
+    };
 
     var array_a = ArrayList(Maybe(u32)).init(allocator);
     defer array_a.deinit();
@@ -386,10 +389,10 @@ test "Compose Functor fmap" {
 
     // test ((ArrayList ∘ Maybe) ∘ ArrayList) composed functor
     const ArrayMaybeArrayFunctor = ComposeFunctor(ArrayMaybeFunctor, ArrayListFunctor);
-    var array_maybe_array = ArrayMaybeArrayFunctor.init(.{
+    var array_maybe_array = ArrayMaybeArrayFunctor.InstanceImpl{
         .instanceF = array_maybe,
-        .instanceG = ArrayListFunctor.init(.{ .allocator = allocator }),
-    });
+        .instanceG = ArrayListFunctor.InstanceImpl{ .allocator = allocator },
+    };
 
     const array3_ints_slice = &ArrayF(Maybe(ArrayF(u32))){
         null,
@@ -455,13 +458,13 @@ test "Compose Applicative pure and fapply" {
     const allocator = testing.allocator;
 
     // test (ArrayList ∘ Maybe) composed applicative
-    const ArrayListApplicative = Applicative(ArrayListMonadImpl);
-    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayListApplicative = Applicative(ArrayList);
+    const MaybeApplicative = Applicative(Maybe);
     const ArrayMaybeApplicative = ComposeApplicative(ArrayListApplicative, MaybeApplicative);
-    var array_maybe = ArrayMaybeApplicative.init(.{ .functor_sup = .{
+    var array_maybe = ArrayMaybeApplicative.InstanceImpl{ .functor_sup = .{
         .instanceF = .{ .allocator = allocator },
-        .instanceG = .{ .none = {} },
-    } });
+        .instanceG = .{},
+    } };
 
     const array_pured = try array_maybe.pure(@as(u32, 42));
     defer array_pured.deinit();
@@ -496,10 +499,10 @@ test "Compose Applicative pure and fapply" {
 
     // test ((ArrayList ∘ Maybe) ∘ ArrayList) composed applicative
     const ArrayMaybeArrayApplicative = ComposeApplicative(ArrayMaybeApplicative, ArrayListApplicative);
-    var array_maybe_array = ArrayMaybeArrayApplicative.init(.{ .functor_sup = .{
+    var array_maybe_array = ArrayMaybeArrayApplicative.InstanceImpl{ .functor_sup = .{
         .instanceF = array_maybe,
-        .instanceG = ArrayListApplicative.init(.{ .allocator = allocator }),
-    } });
+        .instanceG = ArrayListApplicative.InstanceImpl{ .allocator = allocator },
+    } };
 
     const array3_pured = try array_maybe_array.pure(@as(u32, 42));
     defer array3Deinit(array3_pured);

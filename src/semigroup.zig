@@ -9,6 +9,10 @@ const array = @import("array_list_monad.zig");
 pub fn SemiGroup(comptime A: type) type {
     const SemiGroupImpl = SemiGroupImplFromType(A);
     std.debug.assert(A == SemiGroupImpl.M);
+    return SemiGroupFromImpl(SemiGroupImpl);
+}
+
+pub fn SemiGroupFromImpl(comptime SemiGroupImpl: type) type {
     const T = struct {
         pub const is_constrait = true;
         const Self = @This();

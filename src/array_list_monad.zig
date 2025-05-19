@@ -23,6 +23,7 @@ const isInplaceMap = base.isInplaceMap;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 const castInplaceValue = base.castInplaceValue;
 
+const Monoid = monoid.Monoid;
 const Functor = functor.Functor;
 const Applicative = applicative.Applicative;
 const Monad = monad.Monad;
@@ -79,7 +80,8 @@ pub fn ArrayListMonoidImpl(comptime T: type) type {
 
 test "Monoid ArrayList(A) mconcat" {
     const allocator = testing.allocator;
-    var array_m = monoid.MonoidImplFromType(ArrayList(u32)){
+    const ArrayMonoid = Monoid(ArrayList(u32));
+    var array_monoid = ArrayMonoid.InstanceImpl{
         .allocator = allocator,
     };
 
@@ -97,7 +99,7 @@ test "Monoid ArrayList(A) mconcat" {
     try array_m2.appendSlice(&array2);
     try array_m3.appendSlice(&array3);
     const arrays = &[_]ArrayList(u32){ array_m1, array_m2, array_m3 };
-    const concated = try array_m.mconcat(arrays);
+    const concated = try array_monoid.mconcat(arrays);
     defer concated.deinit();
     try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 37, 37, 13, 13, 13 }, concated.items);
 }
@@ -115,7 +117,7 @@ pub const ArrayListMonadImpl = struct {
     /// Get base type of F(A), it is must just is A.
     pub const BaseType = ArrayListBaseType;
 
-    pub const Error = Allocator.Error;
+    pub const Error: ?type = Allocator.Error;
 
     pub const FxTypes = FunctorFxTypes(F, Error);
     pub const FaType = FxTypes.FaType;
@@ -319,8 +321,8 @@ const mul_pi_f64 = testu.mul_pi_f64;
 
 test "ArrayList Functor fmap" {
     const allocator = testing.allocator;
-    const ArrayListFunctor = Functor(ArrayListMonadImpl);
-    var array_functor = ArrayListFunctor.init(.{ .allocator = allocator });
+    const ArrayFunctor = Functor(ArrayList);
+    var array_functor = ArrayFunctor.InstanceImpl{ .allocator = allocator };
 
     var array_a = ArrayList(u32).init(allocator);
     defer array_a.deinit();
@@ -344,8 +346,8 @@ test "ArrayList Functor fmap" {
 
 test "ArrayList Applicative pure and fapply" {
     const allocator = testing.allocator;
-    const ArrayListApplicative = Applicative(ArrayListMonadImpl);
-    var array_applicative = ArrayListApplicative.init(.{ .allocator = allocator });
+    const ArrayApplicative = Applicative(ArrayList);
+    var array_applicative = ArrayApplicative.InstanceImpl{ .allocator = allocator };
 
     const array_pured = try array_applicative.pure(@as(u32, 42));
     defer array_pured.deinit();
@@ -370,8 +372,8 @@ test "ArrayList Applicative pure and fapply" {
 
 test "ArrayList Monad bind" {
     const allocator = testing.allocator;
-    const ArrayListMonad = Monad(ArrayListMonadImpl);
-    var array_monad = ArrayListMonad.init(.{ .allocator = allocator });
+    const ArrayListMonad = Monad(ArrayList);
+    var array_monad = ArrayListMonad.InstanceImpl{ .allocator = allocator };
 
     var array_a = ArrayList(f64).init(allocator);
     defer array_a.deinit();
@@ -392,8 +394,8 @@ test "runDo Arraylist" {
     const input1: i32 = 42;
 
     const allocator = testing.allocator;
-    const ArrayListMonad = Monad(ArrayListMonadImpl);
-    const arraylist_m = ArrayListMonad.init(.{ .allocator = allocator });
+    const ArrayListMonad = Monad(ArrayList);
+    const array_monad = ArrayListMonad.InstanceImpl{ .allocator = allocator };
     var do_ctx = struct {
         // It is must to define monad_impl for support do syntax.
         monad_impl: ArrayListMonadImpl,
@@ -435,7 +437,7 @@ test "runDo Arraylist" {
             try array.appendSlice(as);
             return array;
         }
-    }{ .monad_impl = arraylist_m, .param1 = input1 };
+    }{ .monad_impl = array_monad, .param1 = input1 };
     const out = try runDo(&do_ctx);
     defer out.deinit();
     try testing.expectEqual(8, out.items.len);
