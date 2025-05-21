@@ -3,7 +3,8 @@ const base = @import("base.zig");
 const functor = @import("functor.zig");
 const monad = @import("monad.zig");
 const maybe = @import("maybe.zig");
-const arraym = @import("array_list_monad.zig");
+const arraym = @import("array_monad.zig");
+const arraylm = @import("array_list_monad.zig");
 
 const TCtor = base.TCtor;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
@@ -14,7 +15,7 @@ const Maybe = base.Maybe;
 const ArrayList = std.ArrayList;
 
 pub const MaybeApplicativeImpl = maybe.MaybeMonadImpl;
-pub const ArrayListApplicativeImpl = arraym.ArrayListMonadImpl;
+pub const ArrayListApplicativeImpl = arraylm.ArrayListMonadImpl;
 
 pub fn ApplicativeFxTypes(comptime F: TCtor, comptime E: ?type) type {
     return struct {
@@ -140,7 +141,7 @@ pub fn ApplicativeFromImpl(comptime ApplicativeImpl: type) type {
 
 const applicativeImplMap = std.StaticStringMap(type).initComptime(.{
     .{ @typeName(Maybe(void)), maybe.MaybeMonadImpl },
-    .{ @typeName(ArrayList(void)), arraym.ArrayListMonadImpl },
+    .{ @typeName(ArrayList(void)), arraylm.ArrayListMonadImpl },
     // Add more ApplicativeImply and associated type
 });
 
@@ -154,6 +155,7 @@ pub fn ApplicativeImplFromTCtor(comptime F: TCtor) type {
                 }
             },
             .optional => return maybe.MaybeMonadImpl,
+            .array => |info| return arraym.ArrayMonadImpl(info.len),
             .pointer => return std.meta.Child(T).ApplicativeImpl,
             else => {},
         }

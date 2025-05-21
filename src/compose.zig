@@ -256,7 +256,10 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
                 }
             }{ .inner_instance = &self.functor_sup.instanceG };
 
-            const flam = try self.functor_sup.instanceF.fmapLam(.NewValMapRef, inner_fapply, @constCast(&fgf));
+            const flam = if (ImplF.Error == null)
+                self.functor_sup.instanceF.fmapLam(.NewValMapRef, inner_fapply, @constCast(&fgf))
+            else
+                try self.functor_sup.instanceF.fmapLam(.NewValMapRef, inner_fapply, @constCast(&fgf));
             defer ImplF.deinitFa(flam, getFreeNothing(@TypeOf(inner_fapply).ApplyLam));
             return self.functor_sup.instanceF.fapplyLam(
                 ImplG.F(A),

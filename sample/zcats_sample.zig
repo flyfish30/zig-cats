@@ -420,7 +420,7 @@ fn coproductSample() !void {
             // Maybe Applicative instance
             .instanceG = .{},
         },
-        // NatMaybeToArray Applicative instance
+        // NatMaybeToArrayList Applicative instance
         .natural_gf = .{ .instanceArray = .{ .allocator = allocator } },
     };
 

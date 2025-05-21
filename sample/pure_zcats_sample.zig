@@ -1,23 +1,22 @@
 const std = @import("std");
 const zcats = @import("zcats");
-const pure_zcats = zcats.pure;
 
-const Functor = pure_zcats.Functor;
-const Applicative = pure_zcats.Applicative;
-const Monad = pure_zcats.Monad;
-const NatTrans = pure_zcats.NatTrans;
+const Functor = zcats.Functor;
+const Applicative = zcats.Applicative;
+const Monad = zcats.Monad;
+const NatTrans = zcats.NatTrans;
 
-const ComposeApplicative = pure_zcats.ComposeApplicative;
-const ProductFG = pure_zcats.ProductFG;
-const ProductApplicative = pure_zcats.ProductApplicative;
-const CoproductFG = pure_zcats.CoproductFG;
-const CoproductApplicative = pure_zcats.CoproductApplicative;
+const ComposeApplicative = zcats.ComposeApplicative;
+const ProductFG = zcats.ProductFG;
+const ProductApplicative = zcats.ProductApplicative;
+const CoproductFG = zcats.CoproductFG;
+const CoproductApplicative = zcats.CoproductApplicative;
 
 const Maybe = zcats.Maybe;
 const MaybeMonadImpl = zcats.PureMaybeMonadImpl;
 const Array = zcats.Array;
-const ArrayMonadImpl = pure_zcats.ArrayMonadImpl;
-const MaybeToArrayNatImpl = pure_zcats.MaybeToArrayNatImpl;
+const ArrayMonadImpl = zcats.ArrayMonadImpl;
+const MaybeToArrayNatImpl = zcats.MaybeToArrayNatImpl;
 
 pub fn runZCatsSamples() void {
     maybeSample();
@@ -28,16 +27,18 @@ pub fn runZCatsSamples() void {
 }
 
 fn maybeSample() void {
-    const MaybeMonad = Monad(MaybeMonadImpl);
+    const MaybeMonad = Monad(Maybe);
+    var maybe_monad = MaybeMonad.InstanceImpl{};
+    const MaybeMImpl = @TypeOf(maybe_monad);
 
     var maybe_a: ?u32 = 42;
-    maybe_a = MaybeMonad.fmap(.InplaceMap, struct {
+    maybe_a = maybe_monad.fmap(.InplaceMap, struct {
         fn f(a: u32) u32 {
             return a + 10;
         }
     }.f, maybe_a);
 
-    const maybe_b = MaybeMonad.fmap(.NewValMap, struct {
+    const maybe_b = maybe_monad.fmap(.NewValMap, struct {
         fn f(a: u32) f64 {
             return @as(f64, @floatFromInt(a)) + 3.14;
         }
@@ -49,13 +50,14 @@ fn maybeSample() void {
             return @intFromFloat(@floor(x));
         }
     }.f;
-    var maybe_applied = MaybeMonad.fapply(f64, u32, maybe_fn, maybe_b);
+    var maybe_applied = maybe_monad.fapply(f64, u32, maybe_fn, maybe_b);
     std.debug.print("maybe_applied: {any}\n", .{maybe_applied});
-    maybe_applied = MaybeMonad.fapply(u32, u32, null, maybe_applied);
+    maybe_applied = maybe_monad.fapply(u32, u32, null, maybe_applied);
     std.debug.print("applied with null function: {any}\n", .{maybe_applied});
 
-    const maybe_binded = MaybeMonad.bind(f64, u32, maybe_b, struct {
-        fn f(x: f64) ?u32 {
+    const maybe_binded = maybe_monad.bind(f64, u32, maybe_b, struct {
+        fn f(impl: *MaybeMImpl, x: f64) ?u32 {
+            _ = impl;
             return @intFromFloat(@ceil(x * 4.0));
         }
     }.f);
@@ -65,7 +67,9 @@ fn maybeSample() void {
 fn arraySample() void {
     const ARRAY_LEN = 4;
     const ArrayF = Array(ARRAY_LEN);
-    const ArrayMonad = Monad(ArrayMonadImpl(ARRAY_LEN));
+    const ArrayMonad = Monad(ArrayF);
+    var array_monad = ArrayMonad.InstanceImpl{};
+    const ArrayMImpl = @TypeOf(array_monad);
 
     var arr: ArrayF(u32) = undefined;
     var i: u32 = 0;
@@ -74,28 +78,28 @@ fn arraySample() void {
     }
 
     // example of functor
-    arr = ArrayMonad.fmap(.InplaceMap, struct {
+    arr = array_monad.fmap(.InplaceMap, struct {
         fn f(a: u32) u32 {
             return a + 42;
         }
     }.f, arr);
     std.debug.print("arr inplace mapped: {any}\n", .{arr});
 
-    const arr_f32 = ArrayMonad.fmap(.InplaceMap, struct {
+    const arr_f32 = array_monad.fmap(.InplaceMap, struct {
         fn f(a: u32) f32 {
             return @as(f32, @floatFromInt(a)) + 6.18;
         }
     }.f, arr);
     std.debug.print("arr float32 inplace mapped: {any}\n", .{arr_f32});
 
-    arr = ArrayMonad.fmap(.InplaceMap, struct {
+    arr = array_monad.fmap(.InplaceMap, struct {
         fn f(a: f32) u32 {
             return @as(u32, @intFromFloat(a)) + 58;
         }
     }.f, arr_f32);
     std.debug.print("arr inplace mapped again: {any}\n", .{arr});
 
-    const arr_new = ArrayMonad.fmap(.NewValMap, struct {
+    const arr_new = array_monad.fmap(.NewValMap, struct {
         fn f(a: u32) f64 {
             return @as(f64, @floatFromInt(a)) * 3.14;
         }
@@ -127,16 +131,17 @@ fn arraySample() void {
         }.f,
     };
 
-    const arr_applied = ArrayMonad.fapply(f64, u32, arr_fns, arr_new);
+    const arr_applied = array_monad.fapply(f64, u32, arr_fns, arr_new);
     std.debug.print("arr_applied: {any}\n", .{arr_applied});
 
     const arr_comptime = [_]f64{ 2, 4, 5, 9 };
-    const comptime_applied = comptime ArrayMonad.fapply(f64, u32, arr_fns, arr_comptime);
+    const comptime_applied = array_monad.fapply(f64, u32, arr_fns, arr_comptime);
     std.debug.print("comptime_applied: {any}\n", .{comptime_applied});
 
     // example of monad
-    const arr_binded = ArrayMonad.bind(f64, u32, arr_new, struct {
-        fn f(a: f64) ArrayF(u32) {
+    const arr_binded = array_monad.bind(f64, u32, arr_new, struct {
+        fn f(impl: *ArrayMImpl, a: f64) ArrayF(u32) {
+            _ = impl;
             var arr_b: ArrayF(u32) = undefined;
             var j: usize = 0;
             while (j < arr_b.len) : (j += 1) {
@@ -151,8 +156,9 @@ fn arraySample() void {
     }.f);
     std.debug.print("arr_binded: {any}\n", .{arr_binded});
 
-    const comptime_binded = comptime ArrayMonad.bind(f64, u32, arr_comptime, struct {
-        fn f(a: f64) ArrayF(u32) {
+    const comptime_binded = array_monad.bind(f64, u32, arr_comptime, struct {
+        fn f(impl: *ArrayMImpl, a: f64) ArrayF(u32) {
+            _ = impl;
             var arr_b: ArrayF(u32) = undefined;
             var j: usize = 0;
             while (j < arr_b.len) : (j += 1) {
@@ -171,10 +177,16 @@ fn arraySample() void {
 fn composeSample() void {
     const ARRAY_LEN = 4;
     const ArrayF = Array(ARRAY_LEN);
-    const ArrayApplicative = Applicative(ArrayMonadImpl(ARRAY_LEN));
-    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayApplicative = Applicative(ArrayF);
+    const MaybeApplicative = Applicative(Maybe);
 
     const ArrayMaybeApplicative = ComposeApplicative(ArrayApplicative, MaybeApplicative);
+    var array_maybe_applicative = ArrayMaybeApplicative.InstanceImpl{
+        .functor_sup = .{
+            .instanceF = .{},
+            .instanceG = .{},
+        },
+    };
 
     var arr: ArrayF(Maybe(u32)) = undefined;
     var i: u32 = 0;
@@ -187,14 +199,14 @@ fn composeSample() void {
     }
 
     // example of applicative functor
-    arr = ArrayMaybeApplicative.fmap(.InplaceMap, struct {
+    arr = array_maybe_applicative.fmap(.InplaceMap, struct {
         fn f(a: u32) u32 {
             return a + 42;
         }
     }.f, arr);
     std.debug.print("arr mapped: {any}\n", .{arr});
 
-    const arr_new = ArrayMaybeApplicative.fmap(.NewValMap, struct {
+    const arr_new = array_maybe_applicative.fmap(.NewValMap, struct {
         fn f(a: u32) f64 {
             return @as(f64, @floatFromInt(a)) * 3.14;
         }
@@ -226,7 +238,7 @@ fn composeSample() void {
         arr_fns[i] = null;
     }
 
-    const arr_applied = ArrayMaybeApplicative.fapply(f64, u32, arr_fns, arr_new);
+    const arr_applied = array_maybe_applicative.fapply(f64, u32, arr_fns, arr_new);
     std.debug.print("arr_applied: {any}\n", .{arr_applied});
 
     // pretty print the arr3 with type ArrayF(Maybe(AraayF(A)))
@@ -288,7 +300,7 @@ fn composeSample() void {
             return arr1_fn;
         }
     }{ .fns = fn_int_array[0..] };
-    const arr3_fns = ArrayMaybeApplicative.fmapLam(.NewValMap, intToFns, arr);
+    const arr3_fns = array_maybe_applicative.fmapLam(.NewValMap, intToFns, arr);
 
     const intToArr = struct {
         fn intToArr(a: u32) ArrayF(u32) {
@@ -305,12 +317,18 @@ fn composeSample() void {
         }
     }.intToArr;
 
-    const arr3_ints = ArrayMaybeApplicative.fmap(.NewValMap, intToArr, arr_applied);
+    const arr3_ints = array_maybe_applicative.fmap(.NewValMap, intToArr, arr_applied);
     // std.debug.print("arr3_ints: {any}\n", .{arr3_ints});
 
     const ArrayMaybeArrayApplicative = ComposeApplicative(ArrayMaybeApplicative, ArrayApplicative);
+    var array_maybe_array_applicative = ArrayMaybeArrayApplicative.InstanceImpl{
+        .functor_sup = .{
+            .instanceF = array_maybe_applicative,
+            .instanceG = ArrayApplicative.InstanceImpl{},
+        },
+    };
 
-    const arr3_applied = ArrayMaybeArrayApplicative.fapply(u32, u32, arr3_fns, arr3_ints);
+    const arr3_applied = array_maybe_array_applicative.fapply(u32, u32, arr3_fns, arr3_ints);
     std.debug.print("arr3_applied: ", .{});
     prettyPrintArr3(arr3_applied);
 }
@@ -319,10 +337,16 @@ fn productSample() void {
     const ARRAY_LEN = 4;
     const ArrayF = Array(ARRAY_LEN);
     const ArrayAndMaybe = ProductFG(ArrayF, Maybe);
-    const ArrayApplicative = Applicative(ArrayMonadImpl(ARRAY_LEN));
-    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayApplicative = Applicative(ArrayF);
+    const MaybeApplicative = Applicative(Maybe);
 
     const ArrayAndMaybeApplicative = ProductApplicative(ArrayApplicative, MaybeApplicative);
+    var array_and_maybe_applicative = ArrayAndMaybeApplicative.InstanceImpl{
+        .functor_sup = .{
+            .instanceF = .{},
+            .instanceG = .{},
+        },
+    };
 
     // pretty print the array maybe tuple with type { ArrayF(A), Maybe(A) }
     const prettyArrayAndMaybe = struct {
@@ -339,7 +363,7 @@ fn productSample() void {
     var arr_and_maybe = ArrayAndMaybe(u32){ arr, 42 };
 
     // example of applicative functor
-    arr_and_maybe = ArrayAndMaybeApplicative.fmap(.InplaceMap, struct {
+    arr_and_maybe = array_and_maybe_applicative.fmap(.InplaceMap, struct {
         fn f(a: u32) u32 {
             return a + 42;
         }
@@ -347,7 +371,7 @@ fn productSample() void {
     std.debug.print("arr_and_maybe mapped: ", .{});
     prettyArrayAndMaybe(arr_and_maybe);
 
-    const arr_and_maybe_new = ArrayAndMaybeApplicative.fmap(.NewValMap, struct {
+    const arr_and_maybe_new = array_and_maybe_applicative.fmap(.NewValMap, struct {
         fn f(a: u32) f64 {
             return @as(f64, @floatFromInt(a)) * 3.14;
         }
@@ -381,7 +405,7 @@ fn productSample() void {
     }
     const arr_and_maybe_fns = ArrayAndMaybe(FloatToIntFn){ arr_fns, fn_array[0] };
 
-    const arr_and_maybe_applied = ArrayAndMaybeApplicative.fapply(f64, u32, arr_and_maybe_fns, arr_and_maybe_new);
+    const arr_and_maybe_applied = array_and_maybe_applicative.fapply(f64, u32, arr_and_maybe_fns, arr_and_maybe_new);
     std.debug.print("arr_and_maybe_applied: ", .{});
     prettyArrayAndMaybe(arr_and_maybe_applied);
 }
@@ -390,11 +414,19 @@ fn coproductSample() void {
     const ARRAY_LEN = 4;
     const ArrayF = Array(ARRAY_LEN);
     const ArrayOrMaybe = CoproductFG(ArrayF, Maybe);
-    const ArrayApplicative = Applicative(ArrayMonadImpl(ARRAY_LEN));
-    const MaybeApplicative = Applicative(MaybeMonadImpl);
+    const ArrayApplicative = Applicative(ArrayF);
+    const MaybeApplicative = Applicative(Maybe);
     const NatMaybeToArray = NatTrans(MaybeToArrayNatImpl(ARRAY_LEN));
 
     const ArrayOrMaybeApplicative = CoproductApplicative(ArrayApplicative, MaybeApplicative, NatMaybeToArray);
+    var array_or_maybe_applicative = ArrayOrMaybeApplicative.InstanceImpl{
+        .functor_sup = .{
+            .instanceF = .{},
+            .instanceG = .{},
+        },
+        // NatMaybeToArray Applicative instance
+        .natural_gf = .{},
+    };
 
     // pretty print the arr_or_maybe with type Coproduct(ArrayF, Maybe)
     const prettyArrayOrMaybe = struct {
@@ -415,7 +447,7 @@ fn coproductSample() void {
     var arr_or_maybe = ArrayOrMaybe(u32){ .inl = arr };
 
     // example of applicative functor
-    arr_or_maybe = ArrayOrMaybeApplicative.fmap(.InplaceMap, struct {
+    arr_or_maybe = array_or_maybe_applicative.fmap(.InplaceMap, struct {
         fn f(a: u32) u32 {
             return a + 42;
         }
@@ -423,7 +455,7 @@ fn coproductSample() void {
     std.debug.print("arr_or_maybe mapped: ", .{});
     prettyArrayOrMaybe(arr_or_maybe);
 
-    const arr_or_maybe_new = ArrayOrMaybeApplicative.fmap(.NewValMap, struct {
+    const arr_or_maybe_new = array_or_maybe_applicative.fmap(.NewValMap, struct {
         fn f(a: u32) f64 {
             return @as(f64, @floatFromInt(a)) * 3.14;
         }
@@ -458,20 +490,20 @@ fn coproductSample() void {
     const or_array_fns = ArrayOrMaybe(FloatToIntFn){ .inl = arr_fns };
     const or_maybe_fns = ArrayOrMaybe(FloatToIntFn){ .inr = fn_array[1] };
 
-    const maybe_array_applied = ArrayOrMaybeApplicative.fapply(f64, u32, or_maybe_fns, arr_or_maybe_new);
+    const maybe_array_applied = array_or_maybe_applicative.fapply(f64, u32, or_maybe_fns, arr_or_maybe_new);
     std.debug.print("maybe_array_applied: ", .{});
     prettyArrayOrMaybe(maybe_array_applied);
 
-    const array_array_applied = ArrayOrMaybeApplicative.fapply(f64, u32, or_array_fns, arr_or_maybe_new);
+    const array_array_applied = array_or_maybe_applicative.fapply(f64, u32, or_array_fns, arr_or_maybe_new);
     std.debug.print("array_array_applied: ", .{});
     prettyArrayOrMaybe(array_array_applied);
 
     const or_maybe_float = ArrayOrMaybe(f64){ .inr = 2.71828 };
-    const array_maybe_applied = ArrayOrMaybeApplicative.fapply(f64, u32, or_array_fns, or_maybe_float);
+    const array_maybe_applied = array_or_maybe_applicative.fapply(f64, u32, or_array_fns, or_maybe_float);
     std.debug.print("array_maybe_applied: ", .{});
     prettyArrayOrMaybe(array_maybe_applied);
 
-    const maybe_maybe_applied = ArrayOrMaybeApplicative.fapply(f64, u32, or_maybe_fns, or_maybe_float);
+    const maybe_maybe_applied = array_or_maybe_applicative.fapply(f64, u32, or_maybe_fns, or_maybe_float);
     std.debug.print("maybe_maybe_applied: ", .{});
     prettyArrayOrMaybe(maybe_maybe_applied);
 }

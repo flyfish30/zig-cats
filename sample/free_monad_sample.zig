@@ -19,6 +19,7 @@ const isMapRef = zcats.isMapRef;
 const isInplaceMap = zcats.isInplaceMap;
 const isErrorUnionOrVal = zcats.isErrorUnionOrVal;
 const EffectVal = zcats.EffectVal;
+var maybe_error = zcats.maybe_error;
 
 const Monoid = zcats.Monoid;
 const Functor = zcats.Functor;
@@ -797,7 +798,7 @@ fn runStackCalcSample() !void {
         x: Int = undefined,
 
         const Ctx = @This();
-        pub const is_pure = false;
+        pub const Error: ?type = maybe_error.mappend(null, FreeStackCalcImpl.Error);
 
         fn deinit(ctx: Ctx) void {
             _ = ctx;

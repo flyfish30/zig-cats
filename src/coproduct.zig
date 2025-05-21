@@ -208,7 +208,7 @@ pub fn CoproductApplicativeImpl(
                             self.natural_gf.trans(A, ga)
                         else
                             try self.natural_gf.trans(A, ga);
-                        defer fa.deinit();
+                        defer base.deinitOrUnref(fa);
                         return if (ImplF.Error == null)
                             .{ .inl = self.functor_sup.instanceF.fapply(A, B, ff, fa) }
                         else
@@ -222,7 +222,7 @@ pub fn CoproductApplicativeImpl(
                             self.natural_gf.trans(FnType, gf)
                         else
                             try self.natural_gf.trans(FnType, gf);
-                        defer ff.deinit();
+                        defer base.deinitOrUnref(ff);
                         return if (ImplF.Error == null)
                             .{ .inl = self.functor_sup.instanceF.fapply(A, B, ff, fa) }
                         else

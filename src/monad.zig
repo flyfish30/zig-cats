@@ -2,7 +2,8 @@ const std = @import("std");
 const base = @import("base.zig");
 const applicative = @import("applicative.zig");
 const maybe = @import("maybe.zig");
-const arraym = @import("array_list_monad.zig");
+const arraym = @import("array_monad.zig");
+const arraylm = @import("array_list_monad.zig");
 
 const TCtor = base.TCtor;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
@@ -72,7 +73,7 @@ pub fn MonadFromImpl(comptime MonadImpl: type) type {
 
 const monadImplMap = std.StaticStringMap(type).initComptime(.{
     .{ @typeName(Maybe(void)), maybe.MaybeMonadImpl },
-    .{ @typeName(ArrayList(void)), arraym.ArrayListMonadImpl },
+    .{ @typeName(ArrayList(void)), arraylm.ArrayListMonadImpl },
     // Add more MonadImply and associated type
 });
 
@@ -86,6 +87,7 @@ pub fn MonadImplFromTCtor(comptime F: TCtor) type {
                 }
             },
             .optional => return maybe.MaybeMonadImpl,
+            .array => |info| return arraym.ArrayMonadImpl(info.len),
             .pointer => return std.meta.Child(T).MonadImpl,
             else => {},
         }
@@ -126,7 +128,7 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
         @compileError("The first do step function must be only one parameters!");
     }
 
-    const is_pure = DoCtx.is_pure or @TypeOf(ctx_p.monad_impl).Error == null;
+    const is_pure = DoCtx.Error == null;
     var impl_p = @constCast(&ctx_p.monad_impl);
     _ = &impl_p;
     const start_m = if (is_pure)
@@ -174,9 +176,7 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
         // free intermediate monad for avoid memory leak
         defer MonadImpl.deinitFa(start_m, base.getFreeNothing(T));
         const final_k: *const fn (*MonadImpl, T) MR = @ptrCast(_k);
-        if (DoCtx.is_pure) {
-            return MonadImpl.bindWithCtx(T, R, impl_p, start_m, final_k);
-        } else if (is_pure) {
+        if (is_pure) {
             return impl_p.bind(T, R, start_m, final_k);
         } else {
             return try impl_p.bind(T, R, start_m, final_k);
@@ -229,7 +229,7 @@ fn mkDoContFn(
     const has_err_r, const _MR = comptime isErrorUnionOrVal(MR);
     _ = has_err_r;
     const R = MonadImpl.BaseType(_MR);
-    const is_pure = DoCtx.is_pure or MonadImpl.Error == null;
+    const is_pure = DoCtx.Error == null;
     const do_cont = struct {
         fn doCont(impl: *MonadImpl, a: A) MR {
             const has_err1, const _MB = comptime isErrorUnionOrVal(MB);
@@ -254,9 +254,7 @@ fn mkDoContFn(
             if (k) |_k| {
                 // free intermediate monad for avoid memory leak
                 defer MonadImpl.deinitFa(mb, base.getFreeNothing(B));
-                if (DoCtx.is_pure) {
-                    return MonadImpl.bindWithCtx(B, R, impl, mb, _k);
-                } else if (is_pure) {
+                if (is_pure) {
                     return @constCast(impl).bind(B, R, mb, _k);
                 } else {
                     return try @constCast(impl).bind(B, R, mb, _k);

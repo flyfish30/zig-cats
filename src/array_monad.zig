@@ -1,9 +1,9 @@
 const std = @import("std");
-const base = @import("../base.zig");
+const base = @import("base.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 const monad = @import("monad.zig");
-const testu = @import("../test_utils.zig");
+const testu = @import("test_utils.zig");
 
 const testing = std.testing;
 const assert = std.debug.assert;
@@ -23,10 +23,10 @@ const Functor = functor.Functor;
 const Applicative = applicative.Applicative;
 const Monad = monad.Monad;
 
-const impure_functor = @import("../functor.zig");
-const FunctorFxTypes = impure_functor.FunctorFxTypes;
-const impure_monad = @import("../monad.zig");
-const runDo = impure_monad.runDo;
+const FunctorFxTypes = functor.FunctorFxTypes;
+const ApplicativeFxTypes = applicative.ApplicativeFxTypes;
+const MonadFxTypes = monad.MonadFxTypes;
+const runDo = monad.runDo;
 
 const Maybe = base.Maybe;
 const Array = base.Array;
@@ -37,6 +37,7 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
 
         /// Constructor Type for Functor, Applicative, Monad, ...
         pub const F = Array(len);
+        pub const Error: ?type = null;
 
         /// Get base type of F(A), it is must just is A.
         pub fn BaseType(comptime ArrayA: type) type {
@@ -49,7 +50,11 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
         pub const FaLamType = FxTypes.FaLamType;
         pub const FbLamType = FxTypes.FbLamType;
 
-        pub const MbType = F;
+        const AFxTypes = ApplicativeFxTypes(F, Error);
+        pub const APaType = AFxTypes.APaType;
+        pub const AFbType = AFxTypes.AFbType;
+
+        pub const MbType = MonadFxTypes(F, Error).MbType;
 
         fn FaFnOrLamType(
             comptime K: MapFnKind,
@@ -84,18 +89,22 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
         /// variable, then the array list in original variable should be reset
         /// to empty.
         pub fn fmap(
+            self: *Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fa: FaType(K, @TypeOf(map_fn)),
         ) FbType(@TypeOf(map_fn)) {
+            _ = self;
             return fmapGeneric(K, .NormalMap, map_fn, fa);
         }
 
         pub fn fmapLam(
+            self: *const Self,
             comptime K: MapFnKind,
             map_lam: anytype,
             fa: FaLamType(K, @TypeOf(map_lam)),
         ) FbLamType(@TypeOf(map_lam)) {
+            _ = self;
             return fmapGeneric(K, .LambdaMap, map_lam, fa);
         }
 
@@ -172,27 +181,32 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             return fb;
         }
 
-        pub fn pure(a: anytype) F(@TypeOf(a)) {
+        pub fn pure(self: *Self, a: anytype) F(@TypeOf(a)) {
+            _ = self;
             return [1]@TypeOf(a){a} ** len;
         }
 
         pub fn fapply(
+            self: *Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
             ff: F(*const fn (A) B),
             fa: F(A),
         ) F(B) {
+            _ = self;
             return fapplyGeneric(.NormalMap, A, B, ff, fa);
         }
 
         pub fn fapplyLam(
+            self: *Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
             flam: anytype, // a F(lambda) that present F(*const fn (A) B),
             fa: F(A),
         ) F(B) {
+            _ = self;
             return fapplyGeneric(.LambdaMap, A, B, flam, fa);
         }
 
@@ -233,46 +247,47 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
         }
 
         pub fn bind(
+            self: *Self,
             comptime A: type,
             comptime B: type,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k: *const fn (A) F(B),
+            k: *const fn (*Self, A) F(B),
         ) F(B) {
-            return bindGeneric(A, B, void, {}, ma, k);
+            return bindGeneric(self, .NormalMap, A, B, ma, k);
         }
 
-        pub fn bindWithCtx(
+        pub fn bindLam(
+            self: *Self,
             comptime A: type,
             comptime B: type,
-            ctx: anytype,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k: *const fn (@TypeOf(ctx), A) F(B),
+            klam: anytype,
         ) F(B) {
-            return bindGeneric(A, B, @TypeOf(ctx), ctx, ma, k);
+            return bindGeneric(self, .LambdaMap, A, B, ma, klam);
         }
 
         pub fn bindGeneric(
+            self: *Self,
+            comptime M: FMapMode,
             comptime A: type,
             comptime B: type,
-            comptime Ctx: type,
-            ctx: Ctx,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k: if (Ctx == void) *const fn (A) F(B) else *const fn (Ctx, A) F(B),
+            k: anytype,
         ) F(B) {
             const imap_lam = struct {
-                cont_ctx: Ctx,
-                cont_fn: @TypeOf(k),
-                fn call(map_self: @This(), i: usize, a: A) B {
-                    if (Ctx == void) {
-                        return map_self.cont_fn(a)[i];
+                impl_self: *Self,
+                fn_or_lam: @TypeOf(k),
+                fn call(map_self: *const @This(), i: usize, a: A) B {
+                    if (M == .NormalMap) {
+                        return map_self.fn_or_lam(map_self.impl_self, a)[i];
                     } else {
-                        return map_self.cont_fn(map_self.cont_ctx, a)[i];
+                        return map_self.fn_or_lam.call(map_self.impl_self, a)[i];
                     }
                 }
-            }{ .cont_ctx = ctx, .cont_fn = k };
+            }{ .impl_self = self, .fn_or_lam = k };
 
             return imap(A, B, imap_lam, ma);
         }
@@ -291,16 +306,17 @@ const ARRAY_LEN = 4;
 const ArrayF = Array(ARRAY_LEN);
 
 test "Array Functor fmap" {
-    const ArrayFunctor = Functor(ArrayMonadImpl(ARRAY_LEN));
+    const ArrayFunctor = Functor(ArrayF);
+    var array_functor = ArrayFunctor.InstanceImpl{};
 
     var array_a = ArrayF(u32){ 0, 1, 2, 3 };
-    array_a = ArrayFunctor.fmap(.InplaceMap, add10, array_a);
+    array_a = array_functor.fmap(.InplaceMap, add10, array_a);
     try testing.expectEqualSlices(u32, &[_]u32{ 10, 11, 12, 13 }, &array_a);
 
-    const array_f32 = ArrayFunctor.fmap(.InplaceMap, add_pi_f32, array_a);
+    const array_f32 = array_functor.fmap(.InplaceMap, add_pi_f32, array_a);
     try testing.expectEqualSlices(f32, &[_]f32{ 13.14, 14.14, 15.14, 16.14 }, &array_f32);
 
-    const array_f64 = ArrayFunctor.fmap(.NewValMap, mul_pi_f64, array_a);
+    const array_f64 = array_functor.fmap(.NewValMap, mul_pi_f64, array_a);
     try testing.expectEqual(4, array_f64.len);
     for (&[_]f64{ 31.4, 34.54, 37.68, 40.82 }, 0..) |a, i| {
         try testing.expectApproxEqRel(a, array_f64[i], std.math.floatEps(f64));
@@ -308,15 +324,16 @@ test "Array Functor fmap" {
 }
 
 test "Array Applicative pure and fapply" {
-    const ArrayApplicative = Applicative(ArrayMonadImpl(ARRAY_LEN));
+    const ArrayApplicative = Applicative(ArrayF);
+    var array_applicative = ArrayApplicative.InstanceImpl{};
 
-    const array_pured = ArrayApplicative.pure(@as(u32, 42));
+    const array_pured = array_applicative.pure(@as(u32, 42));
     try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 42, 42 }, &array_pured);
 
     const array_a = ArrayF(u32){ 10, 20, 30, 40 };
     const IntToFloatFn = *const fn (u32) f64;
     const array_fns = ArrayF(IntToFloatFn){ add_pi_f64, mul_pi_f64, add_e_f64, mul_e_f64 };
-    const array_f64 = ArrayApplicative.fapply(u32, f64, array_fns, array_a);
+    const array_f64 = array_applicative.fapply(u32, f64, array_fns, array_a);
     try testing.expectEqual(4, array_f64.len);
     for (&[_]f64{ 13.14, 62.8, 32.71828, 108.7312 }, 0..) |a, i| {
         try testing.expectApproxEqRel(a, array_f64[i], std.math.floatEps(f64));
@@ -324,11 +341,14 @@ test "Array Applicative pure and fapply" {
 }
 
 test "Array Monad bind" {
-    const ArrayMonad = Monad(ArrayMonadImpl(ARRAY_LEN));
+    const ArrayMonad = Monad(ArrayF);
+    var array_monad = ArrayMonad.InstanceImpl{};
+    const ArrayFImpl = @TypeOf(array_monad);
 
     const array_a = ArrayF(f64){ 10, 20, 30, 40 };
-    const array_binded = ArrayMonad.bind(f64, u32, array_a, struct {
-        fn f(a: f64) ArrayMonad.MbType(u32) {
+    const array_binded = array_monad.bind(f64, u32, array_a, struct {
+        fn f(impl: *ArrayFImpl, a: f64) ArrayFImpl.MbType(u32) {
+            _ = impl;
             var array_b: ArrayF(u32) = [_]u32{ 1, 2, 3, 4 };
             var j: usize = 0;
             while (j < array_b.len) : (j += 1) {
@@ -343,36 +363,38 @@ test "Array Monad bind" {
     }.f);
     try testing.expectEqualSlices(u32, &[_]u32{ 41, 182, 123, 364 }, &array_binded);
 
-    const cont_ctx = struct {
+    const lam = struct {
         m: f64 = 3.14,
-    }{};
 
-    const array_c = ArrayMonad.bindWithCtx(u32, f64, cont_ctx, array_binded, struct {
-        fn f(ctx: @TypeOf(cont_ctx), a: u32) ArrayMonad.MbType(f64) {
+        const Self = @This();
+        fn call(self: *const Self, impl: *ArrayFImpl, a: u32) ArrayFImpl.MbType(f64) {
+            _ = impl;
             var array_b: ArrayF(f64) = [_]f64{ 2, 4, 6, 8 };
             var j: usize = 0;
             while (j < array_b.len) : (j += 1) {
                 if ((j & 0x1) == 0) {
-                    array_b[j] += @as(f64, @floatFromInt(a)) * ctx.m;
+                    array_b[j] += @as(f64, @floatFromInt(a)) * self.m;
                 } else {
-                    array_b[j] += @as(f64, @floatFromInt(a)) + ctx.m;
+                    array_b[j] += @as(f64, @floatFromInt(a)) + self.m;
                 }
             }
             return array_b;
         }
-    }.f);
+    }{};
+
+    const array_c = array_monad.bindLam(u32, f64, array_binded, lam);
     try testing.expectEqualSlices(f64, &[_]f64{ 130.74, 189.14, 392.22, 375.14 }, &array_c);
 }
 
 test "runDo Array" {
     const input1: i32 = 42;
 
-    const ArrayFImpl = ArrayMonadImpl(ARRAY_LEN);
-    const ArrayMonad = Monad(ArrayFImpl);
-    _ = ArrayMonad;
+    const ArrayMonad = Monad(ArrayF);
+    const array_monad = ArrayMonad.InstanceImpl{};
+    const ArrayFImpl = @TypeOf(array_monad);
     var do_ctx = struct {
         // It is must to define monad_impl for support do syntax.
-        monad_impl: ArrayFImpl = .{},
+        monad_impl: ArrayFImpl,
         param1: i32,
 
         // intermediate variable
@@ -380,7 +402,7 @@ test "runDo Array" {
         b: u32 = undefined,
 
         const Ctx = @This();
-        pub const is_pure = true;
+        pub const Error: ?type = ArrayFImpl.Error;
 
         // the do context struct must has startDo function
         pub fn startDo(impl: *ArrayFImpl) ArrayFImpl.MbType(i32) {
@@ -410,7 +432,7 @@ test "runDo Array" {
             };
             return array;
         }
-    }{ .param1 = input1 };
+    }{ .monad_impl = array_monad, .param1 = input1 };
     const out = runDo(&do_ctx);
     try testing.expectEqualSlices(
         f64,
@@ -422,16 +444,17 @@ test "runDo Array" {
 test "comptime runDo Array" {
     const input1: i32 = 42;
 
-    const ArrayFImpl = ArrayMonadImpl(ARRAY_LEN);
-    const ArrayMonad = Monad(ArrayFImpl);
-    _ = ArrayMonad;
+    const ArrayMonad = Monad(ArrayF);
+    const array_monad = ArrayMonad.InstanceImpl{};
+    const ArrayFImpl = @TypeOf(array_monad);
+
     comptime var do_ctx = struct {
         // It is must to define monad_impl for support do syntax.
-        monad_impl: ArrayFImpl = .{},
+        monad_impl: ArrayFImpl,
         param1: i32,
 
         const Ctx = @This();
-        pub const is_pure = true;
+        pub const Error: ?type = ArrayFImpl.Error;
 
         // the do context struct must has startDo function
         pub fn startDo(impl: *ArrayFImpl) ArrayFImpl.MbType(i32) {
@@ -458,7 +481,7 @@ test "comptime runDo Array" {
             };
             return array;
         }
-    }{ .param1 = input1 };
+    }{ .monad_impl = array_monad, .param1 = input1 };
     const out = comptime runDo(&do_ctx);
     try testing.expectEqualSlices(
         f64,

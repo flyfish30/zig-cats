@@ -379,8 +379,8 @@ test "ArrayList Monad bind" {
     defer array_a.deinit();
     try array_a.appendSlice(&[_]f64{ 10, 20, 30, 40 });
     const array_binded = try array_monad.bind(f64, u32, array_a, struct {
-        fn f(inst: *@TypeOf(array_monad), a: f64) ArrayListMonad.MbType(u32) {
-            var arr_b = try ArrayList(u32).initCapacity(inst.allocator, 2);
+        fn f(impl: *@TypeOf(array_monad), a: f64) ArrayListMonad.MbType(u32) {
+            var arr_b = try ArrayList(u32).initCapacity(impl.allocator, 2);
             arr_b.appendAssumeCapacity(@intFromFloat(@ceil(a * 4.0)));
             arr_b.appendAssumeCapacity(@intFromFloat(@ceil(a * 9.0)));
             return arr_b;
@@ -396,9 +396,10 @@ test "runDo Arraylist" {
     const allocator = testing.allocator;
     const ArrayListMonad = Monad(ArrayList);
     const array_monad = ArrayListMonad.InstanceImpl{ .allocator = allocator };
+    const ArrayListMImpl = @TypeOf(array_monad);
     var do_ctx = struct {
         // It is must to define monad_impl for support do syntax.
-        monad_impl: ArrayListMonadImpl,
+        monad_impl: ArrayListMImpl,
         param1: i32,
 
         // intermediate variable
@@ -406,10 +407,10 @@ test "runDo Arraylist" {
         b: u32 = undefined,
 
         const Ctx = @This();
-        pub const is_pure = false;
+        pub const Error: ?type = ArrayListMImpl.Error;
 
         // the do context struct must has startDo function
-        pub fn startDo(impl: *ArrayListMonadImpl) ArrayListMonadImpl.MbType(i32) {
+        pub fn startDo(impl: *ArrayListMImpl) ArrayListMImpl.MbType(i32) {
             const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             const as = &([_]i32{ 17, ctx.param1 } ** 2);
             var array = ArrayList(i32).init(impl.allocator);
@@ -418,14 +419,14 @@ test "runDo Arraylist" {
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do1(impl: *ArrayListMonadImpl, a: i32) ArrayListMonadImpl.MbType(u32) {
+        pub fn do1(impl: *ArrayListMImpl, a: i32) ArrayListMImpl.MbType(u32) {
             const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             ctx.a = a;
             return try impl.pure(@abs(a) + 2);
         }
 
         // the name of other do step function must be starts with "do" string
-        pub fn do2(impl: *ArrayListMonadImpl, b: u32) ArrayListMonadImpl.MbType(f64) {
+        pub fn do2(impl: *ArrayListMImpl, b: u32) ArrayListMImpl.MbType(f64) {
             const ctx: *Ctx = @alignCast(@fieldParentPtr("monad_impl", impl));
             ctx.b = b;
 

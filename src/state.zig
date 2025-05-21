@@ -431,7 +431,6 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         const ctx_cfg = Ctx.ctx_cfg;
         const State = Ctx.State;
 
-        pub const fa_is_ptr = true;
         /// Constructor Type for Functor, Applicative, Monad, ...
         pub fn F(comptime A: type) type {
             return *Ctx.State(S, A);
@@ -1079,7 +1078,7 @@ test "runDo State(Arraylist(i32), A)" {
         b: u32 = undefined,
 
         const Ctx = @This();
-        pub const is_pure = false;
+        pub const Error: ?type = ArrayStImpl.Error;
 
         fn deinit(ctx: Ctx) void {
             if (ctx.as) |as| {
@@ -2657,7 +2656,7 @@ test "runDo FreeMonad(StateF, A) " {
     const allocator = testing.allocator;
     const StateS = u32;
     const cfg = getDefaultStateCfg(StateS, allocator);
-    const Error = cfg.errors;
+    const CfgError = cfg.errors;
     const F = StateF(cfg, StateS);
     const StateFFunctor = Functor(F);
     const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
@@ -2690,7 +2689,7 @@ test "runDo FreeMonad(StateF, A) " {
         b: u32 = undefined,
 
         const Ctx = @This();
-        pub const is_pure = false;
+        pub const Error: ?type = FreeStateFImpl.Error;
 
         fn deinit(ctx: Ctx) void {
             _ = ctx;
@@ -2711,7 +2710,7 @@ test "runDo FreeMonad(StateF, A) " {
             const add_x_f64 = struct {
                 _x: f64,
                 const Self = @This();
-                pub fn call(self: *const Self, in: u32) EffectVal(Error, f64) {
+                pub fn call(self: *const Self, in: u32) EffectVal(CfgError, f64) {
                     return @as(f64, @floatFromInt(in)) + self._x;
                 }
             }{ ._x = @floatFromInt(a) };

@@ -2,7 +2,8 @@ const std = @import("std");
 const base = @import("base.zig");
 const applicative = @import("applicative.zig");
 const maybe = @import("maybe.zig");
-const arraym = @import("array_list_monad.zig");
+const arraym = @import("array_monad.zig");
+const arraylm = @import("array_list_monad.zig");
 
 const TCtor = base.TCtor;
 
@@ -13,9 +14,13 @@ const MapLamRetType = base.MapLamRetType;
 
 const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
+const EffectVal = base.EffectVal;
 
 const Maybe = base.Maybe;
+const Array = base.Array;
 const ArrayList = std.ArrayList;
+
+const getDefaultFn = base.getDefaultFn;
 
 pub const MaybeFunctorImpl = applicative.MaybeApplicativeImpl;
 pub const ArrayListFunctorImpl = applicative.ArrayListApplicativeImpl;
@@ -162,7 +167,7 @@ pub fn FunctorFromImpl(comptime FunctorImpl: type) type {
 
 const functorImplMap = std.StaticStringMap(type).initComptime(.{
     .{ @typeName(Maybe(void)), maybe.MaybeMonadImpl },
-    .{ @typeName(ArrayList(void)), arraym.ArrayListMonadImpl },
+    .{ @typeName(ArrayList(void)), arraylm.ArrayListMonadImpl },
     // Add more FunctorImply and associated type
 });
 
@@ -176,6 +181,7 @@ pub fn FunctorImplFromTCtor(comptime F: TCtor) type {
                 }
             },
             .optional => return maybe.MaybeMonadImpl,
+            .array => |info| return arraym.ArrayMonadImpl(info.len),
             .pointer => return std.meta.Child(T).FunctorImpl,
             else => {},
         }
@@ -225,7 +231,7 @@ pub fn NatTrans(
                 instance: InstanceImpl,
                 comptime A: type,
                 fa: F(A),
-            ) Error!G(A) {
+            ) EffectVal(Error, G(A)) {
                 _ = instance;
                 _ = fa;
             }
@@ -240,11 +246,48 @@ pub fn NatTrans(
     return base.ConstraitType(T);
 }
 
+pub fn MaybeToArrayNatImpl(comptime len: usize) type {
+    return struct {
+        const Self = @This();
+        pub const F = Maybe;
+        pub const G = Array(len);
+        pub const Error: ?type = null;
+
+        pub fn trans(self: Self, comptime A: type, fa: F(A)) G(A) {
+            _ = self;
+            if (fa) |a| {
+                return [1]A{a} ** len;
+            } else {
+                const info_a = @typeInfo(A);
+                if (info_a == .@"fn") {
+                    return [1]A{getDefaultFn(A)} ** len;
+                } else if (info_a == .pointer and @typeInfo(std.meta.Child(A)) == .@"fn") {
+                    return [1]A{getDefaultFn(std.meta.Child(A))} ** len;
+                }
+                return std.mem.zeroes([len]A);
+            }
+        }
+    };
+}
+
+pub fn ArrayToMaybeNatImpl(comptime len: usize) type {
+    return struct {
+        const Self = @This();
+        pub const F = Array(len);
+        pub const G = Maybe;
+        pub const Error: ?type = null;
+
+        pub fn trans(self: Self, comptime A: type, fa: F(A)) G(A) {
+            _ = self;
+            return fa[0];
+        }
+    };
+}
+
 pub const MaybeToArrayListNatImpl = struct {
     instanceArray: ArrayListFunctorImpl,
 
     const Self = @This();
-
     pub const F = Maybe;
     pub const G = ArrayList;
     pub const Error = Functor(G).Error;
@@ -265,7 +308,6 @@ pub const MaybeToArrayListNatImpl = struct {
 
 pub const ArrayListToMaybeNatImpl = struct {
     const Self = @This();
-
     pub const F = ArrayList;
     pub const G = Maybe;
     pub const Error = Functor(G).Error;

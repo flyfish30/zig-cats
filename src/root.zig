@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 
-pub const pure = @import("pure.zig");
+// pub const pure = @import("pure.zig");
 
 pub usingnamespace @import("base.zig");
 pub usingnamespace @import("monoid.zig");
@@ -14,6 +14,7 @@ pub usingnamespace @import("coproduct.zig");
 pub usingnamespace @import("free_types.zig");
 
 pub usingnamespace @import("maybe.zig");
+pub usingnamespace @import("array_monad.zig");
 pub usingnamespace @import("array_list_monad.zig");
 pub usingnamespace @import("state.zig");
 
