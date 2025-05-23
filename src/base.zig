@@ -9,6 +9,19 @@ const ArrayList = std.ArrayList;
 
 // pub usingnamespace @import("base_types.zig");
 
+const TypeId = *const struct {
+    _: u8,
+};
+
+pub inline fn typeId(comptime T: type) TypeId {
+    return &struct {
+        comptime {
+            _ = T;
+        }
+        var id: @typeInfo(TypeId).pointer.child = undefined;
+    }.id;
+}
+
 pub fn ConstraitType(comptime T: type) type {
     if (@hasDecl(T, "is_constraint") and T.is_constraint) {
         @compileError(std.fmt.comptimePrint("Type {any} is not a constrait!", .{@typeName(T)}));
