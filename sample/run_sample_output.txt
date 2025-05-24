@@ -1,0 +1,70 @@
+Run pure samples of zig-cats...
+mapped maybe_a: 52, maybe_b: 5.514e1
+maybe_applied: 55
+applied with null function: null
+maybe_binded: 221
+arr inplace mapped: { 42, 43, 44, 45 }
+arr float32 inplace mapped: { 4.818e1, 4.918e1, 5.018e1, 5.118e1 }
+arr inplace mapped again: { 106, 107, 108, 109 }
+arr_new: { 3.3284000000000003e2, 3.3598e2, 3.3912e2, 3.4226e2 }
+arr_applied: { 332, 344, 679, 1370 }
+comptime_applied: { 2, 12, 10, 36 }
+arr_binded: { 1332, 3024, 1357, 3081 }
+comptime_binded: { 8, 36, 20, 81 }
+arr mapped: { 42, null, 44, null }
+arr_new: { 1.3188e2, null, 1.3816e2, null }
+arr_applied: { 131, null, null, null }
+arr3_applied: { 
+ { 151,266,270,274, }, null, null, null,}
+arr_and_maybe mapped: { { 42, 43, 44, 45 }, 84 }
+arr_and_maybe_new: { { 1.3188e2, 1.3502e2, 1.3816e2, 1.413e2 }, 2.6376e2 }
+arr_and_maybe_applied: { { 131, 541, 553, 566 }, 263 }
+arr_or_maybe mapped: { inl: { 42, 43, 44, 45 } }
+arr_or_maybe_new: { inl: { 1.3188e2, 1.3502e2, 1.3816e2, 1.413e2 } }
+maybe_array_applied: { inl: { 528, 541, 553, 566 } }
+array_array_applied: { inl: { 131, 541, 553, 566 } }
+array_maybe_applied: { inl: { 2, 11, 11, 11 } }
+maybe_maybe_applied: { inr: 11 }
+
+Run impure samples of zig-cats...
+mapped maybe_a: 52, maybe_b: 5.514e1
+maybe_applied: 55
+applied with null function: null
+maybe_binded: 221
+arr inplace mapped: { 42, 43, 44, 45, 46, 47, 48, 49 }
+arr float32 inplace mapped: { 4.818e1, 4.918e1, 5.018e1, 5.118e1, 5.218e1, 5.318e1, 5.418e1, 5.518e1 }
+arr inplace mapped again: { 106, 107, 108, 109, 110, 111, 112, 113 }
+arr_new: { 3.3284000000000003e2, 3.3598e2, 3.3912e2, 3.4226e2, 3.4540000000000003e2, 3.4854e2, 3.5168e2, 3.5482e2 }
+arr_applied: { 332, 335, 339, 342, 345, 348, 351, 354, 1332, 1344, 1357, 1370, 1382, 1395, 1407, 1420 }
+arr_binded: { 1332, 2996, 1344, 3024, 1357, 3053, 1370, 3081, 1382, 3109, 1395, 3137, 1407, 3166, 1420, 3194 }
+arr mapped: { 50, null, 52, null, 54, null, 56, null }
+arr_new: { 1.57e2, null, 1.6328e2, null, 1.6956e2, null, 1.7584e2, null }
+arr_applied: { 157, null, 163, null, 169, null, 175, null, 628, null, 654, null, 679, null, 704, null, null, null, null, null, null, null, null, null }
+arr3_applied: { 
+ { 177,179,181,314,318,322, }, null, { 183,185,187,326,330,334, }, null, { 189,191,193,338,342,346, }, null, { 195,197,199,350,354,358, }, null, { 648,650,652,1256,1260,1264, }, null, { 674,676,678,1308,1312,1316, }, null, { 699,701,703,1358,1362,1366, }, null, { 724,726,728,1408,1412,1416, }, null,
+ null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+ null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+ { 177,179,181,314,318,322, }, null, { 183,185,187,326,330,334, }, null, { 189,191,193,338,342,346, }, null, { 195,197,199,350,354,358, }, null, { 648,650,652,1256,1260,1264, }, null, { 674,676,678,1308,1312,1316, }, null, { 699,701,703,1358,1362,1366, }, null, { 724,726,728,1408,1412,1416, }, null,
+ null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+ null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+ { 177,179,181,314,318,322, }, null, { 183,185,187,326,330,334, }, null, { 189,191,193,338,342,346, }, null, { 195,197,199,350,354,358, }, null, { 648,650,652,1256,1260,1264, }, null, { 674,676,678,1308,1312,1316, }, null, { 699,701,703,1358,1362,1366, }, null, { 724,726,728,1408,1412,1416, }, null,
+ null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+ null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+ { 177,179,181,314,318,322, }, null, { 183,185,187,326,330,334, }, null, { 189,191,193,338,342,346, }, null, { 195,197,199,350,354,358, }, null, { 648,650,652,1256,1260,1264, }, null, { 674,676,678,1308,1312,1316, }, null, { 699,701,703,1358,1362,1366, }, null, { 724,726,728,1408,1412,1416, }, null,
+ null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+ null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+}
+arr_and_maybe mapped: { { 50, 51, 52, 53, 54, 55, 56, 57 }, 84 }
+arr_and_maybe_new: { { 1.57e2, 1.6014000000000001e2, 1.6328e2, 1.6642000000000002e2, 1.6956e2, 1.7270000000000002e2, 1.7584e2, 1.7898000000000002e2 }, 2.6376e2 }
+arr_and_maybe_applied: { { 157, 160, 163, 166, 169, 172, 175, 178, 628, 641, 654, 666, 679, 691, 704, 716 }, 263 }
+arr_or_maybe mapped: { inl: { 50, 51, 52, 53, 54, 55, 56, 57 } }
+arr_or_maybe_new: { inl: { 1.57e2, 1.6014000000000001e2, 1.6328e2, 1.6642000000000002e2, 1.6956e2, 1.7270000000000002e2, 1.7584e2, 1.7898000000000002e2 } }
+maybe_array_applied: { inl: { 628, 641, 654, 666, 679, 691, 704, 716 } }
+array_array_applied: { inl: { 157, 160, 163, 166, 169, 172, 175, 178, 628, 641, 654, 666, 679, 691, 704, 716 } }
+array_maybe_applied: { inl: { 2, 11 } }
+maybe_maybe_applied: { inr: 11 }
+calcSample entry!
+
+Run free monad samples...
+run StackCalc result is: (35, {  })
+StackCalc expression is: "Push 3, Push 4, Add, Push 5, Mul, Top, Pop, "

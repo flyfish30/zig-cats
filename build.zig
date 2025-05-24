@@ -1,5 +1,15 @@
 const std = @import("std");
 
+// Get all output messages of run sample
+fn getSampleOutput(b: *std.Build) ![]const u8 {
+    var dir = try b.build_root.handle.openDir("./sample", .{ .iterate = true });
+    defer dir.close();
+
+    const max_file_size = 10 * 1024 * 1024;
+    const output = try dir.readFileAlloc(b.allocator, "run_sample_output.txt", max_file_size);
+    return output;
+}
+
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -51,6 +61,9 @@ pub fn build(b: *std.Build) void {
     // step is evaluated that depends on it. The next line below will establish
     // such a dependency.
     const run_cmd = b.addRunArtifact(exe);
+    const output = getSampleOutput(b) catch null;
+    if (output) |out_txt|
+        run_cmd.expectStdErrEqual(out_txt);
 
     // By making the run step depend on the install step, it will be run from the
     // installation directory rather than directly from within the cache directory.
