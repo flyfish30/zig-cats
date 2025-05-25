@@ -30,7 +30,7 @@ pub fn MonoidFromImpl(comptime MonoidImpl: type) type {
         /// Typeclass function for mempty
         const MemptyType = @TypeOf(struct {
             fn memptyFn(
-                instance: *InstanceImpl,
+                instance: *const InstanceImpl,
             ) EM {
                 _ = instance;
             }
@@ -39,7 +39,7 @@ pub fn MonoidFromImpl(comptime MonoidImpl: type) type {
         /// Typeclass function for mappend
         const MappendType = @TypeOf(struct {
             fn mappendFn(
-                instance: *InstanceImpl,
+                instance: *const InstanceImpl,
                 a: M,
                 b: M,
             ) EM {
@@ -52,7 +52,7 @@ pub fn MonoidFromImpl(comptime MonoidImpl: type) type {
         /// Typeclass function for mconcat
         const MconcatType = @TypeOf(struct {
             fn mconcatFn(
-                instance: *InstanceImpl,
+                instance: *const InstanceImpl,
                 xs: []const M,
             ) EM {
                 _ = instance;
@@ -77,19 +77,19 @@ const VoidMonoidImpl = struct {
     const M = void;
     const EM = void;
 
-    pub fn mempty(self: *Self) void {
+    pub fn mempty(self: *const Self) EM {
         _ = self;
         return {};
     }
 
-    pub fn mappend(self: *Self, a: M, b: M) M {
+    pub fn mappend(self: *const Self, a: M, b: M) EM {
         _ = self;
         _ = a;
         _ = b;
         return {};
     }
 
-    pub fn mconcat(self: *Self, xs: []const M) EM {
+    pub fn mconcat(self: *const Self, xs: []const M) EM {
         _ = self;
         _ = xs;
         return {};
@@ -106,17 +106,17 @@ fn NumberMonoidImpl(comptime Num: type) type {
         pub const M = Num;
         pub const EM = Num;
 
-        pub fn mempty(self: *Self) EM {
+        pub fn mempty(self: *const Self) EM {
             _ = self;
             return 0;
         }
 
-        pub fn mappend(self: *Self, a: M, b: M) EM {
+        pub fn mappend(self: *const Self, a: M, b: M) EM {
             _ = self;
             return a + b;
         }
 
-        pub fn mconcat(self: *Self, xs: []const M) EM {
+        pub fn mconcat(self: *const Self, xs: []const M) EM {
             _ = self;
             var acc: M = 0;
             for (xs) |x| {

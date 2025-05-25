@@ -51,7 +51,7 @@ pub fn MonadFromImpl(comptime MonadImpl: type) type {
 
         const BindType = @TypeOf(struct {
             fn bindFn(
-                instance: *InstanceImpl,
+                instance: *const InstanceImpl,
                 comptime A: type,
                 comptime B: type,
                 // monad function: (a -> M b), ma: M a
@@ -130,7 +130,6 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
 
     const is_pure = DoCtx.Error == null;
     var impl_p = @constCast(&ctx_p.monad_impl);
-    _ = &impl_p;
     const start_m = if (is_pure)
         // pure monad
         DoCtx.startDo(impl_p)
@@ -146,7 +145,7 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
     comptime var i = info.@"struct".decls.len;
     comptime var isLastDoFn = true;
     // A composed continuation of do step functions for bind start_m
-    comptime var k: ?*const fn (*MonadImpl, T) MR = null;
+    comptime var k: ?*const fn (*const MonadImpl, T) MR = null;
     inline while (i > 0) : (i -= 1) {
         const decl = info.@"struct".decls[i - 1];
         if (comptime std.mem.startsWith(u8, decl.name, "do")) {
@@ -164,7 +163,7 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
             const has_err_b, const _MB = comptime isErrorUnionOrVal(MB);
             _ = has_err_b;
             const B = MonadImpl.BaseType(_MB);
-            const curr_k: ?*const fn (*MonadImpl, B) MR = @ptrCast(k);
+            const curr_k: ?*const fn (*const MonadImpl, B) MR = @ptrCast(k);
             k = comptime @ptrCast(mkDoContFn(DoCtx, A, MB, decl.name, curr_k));
         }
     }
@@ -175,7 +174,7 @@ pub fn runDo(ctx_p: anytype) DoRetType(GetPointerChild(@TypeOf(ctx_p))) {
     if (k) |_k| {
         // free intermediate monad for avoid memory leak
         defer MonadImpl.deinitFa(start_m, base.getFreeNothing(T));
-        const final_k: *const fn (*MonadImpl, T) MR = @ptrCast(_k);
+        const final_k: *const fn (*const MonadImpl, T) MR = @ptrCast(_k);
         if (is_pure) {
             return impl_p.bind(T, R, start_m, final_k);
         } else {
@@ -230,8 +229,8 @@ fn mkDoContFn(
     _ = has_err_r;
     const R = MonadImpl.BaseType(_MR);
     const is_pure = DoCtx.Error == null;
-    const do_cont = struct {
-        fn doCont(impl: *MonadImpl, a: A) MR {
+    const do_cont = &struct {
+        fn doCont(impl: *const MonadImpl, a: A) MR {
             const has_err1, const _MB = comptime isErrorUnionOrVal(MB);
             _ = has_err1;
             const B = MonadImpl.BaseType(_MB);

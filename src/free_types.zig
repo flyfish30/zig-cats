@@ -957,7 +957,7 @@ pub fn FreeMonadImpl(
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fa: FaType(K, @TypeOf(map_fn)),
@@ -984,7 +984,7 @@ pub fn FreeMonadImpl(
 
             if (free_fop) |_free_fop| {
                 const inner_map_lam = struct {
-                    fimpl: *Self,
+                    fimpl: *const Self,
                     map_fn: *const fn (A) B,
 
                     const SelfMap = @This();
@@ -1151,7 +1151,7 @@ pub fn FreeMonadImpl(
             }
         }
 
-        pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+        pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
             _ = self;
             const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
             const _a: _A = if (has_err) try a else a;
@@ -1159,7 +1159,7 @@ pub fn FreeMonadImpl(
         }
 
         pub fn fapply(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -1183,7 +1183,7 @@ pub fn FreeMonadImpl(
 
             if (free_fop) |_free_fop| {
                 const inner_apply_lam = struct {
-                    fimpl: *Self,
+                    fimpl: *const Self,
                     local_fa: F(A),
 
                     const SelfApply = @This();
@@ -1238,7 +1238,7 @@ pub fn FreeMonadImpl(
         }
 
         pub fn fapplyLam(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -1262,7 +1262,7 @@ pub fn FreeMonadImpl(
 
             if (free_fop) |_free_fop| {
                 const inner_apply_lam = struct {
-                    fimpl: *Self,
+                    fimpl: *const Self,
                     local_fa: F(A),
 
                     const SelfApply = @This();
@@ -1317,12 +1317,12 @@ pub fn FreeMonadImpl(
         }
 
         pub fn bind(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k: *const fn (*Self, A) MbType(B),
+            k: *const fn (*const Self, A) MbType(B),
         ) MbType(B) {
             if (ma == .pure_m) {
                 return try k(self, ma.pure_m);
@@ -1339,7 +1339,7 @@ pub fn FreeMonadImpl(
 
             if (free_fop) |_free_fop| {
                 const inner_bind_lam = struct {
-                    fimpl: *Self,
+                    fimpl: *const Self,
                     local_k: @TypeOf(k),
 
                     const SelfBind = @This();
@@ -1385,7 +1385,7 @@ pub fn FreeMonadImpl(
         }
 
         pub fn join(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             mma: F(F(A)),
         ) MbType(A) {
@@ -1404,7 +1404,7 @@ pub fn FreeMonadImpl(
 
             if (free_fop) |_free_fop| {
                 const inner_bind_lam = struct {
-                    fimpl: *Self,
+                    fimpl: *const Self,
 
                     const SelfBind = @This();
                     pub fn call(
@@ -1466,7 +1466,7 @@ test "FreeMonad(F, A) fmap" {
     const MaybeFunctor = Functor(Maybe);
     const maybe_functor = MaybeFunctor.InstanceImpl{};
     const FreeMFunctor = Functor(freetypes.FreeM(cfg, Maybe));
-    var freem_functor = FreeMFunctor.InstanceImpl{
+    const freem_functor = FreeMFunctor.InstanceImpl{
         .allocator = allocator,
         .funf_impl = maybe_functor,
     };
@@ -1524,7 +1524,7 @@ test "FreeMonad(F, A) pure and fapply" {
     const MaybeFunctor = Functor(Maybe);
     const maybe_functor = MaybeFunctor.InstanceImpl{};
     const FreeMApplicative = Applicative(freetypes.FreeM(cfg, Maybe));
-    var freem_applicative = FreeMApplicative.InstanceImpl{
+    const freem_applicative = FreeMApplicative.InstanceImpl{
         .allocator = allocator,
         .funf_impl = maybe_functor,
     };
@@ -1603,7 +1603,7 @@ test "FreeMonad(F, A) bind" {
     const MaybeFunctor = Functor(Maybe);
     const maybe_functor = MaybeFunctor.InstanceImpl{};
     const FMaybeMonad = Monad(freetypes.FreeM(cfg, Maybe));
-    var freem_monad = FMaybeMonad.InstanceImpl{
+    const freem_monad = FMaybeMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = maybe_functor,
     };
@@ -1636,7 +1636,7 @@ test "FreeMonad(F, A) bind" {
     defer freem_c.deinit();
 
     const k_u32 = struct {
-        fn f(self: *FreeMaybeImpl, a: u32) !FreeMonad(cfg, Maybe, f64) {
+        fn f(self: *const FreeMaybeImpl, a: u32) !FreeMonad(cfg, Maybe, f64) {
             const _a = if (a > 3) 0 else a;
             const just_array = switch (_a) {
                 0 => &[_]FOpInfo{},
@@ -1700,7 +1700,7 @@ test "FreeMonad(F, A) join" {
     const MaybeFunctor = Functor(Maybe);
     const maybe_functor = MaybeFunctor.InstanceImpl{};
     const FMaybeMonad = Monad(freetypes.FreeM(cfg, Maybe));
-    var freem_monad = FMaybeMonad.InstanceImpl{
+    const freem_monad = FMaybeMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = maybe_functor,
     };
@@ -1926,7 +1926,7 @@ fn listToA(comptime A: type) *const fn (a: List(A)) A {
 //     const ListFunctor = Functor(List);
 //     const list_functor = ListFunctor.InstanceImpl{};
 //     const FreeMFunctor = Functor(freetypes.FreeM(cfg, List));
-//     var freem_functor = FreeMFunctor.InstanceImpl{
+//     const freem_functor = FreeMFunctor.InstanceImpl{
 //         .allocator = allocator,
 //         .funf_impl = list_functor,
 //     };

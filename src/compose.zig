@@ -80,7 +80,7 @@ pub fn ComposeFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fga: FaType(K, @TypeOf(map_fn)),
@@ -162,7 +162,7 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fga: FaType(K, @TypeOf(map_fn)),
@@ -179,12 +179,12 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
             return self.functor_sup.fmapLam(K, map_lam, fga);
         }
 
-        pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+        pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
             return self.functor_sup.instanceF.pure(self.functor_sup.instanceG.pure(a));
         }
 
         pub fn fapply(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -195,7 +195,7 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fapplyLam(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -206,7 +206,7 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         fn fapplyGeneric(
-            self: *Self,
+            self: *const Self,
             comptime M: FMapMode,
             comptime A: type,
             comptime B: type,
@@ -225,11 +225,11 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
             const FnOrLambdaType = BaseType(@TypeOf(fgf));
 
             const inner_fapply = struct {
-                inner_instance: *ImplG,
+                inner_instance: *const ImplG,
 
                 const InnerSelf = @This();
                 const ApplyLam = struct {
-                    apply_instanceG: *ImplG,
+                    apply_instanceG: *const ImplG,
                     apply_gf_p: *ImplG.F(FnOrLambdaType),
 
                     const ApplySelf = @This();
@@ -361,7 +361,7 @@ test "Compose Functor fmap" {
     const ArrayListFunctor = Functor(ArrayList);
     const MaybeFunctor = Functor(Maybe);
     const ArrayMaybeFunctor = ComposeFunctor(ArrayListFunctor, MaybeFunctor);
-    var array_maybe = ArrayMaybeFunctor.InstanceImpl{
+    const array_maybe = ArrayMaybeFunctor.InstanceImpl{
         .instanceF = .{ .allocator = allocator },
         .instanceG = .{},
     };
@@ -392,7 +392,7 @@ test "Compose Functor fmap" {
 
     // test ((ArrayList ∘ Maybe) ∘ ArrayList) composed functor
     const ArrayMaybeArrayFunctor = ComposeFunctor(ArrayMaybeFunctor, ArrayListFunctor);
-    var array_maybe_array = ArrayMaybeArrayFunctor.InstanceImpl{
+    const array_maybe_array = ArrayMaybeArrayFunctor.InstanceImpl{
         .instanceF = array_maybe,
         .instanceG = ArrayListFunctor.InstanceImpl{ .allocator = allocator },
     };
@@ -464,7 +464,7 @@ test "Compose Applicative pure and fapply" {
     const ArrayListApplicative = Applicative(ArrayList);
     const MaybeApplicative = Applicative(Maybe);
     const ArrayMaybeApplicative = ComposeApplicative(ArrayListApplicative, MaybeApplicative);
-    var array_maybe = ArrayMaybeApplicative.InstanceImpl{ .functor_sup = .{
+    const array_maybe = ArrayMaybeApplicative.InstanceImpl{ .functor_sup = .{
         .instanceF = .{ .allocator = allocator },
         .instanceG = .{},
     } };
@@ -502,7 +502,7 @@ test "Compose Applicative pure and fapply" {
 
     // test ((ArrayList ∘ Maybe) ∘ ArrayList) composed applicative
     const ArrayMaybeArrayApplicative = ComposeApplicative(ArrayMaybeApplicative, ArrayListApplicative);
-    var array_maybe_array = ArrayMaybeArrayApplicative.InstanceImpl{ .functor_sup = .{
+    const array_maybe_array = ArrayMaybeArrayApplicative.InstanceImpl{ .functor_sup = .{
         .instanceF = array_maybe,
         .instanceG = ArrayListApplicative.InstanceImpl{ .allocator = allocator },
     } };

@@ -81,14 +81,14 @@ pub fn ApplicativeFromImpl(comptime ApplicativeImpl: type) type {
         pub const AFbType = InstanceImpl.AFbType;
 
         const PureType = @TypeOf(struct {
-            fn pureFn(instance: *InstanceImpl, a: anytype) APaType(@TypeOf(a)) {
+            fn pureFn(instance: *const InstanceImpl, a: anytype) APaType(@TypeOf(a)) {
                 _ = instance;
             }
         }.pureFn);
 
         const ApplyType = @TypeOf(struct {
             fn fapplyFn(
-                instance: *InstanceImpl,
+                instance: *const InstanceImpl,
                 comptime A: type,
                 comptime B: type,
                 // applicative function: F (a -> b), fa: F a
@@ -103,7 +103,7 @@ pub fn ApplicativeFromImpl(comptime ApplicativeImpl: type) type {
 
         const ApplyLamType = @TypeOf(struct {
             fn fapplyLam(
-                instance: *InstanceImpl,
+                instance: *const InstanceImpl,
                 comptime A: type,
                 comptime B: type,
                 // applicative function: F (a -> b), fa: F a

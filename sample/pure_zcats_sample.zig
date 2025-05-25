@@ -56,7 +56,7 @@ fn maybeSample() void {
     std.debug.print("applied with null function: {any}\n", .{maybe_applied});
 
     const maybe_binded = maybe_monad.bind(f64, u32, maybe_b, struct {
-        fn f(impl: *MaybeMImpl, x: f64) ?u32 {
+        fn f(impl: *const MaybeMImpl, x: f64) ?u32 {
             _ = impl;
             return @intFromFloat(@ceil(x * 4.0));
         }
@@ -140,7 +140,7 @@ fn arraySample() void {
 
     // example of monad
     const arr_binded = array_monad.bind(f64, u32, arr_new, struct {
-        fn f(impl: *ArrayMImpl, a: f64) ArrayF(u32) {
+        fn f(impl: *const ArrayMImpl, a: f64) ArrayF(u32) {
             _ = impl;
             var arr_b: ArrayF(u32) = undefined;
             var j: usize = 0;
@@ -157,7 +157,7 @@ fn arraySample() void {
     std.debug.print("arr_binded: {any}\n", .{arr_binded});
 
     const comptime_binded = array_monad.bind(f64, u32, arr_comptime, struct {
-        fn f(impl: *ArrayMImpl, a: f64) ArrayF(u32) {
+        fn f(impl: *const ArrayMImpl, a: f64) ArrayF(u32) {
             _ = impl;
             var arr_b: ArrayF(u32) = undefined;
             var j: usize = 0;

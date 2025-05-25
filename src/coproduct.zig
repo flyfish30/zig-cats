@@ -84,7 +84,7 @@ pub fn CoproductFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fga: FaType(K, @TypeOf(map_fn)),
@@ -163,7 +163,7 @@ pub fn CoproductApplicativeImpl(
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fga: FaType(K, @TypeOf(map_fn)),
@@ -180,7 +180,7 @@ pub fn CoproductApplicativeImpl(
             return self.functor_sup.fmapLam(K, map_lam, fga);
         }
 
-        pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+        pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
             return if (ImplG.Error == null)
                 .{ .inr = self.functor_sup.instanceG.pure(a) }
             else
@@ -188,7 +188,7 @@ pub fn CoproductApplicativeImpl(
         }
 
         pub fn fapply(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -237,7 +237,7 @@ pub fn CoproductApplicativeImpl(
         }
 
         pub fn fapplyLam(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -335,7 +335,7 @@ test "Compose Functor fmap" {
     const MaybeFunctor = Functor(Maybe);
     const ArrayListOrMaybeFunctor = CoproductFunctor(ArrayListFunctor, MaybeFunctor);
 
-    var array_or_maybe = ArrayListOrMaybeFunctor.InstanceImpl{
+    const array_or_maybe = ArrayListOrMaybeFunctor.InstanceImpl{
         .instanceF = .{ .allocator = allocator },
         .instanceG = .{},
     };
@@ -383,7 +383,7 @@ test "Compose Applicative pure and fapply" {
         NatMaybeToArray,
     );
 
-    var array_or_maybe = ArrayListOrMaybeApplicative.InstanceImpl{
+    const array_or_maybe = ArrayListOrMaybeApplicative.InstanceImpl{
         .functor_sup = .{
             // ArrayList Applicative instance
             .instanceF = .{ .allocator = allocator },

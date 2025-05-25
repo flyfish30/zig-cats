@@ -54,12 +54,12 @@ pub fn MaybeMonoidImpl(comptime T: type) type {
         /// This is just the type M that maybe with Error
         pub const EM = if (Error) |Err| Err!M else M;
 
-        pub fn mempty(self: *Self) EM {
+        pub fn mempty(self: *const Self) EM {
             _ = self;
             return null;
         }
 
-        pub fn mappend(self: *Self, ma: M, mb: M) EM {
+        pub fn mappend(self: *const Self, ma: M, mb: M) EM {
             if (ma == null) return mb;
             if (mb == null) return ma;
             if (Error == null) {
@@ -69,7 +69,7 @@ pub fn MaybeMonoidImpl(comptime T: type) type {
             }
         }
 
-        pub fn mconcat(self: *Self, xs: []const M) EM {
+        pub fn mconcat(self: *const Self, xs: []const M) EM {
             return monoid.commonMconcat(M, EM, self, xs);
         }
     };
@@ -83,12 +83,12 @@ const MaybeErrorImpl = struct {
     pub const M = ?type;
     pub const EM = M;
 
-    pub fn mempty(self: *Self) ?type {
+    pub fn mempty(self: Self) ?type {
         _ = self;
         return null;
     }
 
-    pub fn mappend(self: *Self, ma: M, mb: M) EM {
+    pub fn mappend(self: Self, ma: M, mb: M) EM {
         _ = self;
         if (ma == null) return mb;
         if (mb == null) return ma;
@@ -105,7 +105,7 @@ test "Monoid Maybe(A) mempty and mappend" {
     const U32SemiGroup = SemiGroup(u32);
     const semi_grp_u32 = U32SemiGroup.InstanceImpl{};
     const MaybeU32Monoid = Monoid(?u32);
-    var maybe_u32_m = MaybeU32Monoid.InstanceImpl{ .child_semi_grp_impl = semi_grp_u32 };
+    const maybe_u32_m = MaybeU32Monoid.InstanceImpl{ .child_semi_grp_impl = semi_grp_u32 };
     try testing.expect(base.isPureTypeClass(@TypeOf(maybe_u32_m)));
 
     const maybe_unit = maybe_u32_m.mempty();
@@ -122,7 +122,7 @@ test "Monoid Maybe(A) mempty and mappend" {
         .allocator = allocator,
     };
     const MaybeArrayMonoid = Monoid(?ArrayList(u32));
-    var maybe_array_m = MaybeArrayMonoid.InstanceImpl{
+    const maybe_array_m = MaybeArrayMonoid.InstanceImpl{
         .child_semi_grp_impl = semi_grp_array,
     };
     try testing.expect(!base.isPureTypeClass(@TypeOf(maybe_array_m)));
@@ -214,7 +214,7 @@ pub const MaybeMonadImpl = struct {
     }
 
     pub fn fmap(
-        self: *Self,
+        self: *const Self,
         comptime K: MapFnKind,
         map_fn: anytype,
         fa: FaType(K, @TypeOf(map_fn)),
@@ -265,7 +265,7 @@ pub const MaybeMonadImpl = struct {
         return null;
     }
 
-    pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+    pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
         _ = self;
         const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
         const fa: ?_A = if (has_err) try a else a;
@@ -273,7 +273,7 @@ pub const MaybeMonadImpl = struct {
     }
 
     pub fn fapply(
-        self: *Self,
+        self: *const Self,
         comptime A: type,
         comptime B: type,
         // applicative function: F (a -> b), fa: F a
@@ -293,7 +293,7 @@ pub const MaybeMonadImpl = struct {
     }
 
     pub fn fapplyLam(
-        self: *Self,
+        self: *const Self,
         comptime A: type,
         comptime B: type,
         // applicative function: F (a -> b), fa: F a
@@ -313,12 +313,12 @@ pub const MaybeMonadImpl = struct {
     }
 
     pub fn bind(
-        self: *Self,
+        self: *const Self,
         comptime A: type,
         comptime B: type,
         // monad function: (a -> M b), ma: M a
         ma: F(A),
-        k: *const fn (*Self, A) MbType(B),
+        k: *const fn (*const Self, A) MbType(B),
     ) MbType(B) {
         if (ma) |a| {
             return k(self, a);
@@ -327,7 +327,7 @@ pub const MaybeMonadImpl = struct {
     }
 
     pub fn bindLam(
-        self: *Self,
+        self: *const Self,
         comptime A: type,
         comptime B: type,
         // monad function: (a -> M b), ma: M a
@@ -352,7 +352,7 @@ const mul_e_f64 = testu.mul_e_f64;
 // unit tests for impure Maybe monad
 test "Maybe Functor fmap" {
     const MaybeFunctor = Functor(Maybe);
-    var maybe_functor = MaybeFunctor.InstanceImpl{};
+    const maybe_functor = MaybeFunctor.InstanceImpl{};
 
     var maybe_a: ?u32 = null;
     maybe_a = maybe_functor.fmap(.InplaceMap, add10, maybe_a);
@@ -373,7 +373,7 @@ test "Maybe Functor fmap" {
 
 test "Maybe Applicative pure and fapply" {
     const MaybeApplicative = Applicative(Maybe);
-    var maybe_applicative = MaybeApplicative.InstanceImpl{};
+    const maybe_applicative = MaybeApplicative.InstanceImpl{};
 
     const add24_from_f64 = &struct {
         fn f(x: f64) u32 {
@@ -396,10 +396,10 @@ test "Maybe Applicative pure and fapply" {
 
 test "Maybe Monad bind" {
     const MaybeMonad = Monad(Maybe);
-    var maybe_monad = MaybeMonad.InstanceImpl{};
+    const maybe_monad = MaybeMonad.InstanceImpl{};
 
     const cont_fn = &struct {
-        fn k(impl: *MaybeMonadImpl, x: f64) MaybeMonad.MbType(u32) {
+        fn k(impl: *const MaybeMonadImpl, x: f64) MaybeMonad.MbType(u32) {
             _ = impl;
             if (x == 3.14) {
                 return null;
@@ -467,7 +467,7 @@ test "runDo Maybe" {
 // unit tests for pure Maybe monad
 test "pure Maybe Functor fmap" {
     const MaybeFunctor = Functor(Maybe);
-    var maybe_functor = MaybeFunctor.InstanceImpl{};
+    const maybe_functor = MaybeFunctor.InstanceImpl{};
 
     var maybe_a: ?u32 = null;
     maybe_a = maybe_functor.fmap(.InplaceMap, add10, maybe_a);
@@ -488,7 +488,7 @@ test "pure Maybe Functor fmap" {
 
 test "pure Maybe Applicative pure and fapply" {
     const MaybeApplicative = Applicative(Maybe);
-    var maybe_applicative = MaybeApplicative.InstanceImpl{};
+    const maybe_applicative = MaybeApplicative.InstanceImpl{};
 
     const add24_from_f64 = &struct {
         fn f(x: f64) u32 {
@@ -511,11 +511,11 @@ test "pure Maybe Applicative pure and fapply" {
 
 test "pure Maybe Monad bind" {
     const MaybeMonad = Monad(Maybe);
-    var maybe_monad = MaybeMonad.InstanceImpl{};
+    const maybe_monad = MaybeMonad.InstanceImpl{};
     const MaybeMImpl = @TypeOf(maybe_monad);
 
     const cont1_f64 = &struct {
-        fn k(impl: *MaybeMImpl, x: f64) MaybeMonad.MbType(u32) {
+        fn k(impl: *const MaybeMImpl, x: f64) MaybeMonad.MbType(u32) {
             _ = impl;
             if (x == 3.14) {
                 return null;
@@ -527,7 +527,7 @@ test "pure Maybe Monad bind" {
 
     const cont_lam = struct {
         a: u32 = 7,
-        fn call(self: *const @This(), impl: *MaybeMImpl, x: f64) MaybeMonad.MbType(u32) {
+        fn call(self: *const @This(), impl: *const MaybeMImpl, x: f64) MaybeMonad.MbType(u32) {
             _ = impl;
             if (x == 3.14) {
                 return null;

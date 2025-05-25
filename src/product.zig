@@ -81,7 +81,7 @@ pub fn ProductFunctorImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fga: FaType(K, @TypeOf(map_fn)),
@@ -156,7 +156,7 @@ pub fn ProductApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fga: FaType(K, @TypeOf(map_fn)),
@@ -173,7 +173,7 @@ pub fn ProductApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
             return self.functor_sup.fmapLam(K, map_lam, fga);
         }
 
-        pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+        pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
             const pure_0 = if (ImplF.Error == null)
                 self.functor_sup.instanceF.pure(a)
             else
@@ -188,7 +188,7 @@ pub fn ProductApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fapply(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -209,7 +209,7 @@ pub fn ProductApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
         }
 
         pub fn fapplyLam(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -268,7 +268,7 @@ test "Compose Functor fmap" {
     const MaybeFunctor = Functor(Maybe);
     const ArrayListAndMaybeFunctor = ProductFunctor(ArrayListFunctor, MaybeFunctor);
 
-    var array_and_maybe = ArrayListAndMaybeFunctor.InstanceImpl{
+    const array_and_maybe = ArrayListAndMaybeFunctor.InstanceImpl{
         .instanceF = .{ .allocator = allocator },
         .instanceG = .{},
     };
@@ -310,7 +310,7 @@ test "Compose Applicative pure and fapply" {
     const MaybeApplicative = Applicative(Maybe);
     const ArrayListAndMaybeApplicative = ProductApplicative(ArrayListApplicative, MaybeApplicative);
 
-    var array_and_maybe = ArrayListAndMaybeApplicative.InstanceImpl{ .functor_sup = .{
+    const array_and_maybe = ArrayListAndMaybeApplicative.InstanceImpl{ .functor_sup = .{
         .instanceF = .{ .allocator = allocator },
         .instanceG = .{},
     } };

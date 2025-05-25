@@ -474,7 +474,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fa: FaType(K, @TypeOf(map_fn)),
@@ -599,7 +599,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             return &fmaplam_state.state;
         }
 
-        pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+        pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
             _ = self;
             const A = @TypeOf(a);
             const has_err, const _A = comptime isErrorUnionOrVal(A);
@@ -650,7 +650,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         }
 
         pub fn fapply(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -716,7 +716,7 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         }
 
         pub fn fapplyLam(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -782,16 +782,16 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         }
 
         pub fn bind(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k: *const fn (*Self, A) MbType(B),
+            k: *const fn (*const Self, A) MbType(B),
         ) MbType(B) {
             const TransCtx = struct {
                 // a pointer of state monad instance
-                monad_impl: *Self,
+                monad_impl: *const Self,
                 // a local temporary state value for ma
                 local_state: *State(S, A),
                 // a local temporary continuation function of bind function
@@ -844,13 +844,13 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
         }
 
         pub fn join(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             mma: F(F(A)),
         ) MbType(A) {
             const TransCtx = struct {
                 // a pointer of state monad instance
-                monad_impl: *Self,
+                monad_impl: *const Self,
                 // a local temporary state value for mma
                 local_state: *State(S, *State(S, A)),
             };
@@ -920,7 +920,7 @@ test "State(s, a) Functor fmap" {
     const DefaultCtx = StateContext(default_cfg);
     const StateU32 = DefaultCtx.StateM(u32);
     const StateFunctor = Functor(StateU32);
-    var state_functor = StateFunctor.InstanceImpl{ .allocator = allocator };
+    const state_functor = StateFunctor.InstanceImpl{ .allocator = allocator };
 
     // test fmap
     var state_a = try DefaultCtx.get(u32);
@@ -996,7 +996,7 @@ test "State(s, a) Applicative pure and fapply" {
     const DefaultCtx = StateContext(default_cfg);
     const StateU32 = DefaultCtx.StateM(u32);
     const StateApplicative = Applicative(StateU32);
-    var state_applicative = StateApplicative.InstanceImpl{ .allocator = allocator };
+    const state_applicative = StateApplicative.InstanceImpl{ .allocator = allocator };
 
     var state_a = try state_applicative.pure(@as(u32, 13));
     defer _ = state_a.strongUnref();
@@ -1031,7 +1031,7 @@ test "State(s, a) Monad bind" {
     const DefaultCtx = StateContext(default_cfg);
     const StateU32 = DefaultCtx.StateM(u32);
     const StateMonad = Monad(StateU32);
-    var state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
+    const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
 
     var state_a = try state_monad.pure(@as(u32, 13));
     defer _ = state_a.strongUnref();
@@ -1040,7 +1040,7 @@ test "State(s, a) Monad bind" {
     try testing.expectEqual(42, pured_s);
 
     var state_binded = try state_monad.bind(u32, f64, state_a, struct {
-        fn f(inst: *@TypeOf(state_monad), a: u32) StateMonad.MbType(f64) {
+        fn f(inst: *const @TypeOf(state_monad), a: u32) StateMonad.MbType(f64) {
             var state_b = try DefaultCtx.get(u32);
             defer _ = state_b.strongUnref();
             const add_x_f64_lam = Add_x_f64_Lam{ ._x = @floatFromInt(a) };
@@ -1250,7 +1250,7 @@ pub fn StateFFunctorImpl(comptime cfg: anytype, comptime S: type) type {
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fa: FaType(K, @TypeOf(map_fn)),
@@ -1541,7 +1541,7 @@ test "FreeMonad(StateF, A) liftFree" {
     const cfg = getDefaultStateCfg(StateS, allocator);
     const F = StateF(cfg, StateS);
     const StateFFunctor = Functor(F);
-    var statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
+    const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
     const ShowMonad = MonadFromImpl(ShowMonadImpl);
@@ -2253,7 +2253,7 @@ test "FreeMonad(StateF, A) bind and join" {
     defer pure_freem_b.deinit();
 
     const k_u32 = struct {
-        fn f(self: *FreeStateFImpl, a: u32) !FreeMonad(cfg, F, f64) {
+        fn f(self: *const FreeStateFImpl, a: u32) !FreeMonad(cfg, F, f64) {
             const _a = if (a > 1) 0 else a;
             const ops_array = switch (_a) {
                 0 => &[_]FOpInfo{},
@@ -2391,7 +2391,7 @@ test "FreeMonad(StateF, A) bind and join" {
     }.get;
 
     const getf_k_u32 = struct {
-        fn f(self: *FreeStateFImpl, a: u32) !FreeMonad(cfg, F, f64) {
+        fn f(self: *const FreeStateFImpl, a: u32) !FreeMonad(cfg, F, f64) {
             _ = self;
             const is_even = if (a & 0x1 == 1) false else true;
             const ops_array = switch (is_even) {
@@ -2827,7 +2827,7 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fa: FaType(K, @TypeOf(map_fn)),
@@ -2868,7 +2868,7 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
             }
         }
 
-        pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+        pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
             const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
             _ = _A;
             const _a = if (has_err) try a else a;
@@ -2876,7 +2876,7 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         }
 
         pub fn fapply(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -2891,7 +2891,7 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         }
 
         pub fn fapplyLam(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -2905,19 +2905,19 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
             return .{ .a = _b, .w = try self.monoid_impl.mappend(flam.w, fa.w) };
         }
         pub fn bind(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k: *const fn (*Self, A) MbType(B),
+            k: *const fn (*const Self, A) MbType(B),
         ) MbType(B) {
             const mb = try k(ma.a);
             return .{ .a = mb.a, .w = try self.monoid_impl.mappend(ma.w, mb.w) };
         }
 
         pub fn join(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             mma: F(F(A)),
         ) MbType(A) {
@@ -2993,7 +2993,7 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         }
 
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fa: FaType(K, @TypeOf(map_fn)),
@@ -3045,7 +3045,7 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
             }
         }
 
-        pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+        pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
             const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
             _ = _A;
             const _a = if (has_err) try a else a;
@@ -3053,7 +3053,7 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         }
 
         pub fn fapply(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -3070,7 +3070,7 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         }
 
         pub fn fapplyLam(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -3086,12 +3086,12 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
             return .{ .a = _b, .w = try self.monoid_impl.mappend(flam.w, fa.w) };
         }
         pub fn bind(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k: *const fn (*Self, A) MbType(B),
+            k: *const fn (*const Self, A) MbType(B),
         ) MbType(B) {
             const mb = if (ma.a) |_a|
                 try k(self, _a)
@@ -3101,7 +3101,7 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         }
 
         pub fn join(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             mma: F(F(A)),
         ) MbType(A) {

@@ -134,7 +134,7 @@ const StackCalcFunctorImpl = struct {
     }
 
     pub fn fmap(
-        self: *Self,
+        self: *const Self,
         comptime K: MapFnKind,
         map_fn: anytype,
         fa: FaType(K, @TypeOf(map_fn)),

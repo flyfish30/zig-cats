@@ -89,7 +89,7 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
         /// variable, then the array list in original variable should be reset
         /// to empty.
         pub fn fmap(
-            self: *Self,
+            self: *const Self,
             comptime K: MapFnKind,
             map_fn: anytype,
             fa: FaType(K, @TypeOf(map_fn)),
@@ -181,13 +181,13 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             return fb;
         }
 
-        pub fn pure(self: *Self, a: anytype) F(@TypeOf(a)) {
+        pub fn pure(self: *const Self, a: anytype) F(@TypeOf(a)) {
             _ = self;
             return [1]@TypeOf(a){a} ** len;
         }
 
         pub fn fapply(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -199,7 +199,7 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
         }
 
         pub fn fapplyLam(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // applicative function: F (a -> b), fa: F a
@@ -247,18 +247,18 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
         }
 
         pub fn bind(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
-            k: *const fn (*Self, A) F(B),
+            k: *const fn (*const Self, A) F(B),
         ) F(B) {
             return bindGeneric(self, .NormalMap, A, B, ma, k);
         }
 
         pub fn bindLam(
-            self: *Self,
+            self: *const Self,
             comptime A: type,
             comptime B: type,
             // monad function: (a -> M b), ma: M a
@@ -269,7 +269,7 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
         }
 
         pub fn bindGeneric(
-            self: *Self,
+            self: *const Self,
             comptime M: FMapMode,
             comptime A: type,
             comptime B: type,
@@ -278,7 +278,7 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             k: anytype,
         ) F(B) {
             const imap_lam = struct {
-                impl_self: *Self,
+                impl_self: *const Self,
                 fn_or_lam: @TypeOf(k),
                 fn call(map_self: *const @This(), i: usize, a: A) B {
                     if (M == .NormalMap) {
@@ -307,7 +307,7 @@ const ArrayF = Array(ARRAY_LEN);
 
 test "Array Functor fmap" {
     const ArrayFunctor = Functor(ArrayF);
-    var array_functor = ArrayFunctor.InstanceImpl{};
+    const array_functor = ArrayFunctor.InstanceImpl{};
 
     var array_a = ArrayF(u32){ 0, 1, 2, 3 };
     array_a = array_functor.fmap(.InplaceMap, add10, array_a);
@@ -325,7 +325,7 @@ test "Array Functor fmap" {
 
 test "Array Applicative pure and fapply" {
     const ArrayApplicative = Applicative(ArrayF);
-    var array_applicative = ArrayApplicative.InstanceImpl{};
+    const array_applicative = ArrayApplicative.InstanceImpl{};
 
     const array_pured = array_applicative.pure(@as(u32, 42));
     try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 42, 42 }, &array_pured);
@@ -342,12 +342,12 @@ test "Array Applicative pure and fapply" {
 
 test "Array Monad bind" {
     const ArrayMonad = Monad(ArrayF);
-    var array_monad = ArrayMonad.InstanceImpl{};
+    const array_monad = ArrayMonad.InstanceImpl{};
     const ArrayFImpl = @TypeOf(array_monad);
 
     const array_a = ArrayF(f64){ 10, 20, 30, 40 };
     const array_binded = array_monad.bind(f64, u32, array_a, struct {
-        fn f(impl: *ArrayFImpl, a: f64) ArrayFImpl.MbType(u32) {
+        fn f(impl: *const ArrayFImpl, a: f64) ArrayFImpl.MbType(u32) {
             _ = impl;
             var array_b: ArrayF(u32) = [_]u32{ 1, 2, 3, 4 };
             var j: usize = 0;
@@ -367,7 +367,7 @@ test "Array Monad bind" {
         m: f64 = 3.14,
 
         const Self = @This();
-        fn call(self: *const Self, impl: *ArrayFImpl, a: u32) ArrayFImpl.MbType(f64) {
+        fn call(self: *const Self, impl: *const ArrayFImpl, a: u32) ArrayFImpl.MbType(f64) {
             _ = impl;
             var array_b: ArrayF(f64) = [_]f64{ 2, 4, 6, 8 };
             var j: usize = 0;

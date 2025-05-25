@@ -55,19 +55,18 @@ pub fn ArrayListMonoidImpl(comptime T: type) type {
         /// Get base type of M(A), it is must just is A.
         pub const BaseType = ArrayListBaseType;
 
-        pub fn mempty(self: *Self) EM {
+        pub fn mempty(self: *const Self) EM {
             return ArrayList(T).init(self.allocator);
         }
 
-        pub fn mappend(self: *Self, ma: M, mb: M) EM {
-            _ = self;
-            var mc = try ArrayList(T).initCapacity(ma.allocator, ma.items.len + mb.items.len);
+        pub fn mappend(self: *const Self, ma: M, mb: M) EM {
+            var mc = try ArrayList(T).initCapacity(self.allocator, ma.items.len + mb.items.len);
             mc.appendSliceAssumeCapacity(ma.items);
             mc.appendSliceAssumeCapacity(mb.items);
             return mc;
         }
 
-        pub fn mconcat(self: *Self, xs: []const M) EM {
+        pub fn mconcat(self: *const Self, xs: []const M) EM {
             var acc = try self.mempty();
             for (xs) |x| {
                 try acc.appendSlice(x.items);
@@ -81,7 +80,7 @@ pub fn ArrayListMonoidImpl(comptime T: type) type {
 test "Monoid ArrayList(A) mconcat" {
     const allocator = testing.allocator;
     const ArrayMonoid = Monoid(ArrayList(u32));
-    var array_monoid = ArrayMonoid.InstanceImpl{
+    const array_monoid = ArrayMonoid.InstanceImpl{
         .allocator = allocator,
     };
 
@@ -145,7 +144,7 @@ pub const ArrayListMonadImpl = struct {
     /// variable, then the array list in original variable should be reset
     /// to empty.
     pub fn fmap(
-        self: *Self,
+        self: *const Self,
         comptime K: MapFnKind,
         map_fn: anytype,
         fa: FaType(K, @TypeOf(map_fn)),
@@ -229,7 +228,7 @@ pub const ArrayListMonadImpl = struct {
         return fb;
     }
 
-    pub fn pure(self: *Self, a: anytype) APaType(@TypeOf(a)) {
+    pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
         const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
         var array = try ArrayList(_A).initCapacity(self.allocator, ARRAY_DEFAULT_LEN);
 
@@ -239,7 +238,7 @@ pub const ArrayListMonadImpl = struct {
     }
 
     pub fn fapply(
-        self: *Self,
+        self: *const Self,
         comptime A: type,
         comptime B: type,
         // applicative function: F (a -> b), fa: F a
@@ -250,7 +249,7 @@ pub const ArrayListMonadImpl = struct {
     }
 
     pub fn fapplyLam(
-        self: *Self,
+        self: *const Self,
         comptime A: type,
         comptime B: type,
         // applicative function: F (a -> b), fa: F a
@@ -261,7 +260,7 @@ pub const ArrayListMonadImpl = struct {
     }
 
     fn fapplyGeneric(
-        self: *Self,
+        self: *const Self,
         comptime M: FMapMode,
         comptime A: type,
         comptime B: type,
@@ -283,12 +282,12 @@ pub const ArrayListMonadImpl = struct {
     }
 
     pub fn bind(
-        self: *Self,
+        self: *const Self,
         comptime A: type,
         comptime B: type,
         // monad function: (a -> M b), ma: M a
         ma: F(A),
-        k: *const fn (*Self, A) MbType(B),
+        k: *const fn (*const Self, A) MbType(B),
     ) MbType(B) {
         var mb = ArrayList(B).init(self.allocator);
         for (ma.items) |a| {
@@ -300,7 +299,7 @@ pub const ArrayListMonadImpl = struct {
     }
 
     pub fn join(
-        self: *Self,
+        self: *const Self,
         comptime A: type,
         mma: F(F(A)),
     ) MbType(A) {
@@ -322,7 +321,7 @@ const mul_pi_f64 = testu.mul_pi_f64;
 test "ArrayList Functor fmap" {
     const allocator = testing.allocator;
     const ArrayFunctor = Functor(ArrayList);
-    var array_functor = ArrayFunctor.InstanceImpl{ .allocator = allocator };
+    const array_functor = ArrayFunctor.InstanceImpl{ .allocator = allocator };
 
     var array_a = ArrayList(u32).init(allocator);
     defer array_a.deinit();
@@ -347,7 +346,7 @@ test "ArrayList Functor fmap" {
 test "ArrayList Applicative pure and fapply" {
     const allocator = testing.allocator;
     const ArrayApplicative = Applicative(ArrayList);
-    var array_applicative = ArrayApplicative.InstanceImpl{ .allocator = allocator };
+    const array_applicative = ArrayApplicative.InstanceImpl{ .allocator = allocator };
 
     const array_pured = try array_applicative.pure(@as(u32, 42));
     defer array_pured.deinit();
@@ -373,13 +372,14 @@ test "ArrayList Applicative pure and fapply" {
 test "ArrayList Monad bind" {
     const allocator = testing.allocator;
     const ArrayListMonad = Monad(ArrayList);
-    var array_monad = ArrayListMonad.InstanceImpl{ .allocator = allocator };
+    const array_monad = ArrayListMonad.InstanceImpl{ .allocator = allocator };
+    const ArrayListMImpl = @TypeOf(array_monad);
 
     var array_a = ArrayList(f64).init(allocator);
     defer array_a.deinit();
     try array_a.appendSlice(&[_]f64{ 10, 20, 30, 40 });
     const array_binded = try array_monad.bind(f64, u32, array_a, struct {
-        fn f(impl: *@TypeOf(array_monad), a: f64) ArrayListMonad.MbType(u32) {
+        fn f(impl: *const ArrayListMImpl, a: f64) ArrayListMonad.MbType(u32) {
             var arr_b = try ArrayList(u32).initCapacity(impl.allocator, 2);
             arr_b.appendAssumeCapacity(@intFromFloat(@ceil(a * 4.0)));
             arr_b.appendAssumeCapacity(@intFromFloat(@ceil(a * 9.0)));

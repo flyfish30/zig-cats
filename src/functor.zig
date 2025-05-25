@@ -128,7 +128,7 @@ pub fn FunctorFromImpl(comptime FunctorImpl: type) type {
         /// Typeclass function for map with function
         const FMapType = @TypeOf(struct {
             fn fmapFn(
-                instance: *InstanceImpl,
+                instance: *const InstanceImpl,
                 comptime K: MapFnKind,
                 // f: a -> b, fa: F a
                 f: anytype,
@@ -158,8 +158,6 @@ pub fn FunctorFromImpl(comptime FunctorImpl: type) type {
         @compileError("Incorrect type of fmap for Functor instance " ++ @typeName(FunctorImpl));
     }
     if (@TypeOf(FunctorImpl.fmapLam) != T.FMapLamType) {
-        @compileLog("Functor: Impl.fmapLam type=" ++ @typeName(@TypeOf(FunctorImpl.fmapLam)));
-        @compileLog("Functor: T.FMapLamType=" ++ @typeName(T.FMapLamType));
         @compileError("Incorrect type of fmapLam for Functor instance " ++ @typeName(FunctorImpl));
     }
     return base.ConstraitType(T);

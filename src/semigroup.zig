@@ -28,7 +28,7 @@ pub fn SemiGroupFromImpl(comptime SemiGroupImpl: type) type {
         /// Typeclass function for mappend
         const MappendType = @TypeOf(struct {
             fn mappendFn(
-                instance: *InstanceImpl,
+                instance: *const InstanceImpl,
                 a: M,
                 b: M,
             ) EM {
@@ -52,7 +52,7 @@ const VoidSemiGroupImpl = struct {
     const M = void;
     const EM = void;
 
-    pub fn mappend(self: *Self, a: void, b: void) void {
+    pub fn mappend(self: *const Self, a: void, b: void) void {
         _ = self;
         _ = a;
         _ = b;
@@ -70,7 +70,7 @@ fn NumberSemiGroupImpl(comptime Num: type) type {
         pub const M = Num;
         pub const EM = Num;
 
-        pub fn mappend(self: *Self, a: Num, b: Num) Num {
+        pub fn mappend(self: *const Self, a: Num, b: Num) Num {
             _ = self;
             return a + b;
         }
