@@ -1,5 +1,6 @@
 const std = @import("std");
 const base = @import("base.zig");
+const monoid = @import("monoid.zig");
 const functor = @import("functor.zig");
 const applicative = @import("applicative.zig");
 const monad = @import("monad.zig");
@@ -19,6 +20,7 @@ const isMapRef = base.isMapRef;
 const isInplaceMap = base.isInplaceMap;
 const castInplaceValue = base.castInplaceValue;
 
+const Monoid = monoid.Monoid;
 const Functor = functor.Functor;
 const Applicative = applicative.Applicative;
 const Monad = monad.Monad;
@@ -28,8 +30,114 @@ const ApplicativeFxTypes = applicative.ApplicativeFxTypes;
 const MonadFxTypes = monad.MonadFxTypes;
 const runDo = monad.runDo;
 
-const Maybe = base.Maybe;
 const Array = base.Array;
+
+/// The instance of Monoid Array(T).
+/// Like `instance Monoid Array(T)` in haskell.
+pub fn ArrayMonoidImpl(comptime len: u32, comptime T: type) type {
+    return struct {
+        child_impl: ChildImpl,
+
+        const Self = @This();
+        const ChildImpl = Monoid(T).InstanceImpl;
+        pub const Error: ?type = ChildImpl.Error;
+
+        /// The type M is a monoid, so the Monoid(M) is a Constrait.
+        pub const M = [len]T;
+        /// The result type of operator function in Monoid
+        /// This is just the type M that maybe with Error
+        pub const EM = if (Error) |Err| Err!M else M;
+
+        pub fn mempty(self: *const Self) EM {
+            const a: [len]T = if (Error == null)
+                @splat(self.child_impl.mempty())
+            else
+                @splat(try self.child_impl.mempty());
+            return a;
+        }
+
+        pub fn mappend(self: *const Self, ma: M, mb: M) EM {
+            var mc: M = undefined;
+            for (ma[0..], mb[0..], mc[0..]) |a, b, *c| {
+                c.* = if (Error == null)
+                    self.child_impl.mappend(a, b)
+                else
+                    try self.child_impl.mappend(a, b);
+            }
+            return mc;
+        }
+
+        pub fn mconcat(self: *const Self, xs: []const M) EM {
+            return monoid.commonMconcat(M, EM, self, xs);
+        }
+    };
+}
+
+const ArrayList = std.ArrayList;
+
+test "Monoid Array(A) mempty and mappend" {
+    const U32Monoid = Monoid(u32);
+    const monoid_u32 = U32Monoid.InstanceImpl{};
+    const Array4U32Monoid = Monoid([4]u32);
+    const array4_u32_m = Array4U32Monoid.InstanceImpl{ .child_impl = monoid_u32 };
+    try testing.expect(base.isPureTypeClass(@TypeOf(array4_u32_m)));
+
+    const array4_u32_unit = array4_u32_m.mempty();
+    try testing.expectEqualSlices(u32, &[_]u32{ 0, 0, 0, 0 }, &array4_u32_unit);
+
+    const a1: [4]u32 = @splat(42);
+    const a2: [4]u32 = @splat(37);
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 42, 42 }, &array4_u32_m.mappend(array4_u32_unit, a1));
+    try testing.expectEqualSlices(u32, &[_]u32{ 79, 79, 79, 79 }, &array4_u32_m.mappend(a1, a2));
+
+    const allocator = testing.allocator;
+    const ArraylU32Monoid = Monoid(ArrayList(u32));
+    const arrayl_monoid = ArraylU32Monoid.InstanceImpl{
+        .allocator = allocator,
+    };
+    const Array2ArraylMonoid = Monoid([2]ArrayList(u32));
+    const array2_arrayl_m = Array2ArraylMonoid.InstanceImpl{
+        .child_impl = arrayl_monoid,
+    };
+    try testing.expect(!base.isPureTypeClass(@TypeOf(array2_arrayl_m)));
+
+    const array2_arrayl_unit = try array2_arrayl_m.mempty();
+    try testing.expectEqualSlices(u32, &[_]u32{}, array2_arrayl_unit[0].items);
+    try testing.expectEqualSlices(u32, &[_]u32{}, array2_arrayl_unit[1].items);
+
+    const slice1: [2]u32 = @splat(42);
+    const slice2: [2]u32 = @splat(37);
+    var array1_1 = ArrayList(u32).init(allocator);
+    defer array1_1.deinit();
+    try array1_1.appendSlice(&slice1);
+    var array1_2 = ArrayList(u32).init(allocator);
+    defer array1_2.deinit();
+    try array1_2.appendSlice(&slice2);
+    const array_a1 = [2]ArrayList(u32){ array1_1, array1_2 };
+
+    var array2_1 = ArrayList(u32).init(allocator);
+    defer array2_1.deinit();
+    try array2_1.appendSlice(&slice2);
+    var array2_2 = ArrayList(u32).init(allocator);
+    defer array2_2.deinit();
+    try array2_2.appendSlice(&slice1);
+    const array_a2 = [2]ArrayList(u32){ array2_1, array2_2 };
+
+    const appended_unit_a1 = try array2_arrayl_m.mappend(array2_arrayl_unit, array_a1);
+    defer {
+        appended_unit_a1[0].deinit();
+        appended_unit_a1[1].deinit();
+    }
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42 }, appended_unit_a1[0].items);
+    try testing.expectEqualSlices(u32, &[_]u32{ 37, 37 }, appended_unit_a1[1].items);
+    const append_a1a2 = try array2_arrayl_m.mappend(array_a1, array_a2);
+    defer {
+        append_a1a2[0].deinit();
+        append_a1a2[1].deinit();
+    }
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 37, 37 }, append_a1a2[0].items);
+    try testing.expectEqualSlices(u32, &[_]u32{ 37, 37, 42, 42 }, append_a1a2[1].items);
+}
 
 pub fn ArrayMonadImpl(comptime len: usize) type {
     return struct {

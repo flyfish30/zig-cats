@@ -2,7 +2,9 @@ const std = @import("std");
 const base = @import("base.zig");
 const semi_grp = @import("semigroup.zig");
 const maybe = @import("maybe.zig");
-const array = @import("array_list_monad.zig");
+const vector = @import("vector.zig");
+const arraym = @import("array_monad.zig");
+const arraylm = @import("array_list_monad.zig");
 
 /// Monoid typeclass like in Haskell.
 /// A is just a type of Monoid typeclass, such as u32, List.
@@ -10,7 +12,9 @@ const array = @import("array_list_monad.zig");
 pub fn Monoid(comptime A: type) type {
     _ = semi_grp.SemiGroup(A);
     const MonoidImpl = MonoidImplFromType(A);
-    std.debug.assert(A == MonoidImpl.M);
+    if (A != MonoidImpl.M) {
+        @compileError("Monoid A(" ++ @typeName(A) ++ ") not match MonoidImpl.M(" ++ @typeName(MonoidImpl.M) ++ ")");
+    }
     return MonoidFromImpl(MonoidImpl);
 }
 
@@ -133,7 +137,7 @@ const monoidImplMap = std.StaticStringMap(type).initComptime(.{
 });
 
 const monoidImplFnMap = std.StaticStringMap(*const fn (type) type).initComptime(.{
-    .{ @typeName(std.ArrayList(void)), array.ArrayListMonoidImpl },
+    .{ @typeName(std.ArrayList(void)), arraylm.ArrayListMonoidImpl },
 });
 
 pub fn MonoidImplFromType(comptime T: type) type {
@@ -150,6 +154,8 @@ pub fn MonoidImplFromType(comptime T: type) type {
                 }
             },
             .int, .float => return NumberMonoidImpl(T),
+            .vector => |info| return vector.VectorMonoidImpl(info.len, info.child),
+            .array => |info| return arraym.ArrayMonoidImpl(info.len, info.child),
             .optional => return maybe.MaybeMonoidImpl(std.meta.Child(T)),
             else => {},
         }

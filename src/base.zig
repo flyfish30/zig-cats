@@ -1333,6 +1333,14 @@ pub fn Array(comptime len: usize) TCtor {
     }.ArrayF;
 }
 
+pub fn Vector(comptime len: u16) TCtor {
+    return struct {
+        fn VectorF(comptime A: type) type {
+            return @Vector(len, A);
+        }
+    }.VectorF;
+}
+
 pub fn FreeTFn(comptime T: type) type {
     return *const fn (T) void;
 }

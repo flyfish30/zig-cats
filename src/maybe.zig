@@ -42,11 +42,11 @@ const runDo = monad.runDo;
 /// Like `instance SemiGroup T => Monoid (Maybe T)` in haskell.
 pub fn MaybeMonoidImpl(comptime T: type) type {
     return struct {
-        child_semi_grp_impl: ChildSemiGroupImpl,
+        child_impl: ChildImpl,
 
         const Self = @This();
-        const ChildSemiGroupImpl = semi_grp.SemiGroupImplFromType(T);
-        pub const Error: ?type = ChildSemiGroupImpl.Error;
+        const ChildImpl = semi_grp.SemiGroup(T).InstanceImpl;
+        pub const Error: ?type = ChildImpl.Error;
 
         /// The type M is a monoid, so the Monoid(M) is a Constrait.
         pub const M = Maybe(T);
@@ -63,9 +63,9 @@ pub fn MaybeMonoidImpl(comptime T: type) type {
             if (ma == null) return mb;
             if (mb == null) return ma;
             if (Error == null) {
-                return self.child_semi_grp_impl.mappend(ma.?, mb.?);
+                return self.child_impl.mappend(ma.?, mb.?);
             } else {
-                return try self.child_semi_grp_impl.mappend(ma.?, mb.?);
+                return try self.child_impl.mappend(ma.?, mb.?);
             }
         }
 
@@ -105,7 +105,7 @@ test "Monoid Maybe(A) mempty and mappend" {
     const U32SemiGroup = SemiGroup(u32);
     const semi_grp_u32 = U32SemiGroup.InstanceImpl{};
     const MaybeU32Monoid = Monoid(?u32);
-    const maybe_u32_m = MaybeU32Monoid.InstanceImpl{ .child_semi_grp_impl = semi_grp_u32 };
+    const maybe_u32_m = MaybeU32Monoid.InstanceImpl{ .child_impl = semi_grp_u32 };
     try testing.expect(base.isPureTypeClass(@TypeOf(maybe_u32_m)));
 
     const maybe_unit = maybe_u32_m.mempty();
@@ -123,7 +123,7 @@ test "Monoid Maybe(A) mempty and mappend" {
     };
     const MaybeArrayMonoid = Monoid(?ArrayList(u32));
     const maybe_array_m = MaybeArrayMonoid.InstanceImpl{
-        .child_semi_grp_impl = semi_grp_array,
+        .child_impl = semi_grp_array,
     };
     try testing.expect(!base.isPureTypeClass(@TypeOf(maybe_array_m)));
 
@@ -155,7 +155,7 @@ test "Monoid Maybe(A) mconcat" {
     };
     const MaybeArrayMonoid = Monoid(?ArrayList(u32));
     var maybe_array_m = MaybeArrayMonoid.InstanceImpl{
-        .child_semi_grp_impl = semi_grp_array,
+        .child_impl = semi_grp_array,
     };
     try testing.expect(!base.isPureTypeClass(@TypeOf(maybe_array_m)));
 

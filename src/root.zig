@@ -14,6 +14,7 @@ pub usingnamespace @import("coproduct.zig");
 pub usingnamespace @import("free_types.zig");
 
 pub usingnamespace @import("maybe.zig");
+pub usingnamespace @import("vector.zig");
 pub usingnamespace @import("array_monad.zig");
 pub usingnamespace @import("array_list_monad.zig");
 pub usingnamespace @import("state.zig");

@@ -1,14 +1,18 @@
 const std = @import("std");
 const base = @import("base.zig");
 const maybe = @import("maybe.zig");
-const array = @import("array_list_monad.zig");
+const vector = @import("vector.zig");
+const arraym = @import("array_monad.zig");
+const arraylm = @import("array_list_monad.zig");
 
 /// SemiGroup typeclass like in Haskell.
 /// A is just a type of SemiGroup typeclass, such as u32, List.
 /// The return type is a Constrait, just like a constrait `SemiGroup a` in haskell.
 pub fn SemiGroup(comptime A: type) type {
     const SemiGroupImpl = SemiGroupImplFromType(A);
-    std.debug.assert(A == SemiGroupImpl.M);
+    if (A != SemiGroupImpl.M) {
+        @compileError("Monoid A(" ++ @typeName(A) ++ ") not match SemiGroupImpl.M(" ++ @typeName(SemiGroupImpl.M) ++ ")");
+    }
     return SemiGroupFromImpl(SemiGroupImpl);
 }
 
@@ -83,7 +87,7 @@ const semi_group_impl_map = std.StaticStringMap(type).initComptime(.{
 });
 
 const monoid_impl_fn_map = std.StaticStringMap(*const fn (type) type).initComptime(.{
-    .{ @typeName(std.ArrayList(void)), array.ArrayListMonoidImpl },
+    .{ @typeName(std.ArrayList(void)), arraylm.ArrayListMonoidImpl },
 });
 
 pub fn SemiGroupImplFromType(comptime T: type) type {
@@ -100,6 +104,8 @@ pub fn SemiGroupImplFromType(comptime T: type) type {
                 }
             },
             .int, .float => return NumberSemiGroupImpl(T),
+            .vector => |info| return vector.VectorMonoidImpl(info.len, info.child),
+            .array => |info| return arraym.ArrayMonoidImpl(info.len, info.child),
             .optional => return maybe.MaybeMonoidImpl(std.meta.Child(T)),
             else => {},
         }
