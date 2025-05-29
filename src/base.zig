@@ -7,7 +7,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
-// pub usingnamespace @import("base_types.zig");
+pub usingnamespace @import("base/util_types.zig");
 
 const TypeId = *const struct {
     _: u8,
