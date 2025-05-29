@@ -1,36 +1,125 @@
-# This is a basic workflow to help you get started with Actions
-
+# This is a basic workflow for test and run zig-cats
 name: CI
 
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "main" ]
+    branches:
+      - main
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
+  release:
+    types: [created]
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
-
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
-    runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
+  test_and_run:
+    name: Zig ${{ matrix.zig_version }} on ${{ matrix.target.runner_os_display }} for ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.runner_spec }}
+    strategy:
+      fail-fast: false
+      matrix:
+        zig_version: ['0.14.1']
+        target:
+          # Linux Targets
+          - name: x86_64-linux-gnu
+            runner_spec: ubuntu-latest  # x86_64
+            runner_os_display: Linux (x86_64 native)
+            is_native_on_runner: true
+          - name: aarch64-linux-gnu
+            runner_spec: ubuntu-24.04-arm # 64-bit ARM
+            runner_os_display: Linux (aarch64 native)
+            is_native_on_runner: true
+          - name: arm-linux-gnueabihf # 32-bit ARM
+            runner_spec: ubuntu-latest # run on x86_64 runner by QEMU
+            runner_os_display: Linux (x86_64 + QEMU for arm32)
+            is_native_on_runner: false
+            qemu_arch_suffix: arm
+          - name: riscv64-linux-gnu
+            runner_spec: ubuntu-latest # run on x86_64 runner by QEMU
+            runner_os_display: Linux (x86_64 + QEMU for riscv64)
+            is_native_on_runner: false
+            qemu_arch_suffix: riscv64
+          - name: riscv32-linux-gnu
+            runner_spec: ubuntu-latest # run on x86_64 runner by QEMU
+            runner_os_display: Linux (x86_64 + QEMU for riscv32)
+            is_native_on_runner: false
+            qemu_arch_suffix: riscv32
+          # Windows Targets
+          - name: x86_64-windows-gnu
+            runner_spec: windows-latest # default is x86_64
+            runner_os_display: Windows (x86_64 native)
+            is_native_on_runner: true
+          # macOS Targets
+          - name: x86_64-macos-none
+            runner_spec: macos-latest # Intel
+            runner_os_display: macOS (x86_64 native)
+            is_native_on_runner: true
+          - name: aarch64-macos-none
+            runner_spec: macos-latest # Apple Silicon
+            runner_os_display: macOS (aarch64 native)
+            is_native_on_runner: true
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+      - name: Set up Zig (${{ matrix.zig_version }})
+        uses: goto-bus-stop/setup-zig@v2 # this action should be install QEMU
+        with:
+          version: ${{ matrix.zig_version }}
 
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: Print Zig version, target and runner info
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          zig version
+          echo "Target: ${{ matrix.target.name }}"
+          echo "Runner OS: ${{ runner.os }}"
+          echo "Runner Arch: ${{ runner.arch }}"
+          echo "Is native on runner: ${{ matrix.target.is_native_on_runner }}"
+
+      - name: Ensure QEMU interpreter is correctly named/symlinked
+        if: runner.os == 'Linux' && matrix.target.is_native_on_runner == false && matrix.target.qemu_arch_suffix != ''
+        run: |
+          QEMU_ARCH="${{ matrix.target.qemu_arch_suffix }}"
+          QEMU_STATIC_BIN="/usr/bin/qemu-${QEMU_ARCH}-static"
+          QEMU_TARGET_BIN="/usr/bin/qemu-${QEMU_ARCH}"
+
+          echo "Checking for QEMU binaries for ${QEMU_ARCH}..."
+          ls -l /usr/bin/qemu-${QEMU_ARCH}* || echo "No qemu binaries found for this arch with ls."
+
+          if [ -f "${QEMU_STATIC_BIN}" ]; then
+            echo "${QEMU_STATIC_BIN} found."
+            if [ ! -f "${QEMU_TARGET_BIN}" ] && [ ! -L "${QEMU_TARGET_BIN}" ]; then
+              echo "${QEMU_TARGET_BIN} not found, creating symlink from ${QEMU_STATIC_BIN}."
+              sudo ln -sf "${QEMU_STATIC_BIN}" "${QEMU_TARGET_BIN}"
+            else
+              echo "${QEMU_TARGET_BIN} already exists or is a symlink."
+            fi
+          else
+            echo "WARNING: ${QEMU_STATIC_BIN} NOT found. qemu-user-static might not be properly installed or does not support this arch."
+            echo "Attempting to install qemu-user-static..."
+            sudo apt-get update -q
+            sudo apt-get install -y qemu-user-static
+            # Re-check after potential install
+            if [ -f "${QEMU_STATIC_BIN}" ] && [ ! -f "${QEMU_TARGET_BIN}" ] && [ ! -L "${QEMU_TARGET_BIN}" ]; then
+               sudo ln -sf "${QEMU_STATIC_BIN}" "${QEMU_TARGET_BIN}"
+            fi
+          fi
+          echo "Verifying ${QEMU_TARGET_BIN} can be found by 'which':"
+          which "${QEMU_TARGET_BIN}" || echo "${QEMU_TARGET_BIN} still not in PATH or does not exist."
+        shell: bash
+
+      - name: Determine QEMU flag
+        id: qemu_flag_step
+        run: |
+          if [[ "${{ matrix.target.is_native_on_runner }}" == "false" ]]; then
+            echo "flag=-fqemu" >> $GITHUB_OUTPUT
+          else
+            echo "flag=" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Run Zig Build Test
+        run: zig build test -Dtarget=${{ matrix.target.name }} ${{ steps.qemu_flag_step.outputs.flag }}
+
+      - name: Run Zig Build Run (on release)
+        if: github.event_name == 'release'
+        run: zig build run -Dtarget=${{ matrix.target.name }} --release=fast ${{ steps.qemu_flag_step.outputs.flag }}

@@ -320,7 +320,7 @@ fn getStateParentByTransLam(
     comptime StateParent: type,
     trans_lam: anytype,
 ) *StateParent {
-    return @fieldParentPtr("state", @as(*StateType, @fieldParentPtr("trans_lam", trans_lam)));
+    return @alignCast(@fieldParentPtr("state", @as(*StateType, @fieldParentPtr("trans_lam", trans_lam))));
 }
 
 pub fn CloneStateSFn(comptime S: type) type {
@@ -1635,7 +1635,7 @@ pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
         pub fn trans(self: Self, comptime A: type, fa: F(A)) Error.?!G(A) {
             if (fa == .putf) {
                 const put_fmt_str = "PutF {any}, ";
-                const len = std.fmt.count(put_fmt_str, .{fa.putf[0]});
+                const len: usize = @intCast(std.fmt.count(put_fmt_str, .{fa.putf[0]}));
                 var array = try ArrayList(u8).initCapacity(self.allocator, len);
                 const put_buf = array.addManyAsSliceAssumeCapacity(len);
                 _ = std.fmt.bufPrint(put_buf, put_fmt_str, .{fa.putf[0]}) catch |err|

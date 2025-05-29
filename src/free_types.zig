@@ -1018,7 +1018,7 @@ pub fn FreeMonadImpl(
                 } else {
                     if (isInplaceMap(K)) {
                         // reuse the allocated memory of free_m[0] in fa,
-                        var new_freem: *FreeMonad(cfg, FunF, _B) = @ptrCast(fa.free_m[0]);
+                        var new_freem: *FreeMonad(cfg, FunF, _B) = @alignCast(@ptrCast(fa.free_m[0]));
                         new_freem.free_fop = .{ new_x_to_freem, new_op_info };
                         return .{ .free_m = .{ new_freem, fa.free_m[1] } };
                     } else {
@@ -1117,7 +1117,7 @@ pub fn FreeMonadImpl(
                 } else {
                     if (isInplaceMap(K)) {
                         // reuse the allocated memory of free_m[0] in fa,
-                        var new_freem: *FreeMonad(cfg, FunF, _B) = @ptrCast(fa.free_m[0]);
+                        var new_freem: *FreeMonad(cfg, FunF, _B) = @alignCast(@ptrCast(fa.free_m[0]));
                         new_freem.free_fop = .{ new_x_to_freem, new_op_info };
                         return .{ .free_m = .{ new_freem, fa.free_m[1] } };
                     } else {
