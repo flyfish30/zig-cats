@@ -184,18 +184,32 @@ const NumbOp = enum {
 fn isNumberType(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .int, .float, .comptime_int, .comptime_float => true,
+        .vector => |vec_info| switch (@typeInfo(vec_info.child)) {
+            .int, .float, .comptime_int, .comptime_float => true,
+            else => false,
+        },
         else => false,
     };
 }
 
 fn SumOrProductNumb(comptime Numb: type, comptime numbop: NumbOp) type {
     const info = @typeInfo(Numb);
+
+    // Check if the type Numb is a valid number type.
     switch (info) {
         .void, .int, .float, .comptime_int, .comptime_float => {},
+        .vector => |vec_info| {
+            // If the element is a number then vector is a number.
+            switch (@typeInfo(vec_info.child)) {
+                .int, .float, .comptime_int, .comptime_float => {},
+                else => @compileError("It is must be a number vector in SumNumb/ProductNumb"),
+            }
+        },
         .pointer => {
+            // If the ponter is point to a function or a lambda that parameter and return
+            // value is a number, then it is a number.
             const ChildType = info.pointer.child;
-            const child_info = @typeInfo(ChildType);
-            switch (child_info) {
+            switch (@typeInfo(ChildType)) {
                 .@"fn" => if (!(isNumberType(MapFnInType(ChildType)) and
                     isNumberType(MapFnRetType(ChildType))))
                 {
@@ -248,9 +262,22 @@ fn NumbMonoidImpl(comptime NumbM: type, numbop: NumbOp) type {
         pub const M = NumbM;
         pub const EM = NumbM;
 
+        const NumbType = NumbM.NumbType;
+        const numb_0: NumbType = switch (@typeInfo(NumbType)) {
+            .int, .float, .comptime_int, .comptime_float => 0,
+            .vector => @splat(0),
+            else => @compileError("Can not set 0 to type `" ++ @typeName(NumbType) ++ "`"),
+        };
+
+        const numb_1: NumbType = switch (@typeInfo(NumbType)) {
+            .int, .float, .comptime_int, .comptime_float => 1,
+            .vector => @splat(1),
+            else => @compileError("Can not set 1 to type `" ++ @typeName(NumbType) ++ "`"),
+        };
+
         const numb_unit = switch (numbop) {
-            .Add => 0,
-            .Mul => 1,
+            .Add => numb_0,
+            .Mul => numb_1,
         };
         const fromNumb = NumbM.fromNumb;
         const toNumb = NumbM.toNumb;
@@ -269,7 +296,7 @@ fn NumbMonoidImpl(comptime NumbM: type, numbop: NumbOp) type {
 
         pub fn mconcat(self: *const Self, xs: []const M) EM {
             _ = self;
-            var acc: NumbM.NumbType = numb_unit;
+            var acc: NumbType = numb_unit;
             for (xs) |x| {
                 switch (numbop) {
                     .Add => acc += toNumb(x),
@@ -282,28 +309,62 @@ fn NumbMonoidImpl(comptime NumbM: type, numbop: NumbOp) type {
 }
 
 test "Monoid SumNumb and ProductNumb mempty and mappend" {
+    // test sum number
     const SumMonoid = Monoid(SumNumb(u16));
     const sum_monoid = SumMonoid.InstanceImpl{};
     const sum_0 = sum_monoid.mempty();
     try testing.expectEqual(0, sum_0.toNumb());
-
     const sum_1 = SumNumb(u16).fromNumb(42);
     const sum_2 = SumNumb(u16).fromNumb(37);
     try testing.expectEqual(42, sum_monoid.mappend(sum_0, sum_1).toNumb());
     try testing.expectEqual(79, sum_monoid.mappend(sum_1, sum_2).toNumb());
 
+    // test sum vector number
+    const Vec4xU16 = @Vector(4, u16);
+    const SumVecMonoid = Monoid(SumNumb(Vec4xU16));
+    const sum_vec_monoid = SumVecMonoid.InstanceImpl{};
+    const sum_vec_0 = sum_vec_monoid.mempty();
+    try testing.expectEqual(Vec4xU16{ 0, 0, 0, 0 }, sum_vec_0.toNumb());
+    const sum_vec_1 = SumNumb(Vec4xU16).fromNumb(Vec4xU16{ 9, 7, 3, 5 });
+    const sum_vec_2 = SumNumb(Vec4xU16).fromNumb(Vec4xU16{ 2, 8, 5, 4 });
+    try testing.expectEqual(
+        Vec4xU16{ 9, 7, 3, 5 },
+        sum_vec_monoid.mappend(sum_vec_0, sum_vec_1).toNumb(),
+    );
+    try testing.expectEqual(
+        Vec4xU16{ 11, 15, 8, 9 },
+        sum_vec_monoid.mappend(sum_vec_1, sum_vec_2).toNumb(),
+    );
+
+    // test product number
     const ProductMonoid = Monoid(ProductNumb(u16));
     const product_monoid = ProductMonoid.InstanceImpl{};
     const product_0 = product_monoid.mempty();
     try testing.expectEqual(1, product_0.toNumb());
-
     const product_1 = ProductNumb(u16).fromNumb(12);
     const product_2 = ProductNumb(u16).fromNumb(25);
     try testing.expectEqual(12, product_monoid.mappend(product_0, product_1).toNumb());
     try testing.expectEqual(300, product_monoid.mappend(product_1, product_2).toNumb());
+
+    // test product vector number
+    const ProductVecMonoid = Monoid(ProductNumb(Vec4xU16));
+    const product_vec_monoid = ProductVecMonoid.InstanceImpl{};
+    const product_vec_0 = product_vec_monoid.mempty();
+    try testing.expectEqual(Vec4xU16{ 1, 1, 1, 1 }, product_vec_0.toNumb());
+    const product_vec_1 = ProductNumb(Vec4xU16).fromNumb(Vec4xU16{ 9, 7, 3, 5 });
+    const product_vec_2 = ProductNumb(Vec4xU16).fromNumb(Vec4xU16{ 2, 8, 5, 4 });
+    try testing.expectEqual(
+        Vec4xU16{ 9, 7, 3, 5 },
+        product_vec_monoid.mappend(product_vec_0, product_vec_1).toNumb(),
+    );
+    try testing.expectEqual(
+        Vec4xU16{ 18, 56, 15, 20 },
+        product_vec_monoid.mappend(product_vec_1, product_vec_2).toNumb(),
+    );
 }
 
 test "Monoid SumNumb and ProductNumb mconcat" {
+    // test sum/product number
     const SumMonoid = Monoid(SumNumb(u16));
     const sum_monoid = SumMonoid.InstanceImpl{};
     const ProductMonoid = Monoid(ProductNumb(u16));
@@ -320,6 +381,27 @@ test "Monoid SumNumb and ProductNumb mconcat" {
     const product_numbs = array4_functor.fmap(.NewValMap, ProductNumb(u16).fromNumb, numbs);
     const product_concated = product_monoid.mconcat(&product_numbs);
     try testing.expectEqual(35581, product_concated.toNumb());
+
+    // test sum/product vector number
+    const Vec4xU16 = @Vector(4, u16);
+    const SumVecMonoid = Monoid(SumNumb(Vec4xU16));
+    const sum_vec_monoid = SumVecMonoid.InstanceImpl{};
+    const ProductVecMonoid = Monoid(ProductNumb(Vec4xU16));
+    const product_vec_monoid = ProductVecMonoid.InstanceImpl{};
+
+    const numb_vecs = [_]Vec4xU16{
+        Vec4xU16{ 2, 3, 4, 5 },
+        Vec4xU16{ 5, 4, 3, 2 },
+        Vec4xU16{ 3, 5, 7, 9 },
+        Vec4xU16{ 9, 7, 5, 3 },
+    };
+    const sum_vec_numbs = array4_functor.fmap(.NewValMap, SumNumb(Vec4xU16).fromNumb, numb_vecs);
+    const sum_vec_concated = sum_vec_monoid.mconcat(&sum_vec_numbs);
+    try testing.expectEqual(Vec4xU16{ 19, 19, 19, 19 }, sum_vec_concated.toNumb());
+
+    const product_vec_numbs = array4_functor.fmap(.NewValMap, ProductNumb(Vec4xU16).fromNumb, numb_vecs);
+    const product_vec_concated = product_vec_monoid.mconcat(&product_vec_numbs);
+    try testing.expectEqual(Vec4xU16{ 270, 420, 420, 270 }, product_vec_concated.toNumb());
 }
 
 fn NumbMonadImpl(comptime NumbF: TCtor) type {
@@ -483,9 +565,27 @@ test "SumNumb and ProductNumb Functor fmap/fmapLam" {
     const mul_pi_lam = Mul_x_f64_Lam{ ._x = 3.14 };
     product_f64 = product_functor.fmapLam(.NewValMap, mul_pi_lam, product_u32);
     try testing.expectEqual(131.88, product_f64.toNumb());
+
+    // The test case for vector number is not necessary, because fmap f = fapply (pure f)
+}
+
+const Vec4xU32 = @Vector(4, u32);
+const Vec4xF64 = @Vector(4, f64);
+
+fn vec_add10(v: Vec4xU32) Vec4xU32 {
+    return v + @as(Vec4xU32, @splat(10));
+}
+
+fn vec_add_pi_f64(v: Vec4xU32) Vec4xF64 {
+    return @as(Vec4xF64, @floatFromInt(v)) + @as(Vec4xF64, @splat(3.14));
+}
+
+fn vec_mul_pi_f64(v: Vec4xU32) Vec4xF64 {
+    return @as(Vec4xF64, @floatFromInt(v)) * @as(Vec4xF64, @splat(3.14));
 }
 
 test "SumNumb and ProductNumb Applicative pure and fapply/fapplyLam" {
+    // test sum/product number
     const SumApplicative = Applicative(SumNumb);
     const sum_applicative = SumApplicative.InstanceImpl{};
     const ProductApplicative = Applicative(ProductNumb);
@@ -517,12 +617,36 @@ test "SumNumb and ProductNumb Applicative pure and fapply/fapplyLam" {
     const product_mul_pi_lam = product_applicative.pure(&mul_pi_lam);
     product_f64 = product_applicative.fapplyLam(u32, f64, product_mul_pi_lam, product_u32);
     try testing.expectEqual(131.88, product_f64.toNumb());
+
+    // test sum/product vector number
+    const SumVecApplicative = Applicative(SumNumb);
+    const sum_vec_applicative = SumVecApplicative.InstanceImpl{};
+    const ProductVecApplicative = Applicative(ProductNumb);
+    const product_vec_applicative = ProductVecApplicative.InstanceImpl{};
+
+    const sum_vec_u32 = sum_vec_applicative.pure(@as(Vec4xU32, @splat(42)));
+    const sum_vec_add10 = sum_vec_applicative.pure(&vec_add10);
+    var sum_vec_added = sum_vec_applicative.fapply(Vec4xU32, Vec4xU32, sum_vec_add10, sum_vec_u32);
+    try testing.expectEqual(@as(Vec4xU32, @splat(52)), sum_vec_added.toNumb());
+    const sum_vec_add_pi = sum_vec_applicative.pure(&vec_add_pi_f64);
+    var sum_vec_f64 = sum_vec_applicative.fapply(Vec4xU32, Vec4xF64, sum_vec_add_pi, sum_vec_u32);
+    try testing.expectEqual(@as(Vec4xF64, @splat(45.14)), sum_vec_f64.toNumb());
+
+    const product_vec_u32 = product_vec_applicative.pure(@as(Vec4xU32, @splat(42)));
+    const product_vec_mul_pi = product_vec_applicative.pure(&vec_mul_pi_f64);
+    var product_vec_f64 = product_vec_applicative.fapply(Vec4xU32, Vec4xF64, product_vec_mul_pi, product_vec_u32);
+    try testing.expectEqual(@as(Vec4xF64, @splat(131.88)), product_vec_f64.toNumb());
 }
 
 const SumImpl = NumbMonadImpl(SumNumb);
 fn sum_add10_k(impl: *const SumImpl, a: u32) SumNumb(u32) {
     _ = impl;
     return SumNumb(u32).fromNumb(a + 10);
+}
+
+fn sum_vec_add10_k(impl: *const SumImpl, a: Vec4xU32) SumNumb(Vec4xU32) {
+    _ = impl;
+    return SumNumb(Vec4xU32).fromNumb(a + @as(Vec4xU32, @splat(10)));
 }
 
 const Sum_mul_f64_Klam = struct {
@@ -540,6 +664,11 @@ fn product_add10_k(impl: *const ProductImpl, a: u32) ProductNumb(u32) {
     return ProductNumb(u32).fromNumb(a + 10);
 }
 
+fn product_vec_add10_k(impl: *const ProductImpl, a: Vec4xU32) ProductNumb(Vec4xU32) {
+    _ = impl;
+    return ProductNumb(Vec4xU32).fromNumb(a + @as(Vec4xU32, @splat(10)));
+}
+
 const Product_mul_f64_Klam = struct {
     _x: f64,
     const Self = @This();
@@ -550,6 +679,7 @@ const Product_mul_f64_Klam = struct {
 };
 
 test "SumNumb and ProductNumb Monad bind/bindLam" {
+    // test sum/product number
     const SumMonad = Monad(SumNumb);
     const sum_monad = SumMonad.InstanceImpl{};
     const ProductMonad = Monad(ProductNumb);
@@ -568,4 +698,18 @@ test "SumNumb and ProductNumb Monad bind/bindLam" {
     const product_mul_pi_klam = Product_mul_f64_Klam{ ._x = 3.14 };
     var product_f64 = product_monad.bindLam(u32, f64, product_u32, product_mul_pi_klam);
     try testing.expectEqual(131.88, product_f64.toNumb());
+
+    // test sum/product vector number
+    const SumVecMonad = Monad(SumNumb);
+    const sum_vec_monad = SumVecMonad.InstanceImpl{};
+    const ProductVecMonad = Monad(ProductNumb);
+    const product_vec_monad = ProductVecMonad.InstanceImpl{};
+
+    const sum_vec_u32 = sum_vec_monad.pure(@as(Vec4xU32, @splat(42)));
+    var sum_vec_added = sum_vec_monad.bind(Vec4xU32, Vec4xU32, sum_vec_u32, sum_vec_add10_k);
+    try testing.expectEqual(@as(Vec4xU32, @splat(52)), sum_vec_added.toNumb());
+
+    const product_vec_u32 = product_vec_monad.pure(@as(Vec4xU32, @splat(42)));
+    var product_vec_added = product_vec_monad.bind(Vec4xU32, Vec4xU32, product_vec_u32, product_vec_add10_k);
+    try testing.expectEqual(@as(Vec4xU32, @splat(52)), product_vec_added.toNumb());
 }
