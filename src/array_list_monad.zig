@@ -304,6 +304,24 @@ pub const ArrayListMonadImpl = struct {
         return mb;
     }
 
+    pub fn bindLam(
+        self: *const Self,
+        comptime A: type,
+        comptime B: type,
+        // monad function: (a -> M b), ma: M a
+        ma: F(A),
+        // klam is a lambda with function: *const fn (Self, *InstanceImpl, A) MbType(B),
+        klam: anytype,
+    ) MbType(B) {
+        var mb = ArrayList(B).init(self.allocator);
+        for (ma.items) |a| {
+            const tmp_mb = try klam.call(self, a);
+            defer tmp_mb.deinit();
+            try mb.appendSlice(tmp_mb.items);
+        }
+        return mb;
+    }
+
     pub fn join(
         self: *const Self,
         comptime A: type,
@@ -394,6 +412,30 @@ test "ArrayList Monad bind" {
     }.f);
     defer array_binded.deinit();
     try testing.expectEqualSlices(u32, &[_]u32{ 40, 90, 80, 180, 120, 270, 160, 360 }, array_binded.items);
+
+    const lam = struct {
+        m: f64,
+        n: f64,
+        const Self = @This();
+        fn call(self: *const Self, impl: *const ArrayListMImpl, a: u32) ArrayListMImpl.MbType(f64) {
+            var arr_b = try ArrayList(f64).initCapacity(impl.allocator, 2);
+            arr_b.appendAssumeCapacity(@as(f64, @floatFromInt(a)) + self.m);
+            arr_b.appendAssumeCapacity(@as(f64, @floatFromInt(a)) + self.n);
+            return arr_b;
+        }
+    }{ .m = 3.14, .n = 2.75 };
+    const array_c = try array_monad.bindLam(u32, f64, array_binded, lam);
+    defer array_c.deinit();
+    try testing.expectEqualSlices(
+        f64,
+        &[_]f64{
+            43.14, 42.75, 93.14, 92.75, // row 1
+            83.14, 82.75, 183.14, 182.75, // row 2
+            123.14, 122.75, 273.14, 272.75, // row 3
+            163.14, 162.75, 363.14, 362.75, // row 4
+        },
+        array_c.items,
+    );
 }
 
 test "runDo Arraylist" {

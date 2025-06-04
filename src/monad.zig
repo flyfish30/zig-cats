@@ -9,6 +9,12 @@ const TCtor = base.TCtor;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 
 const Applicative = applicative.Applicative;
+
+const KontFnInType = base.KontFnInType;
+const KontFnRetType = base.KontFnRetType;
+const KontLamInType = base.KontLamInType;
+const KontLamRetType = base.KontLamRetType;
+
 const Maybe = base.Maybe;
 const ArrayList = std.ArrayList;
 
@@ -63,10 +69,29 @@ pub fn MonadFromImpl(comptime MonadImpl: type) type {
                 _ = k;
             }
         }.bindFn);
+
+        const BindLamType = @TypeOf(struct {
+            fn bindLamFn(
+                instance: *const InstanceImpl,
+                comptime A: type,
+                comptime B: type,
+                // monad function: (a -> M b), ma: M a
+                ma: M(A),
+                // klam is a lambda with function: *const fn (Self, *InstanceImpl, A) MbType(B),
+                klam: anytype,
+            ) MbType(B) {
+                _ = instance;
+                _ = ma;
+                _ = klam;
+            }
+        }.bindLamFn);
     };
 
     if (@TypeOf(MonadImpl.bind) != T.BindType) {
         @compileError("Incorrect type of bind for Monad instance " ++ @typeName(MonadImpl));
+    }
+    if (@TypeOf(MonadImpl.bindLam) != T.BindType) {
+        @compileError("Incorrect type of bindLam for Monad instance " ++ @typeName(MonadImpl));
     }
     return base.ConstraitType(T);
 }

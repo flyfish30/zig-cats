@@ -350,6 +350,7 @@ pub const MaybeMonadImpl = struct {
         comptime B: type,
         // monad function: (a -> M b), ma: M a
         ma: F(A),
+        // klam is a lambda with function: *const fn (Self, *InstanceImpl, A) MbType(B),
         klam: anytype,
     ) MbType(B) {
         if (ma) |a| {

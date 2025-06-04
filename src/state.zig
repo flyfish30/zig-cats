@@ -849,6 +849,21 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
             return &bind_state.state;
         }
 
+        pub fn bindLam(
+            self: *const Self,
+            comptime A: type,
+            comptime B: type,
+            // monad function: (a -> M b), ma: M a
+            ma: F(A),
+            // A lambda with function: *const fn (Self, *InstanceImpl, A) MbType(B),
+            klam: anytype,
+        ) MbType(B) {
+            _ = self;
+            _ = ma;
+            _ = klam;
+            @compileError("State monad not support bindLam, please use bind function!");
+        }
+
         pub fn join(
             self: *const Self,
             comptime A: type,
@@ -2922,6 +2937,19 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
             return .{ .a = mb.a, .w = try self.monoid_impl.mappend(ma.w, mb.w) };
         }
 
+        pub fn bindLam(
+            self: *const Self,
+            comptime A: type,
+            comptime B: type,
+            // monad function: (a -> M b), ma: M a
+            ma: F(A),
+            // A lambda with function: *const fn (Self, *InstanceImpl, A) MbType(B),
+            klam: anytype,
+        ) MbType(B) {
+            const mb = try klam.call(ma.a);
+            return .{ .a = mb.a, .w = try self.monoid_impl.mappend(ma.w, mb.w) };
+        }
+
         pub fn join(
             self: *const Self,
             comptime A: type,
@@ -3090,6 +3118,7 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
             } else null;
             return .{ .a = _b, .w = try self.monoid_impl.mappend(flam.w, fa.w) };
         }
+
         pub fn bind(
             self: *const Self,
             comptime A: type,
@@ -3100,6 +3129,22 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
         ) MbType(B) {
             const mb = if (ma.a) |_a|
                 try k(self, _a)
+            else
+                .{ .a = null, .w = self.monoid_impl.mempty() };
+            return .{ .a = mb.a, .w = try self.monoid_impl.mappend(ma.w, mb.w) };
+        }
+
+        pub fn bindLam(
+            self: *const Self,
+            comptime A: type,
+            comptime B: type,
+            // monad function: (a -> M b), ma: M a
+            ma: F(A),
+            // A lambda with function: *const fn (Self, *InstanceImpl, A) MbType(B),
+            klam: anytype,
+        ) MbType(B) {
+            const mb = if (ma.a) |_a|
+                try klam.call(self, _a)
             else
                 .{ .a = null, .w = self.monoid_impl.mempty() };
             return .{ .a = mb.a, .w = try self.monoid_impl.mappend(ma.w, mb.w) };

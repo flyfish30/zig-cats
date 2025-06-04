@@ -1330,8 +1330,36 @@ pub fn FreeMonadImpl(
             ma: F(A),
             k: *const fn (*const Self, A) MbType(B),
         ) MbType(B) {
+            return bindGeneric(self, .NormalMap, A, B, ma, k);
+        }
+
+        pub fn bindLam(
+            self: *const Self,
+            comptime A: type,
+            comptime B: type,
+            // monad function: (a -> M b), ma: M a
+            ma: F(A),
+            // A lambda with function: *const fn (Self, *InstanceImpl, A) MbType(B),
+            klam: anytype,
+        ) MbType(B) {
+            return bindGeneric(self, .LambdaMap, A, B, ma, klam);
+        }
+
+        pub fn bindGeneric(
+            self: *const Self,
+            comptime M: FMapMode,
+            comptime A: type,
+            comptime B: type,
+            // monad function: (a -> M b), ma: M a
+            ma: F(A),
+            k: anytype,
+        ) MbType(B) {
             if (ma == .pure_m) {
-                return try k(self, ma.pure_m);
+                if (M == .NormalMap) {
+                    return try k(self, ma.pure_m);
+                } else {
+                    return try k.call(self, ma.pure_m);
+                }
             }
 
             const is_only_fop, const free_fop = blk: {
@@ -1357,7 +1385,11 @@ pub fn FreeMonadImpl(
                             freem.deinit();
                         }
                         // recusive call bind for inner free monad
-                        return self_bind.fimpl.bind(A, B, freem, self_bind.local_k);
+                        if (M == .NormalMap) {
+                            return self_bind.fimpl.bind(A, B, freem, self_bind.local_k);
+                        } else {
+                            return self_bind.fimpl.bindLam(A, B, freem, self_bind.local_k);
+                        }
                     }
                 }{ .fimpl = self, .local_k = k };
 
@@ -1373,7 +1405,10 @@ pub fn FreeMonadImpl(
                 }
             }
 
-            const freem = try k(self, ma.free_m[0].pure_m);
+            const freem = if (M == .NormalMap)
+                try k(self, ma.free_m[0].pure_m)
+            else
+                try k.call(self, ma.free_m[0].pure_m);
             if (freem == .pure_m) {
                 const new_pure_m = try self.allocator.create(F(B));
                 new_pure_m.* = .{ .pure_m = freem.pure_m };

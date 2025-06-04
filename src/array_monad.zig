@@ -377,6 +377,7 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             comptime B: type,
             // monad function: (a -> M b), ma: M a
             ma: F(A),
+            // A lambda with function: *const fn (Self, *InstanceImpl, A) MbType(B),
             klam: anytype,
         ) F(B) {
             return bindGeneric(self, .LambdaMap, A, B, ma, klam);
