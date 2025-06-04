@@ -11,6 +11,11 @@ const isErrorUnionOrVal = base.isErrorUnionOrVal;
 
 const Functor = functor.Functor;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const Maybe = base.Maybe;
 const ArrayList = std.ArrayList;
 
@@ -89,14 +94,12 @@ pub fn ApplicativeFromImpl(comptime ApplicativeImpl: type) type {
         const ApplyType = @TypeOf(struct {
             fn fapplyFn(
                 instance: *const InstanceImpl,
-                comptime A: type,
-                comptime B: type,
                 // applicative function: F (a -> b), fa: F a
-                ff: F(*const fn (A) B),
-                fa: F(A),
-            ) AFbType(B) {
+                // ff: F(*const fn (A) B),
+                ff: anytype,
+                fa: F(ApplyFnInType(InstanceImpl, @TypeOf(ff))),
+            ) AFbType(ApplyFnRetType(InstanceImpl, @TypeOf(ff))) {
                 _ = instance;
-                _ = ff;
                 _ = fa;
             }
         }.fapplyFn);
@@ -104,14 +107,11 @@ pub fn ApplicativeFromImpl(comptime ApplicativeImpl: type) type {
         const ApplyLamType = @TypeOf(struct {
             fn fapplyLam(
                 instance: *const InstanceImpl,
-                comptime A: type,
-                comptime B: type,
                 // applicative function: F (a -> b), fa: F a
                 flam: anytype, // a F(lambda) with funtion F(*const fn (Self, A) B),
-                fa: F(A),
-            ) AFbType(B) {
+                fa: F(ApplyLamInType(InstanceImpl, @TypeOf(flam))),
+            ) AFbType(ApplyLamRetType(InstanceImpl, @TypeOf(flam))) {
                 _ = instance;
-                _ = flam;
                 _ = fa;
             }
         }.fapplyLam);
@@ -120,9 +120,9 @@ pub fn ApplicativeFromImpl(comptime ApplicativeImpl: type) type {
         //     instance: InstanceImpl,
         //     // map2 function f: a -> b -> c
         //     f: anytype,
-        //     fa: Map2FaType(@TypeOf(f)),
-        //     fb: Map2FbType(@TypeOf(f)),
-        // ) Map2FcType(@TypeOf(f)) {
+        //     fa: F(Map2InAType(@TypeOf(f))),
+        //     fb: F(Map2InBType(@TypeOf(f))),
+        // ) AFbType(Map2RetType(@TypeOf(f))) {
         //     // liftA2 f fa fb = pure f <*> fa <*> fb
         // }
     };

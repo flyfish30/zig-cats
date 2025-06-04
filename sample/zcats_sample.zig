@@ -52,10 +52,11 @@ fn maybeSample() !void {
             return @intFromFloat(@floor(x));
         }
     }.f;
-    var maybe_applied = maybe_m.fapply(f64, u32, maybe_fn, maybe_b);
+    const maybe_applied = maybe_m.fapply(maybe_fn, maybe_b);
     std.debug.print("maybe_applied: {any}\n", .{maybe_applied});
-    maybe_applied = maybe_m.fapply(u32, u32, null, maybe_applied);
-    std.debug.print("applied with null function: {any}\n", .{maybe_applied});
+    // The apply function in Maybe can not be null
+    // maybe_applied = maybe_m.fapply(null, maybe_applied);
+    // std.debug.print("applied with null function: {any}\n", .{maybe_applied});
 
     const maybe_binded = maybe_m.bind(f64, u32, maybe_b, struct {
         fn f(self: *const MaybeMonadImpl, x: f64) MaybeMonad.MbType(u32) {
@@ -132,7 +133,7 @@ fn arraylistSample() !void {
         arr_fns.appendAssumeCapacity(f);
     }
 
-    const arr_applied = try array_m.fapply(f64, u32, arr_fns, arr_new);
+    const arr_applied = try array_m.fapply(arr_fns, arr_new);
     defer arr_applied.deinit();
     std.debug.print("arr_applied: {any}\n", .{arr_applied.items});
 
@@ -248,7 +249,7 @@ fn composeSample() !void {
     }
     arr_fns.appendAssumeCapacity(null);
 
-    const arr_applied = try array_maybe.fapply(f64, u32, arr_fns, arr_new);
+    const arr_applied = try array_maybe.fapply(arr_fns, arr_new);
     defer arr_applied.deinit();
     std.debug.print("arr_applied: {any}\n", .{arr_applied.items});
 
@@ -314,7 +315,7 @@ fn composeSample() !void {
         .instanceG = ArrayListApplicative.InstanceImpl{ .allocator = allocator },
     } };
 
-    const arr3_applied = try array_maybe_array.fapply(u32, u32, arr3_fns, arr3_ints);
+    const arr3_applied = try array_maybe_array.fapply(arr3_fns, arr3_ints);
     defer array3Deinit(arr3_applied);
     std.debug.print("arr3_applied: ", .{});
     array3PrettyPrint(arr3_applied);
@@ -392,7 +393,7 @@ fn productSample() !void {
     }
     const arr_and_maybe_fns = ArrayAndMaybe(FloatToIntFn){ arr_fns, fn_array[0] };
 
-    const arr_and_maybe_applied = try array_and_maybe.fapply(f64, u32, arr_and_maybe_fns, arr_and_maybe_new);
+    const arr_and_maybe_applied = try array_and_maybe.fapply(arr_and_maybe_fns, arr_and_maybe_new);
     defer arr_and_maybe_applied[0].deinit();
     std.debug.print("arr_and_maybe_applied: ", .{});
     prettyArrayAndMaybe(arr_and_maybe_applied);
@@ -488,7 +489,7 @@ fn coproductSample() !void {
     const or_array_fns = ArrayOrMaybe(FloatToIntFn){ .inl = arr_fns };
     const or_maybe_fns = ArrayOrMaybe(FloatToIntFn){ .inr = fn_array[1] };
 
-    const maybe_array_applied = try array_or_maybe.fapply(f64, u32, or_maybe_fns, arr_or_maybe_new);
+    const maybe_array_applied = try array_or_maybe.fapply(or_maybe_fns, arr_or_maybe_new);
     defer {
         if (maybe_array_applied == .inl) {
             maybe_array_applied.inl.deinit();
@@ -497,7 +498,7 @@ fn coproductSample() !void {
     std.debug.print("maybe_array_applied: ", .{});
     prettyArrayOrMaybe(maybe_array_applied);
 
-    const array_array_applied = try array_or_maybe.fapply(f64, u32, or_array_fns, arr_or_maybe_new);
+    const array_array_applied = try array_or_maybe.fapply(or_array_fns, arr_or_maybe_new);
     defer {
         if (array_array_applied == .inl) {
             array_array_applied.inl.deinit();
@@ -507,7 +508,7 @@ fn coproductSample() !void {
     prettyArrayOrMaybe(array_array_applied);
 
     const or_maybe_float = ArrayOrMaybe(f64){ .inr = 2.71828 };
-    const array_maybe_applied = try array_or_maybe.fapply(f64, u32, or_array_fns, or_maybe_float);
+    const array_maybe_applied = try array_or_maybe.fapply(or_array_fns, or_maybe_float);
     defer {
         if (array_maybe_applied == .inl) {
             array_maybe_applied.inl.deinit();
@@ -516,7 +517,7 @@ fn coproductSample() !void {
     std.debug.print("array_maybe_applied: ", .{});
     prettyArrayOrMaybe(array_maybe_applied);
 
-    const maybe_maybe_applied = try array_or_maybe.fapply(f64, u32, or_maybe_fns, or_maybe_float);
+    const maybe_maybe_applied = try array_or_maybe.fapply(or_maybe_fns, or_maybe_float);
     defer {
         if (maybe_maybe_applied == .inl) {
             maybe_maybe_applied.inl.deinit();

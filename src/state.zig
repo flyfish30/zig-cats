@@ -26,6 +26,11 @@ const MapFnRetType = base.MapFnRetType;
 const MapLamInType = base.MapLamInType;
 const MapLamRetType = base.MapLamRetType;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const FMapMode = base.FMapMode;
 const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
@@ -651,13 +656,14 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
 
         pub fn fapply(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            ff: F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            // ff: F(*const fn (A) B),
+            ff: anytype,
+            fa: F(ApplyFnInType(Self, @TypeOf(ff))),
+        ) AFbType(ApplyFnRetType(Self, @TypeOf(ff))) {
             _ = self;
+            const A = ApplyFnInType(Self, @TypeOf(ff));
+            const B = ApplyFnRetType(Self, @TypeOf(ff));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             const TransCtx = struct {
                 // a local temporary state function with type: fn (A) B
@@ -717,13 +723,13 @@ pub fn StateMonadImpl(comptime cfg: anytype, comptime S: type) type {
 
         pub fn fapplyLam(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
             flam: anytype, // a F(lambda) that present F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            fa: F(ApplyLamInType(Self, @TypeOf(flam))),
+        ) AFbType(ApplyLamRetType(Self, @TypeOf(flam))) {
             _ = self;
+            const A = ApplyLamInType(Self, @TypeOf(flam));
+            const B = ApplyLamRetType(Self, @TypeOf(flam));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             const TransCtx = struct {
                 // a local temporary state function with type: fn (A) B
@@ -1008,7 +1014,7 @@ test "State(s, a) Applicative pure and fapply" {
     const add_pi_f64_p: *const @TypeOf(add_pi_f64) = add_pi_f64;
     var state_f = try state_applicative.pure(add_pi_f64_p);
     defer _ = state_f.strongUnref();
-    var state_b = try state_applicative.fapply(u32, f64, state_f, state_a);
+    var state_b = try state_applicative.fapply(state_f, state_a);
     defer _ = state_b.strongUnref();
     var res1_a, var res1_s = try state_b.runState(42);
     try testing.expectEqual(16.14, res1_a);
@@ -1017,7 +1023,7 @@ test "State(s, a) Applicative pure and fapply" {
     const add_x_f64_lam = Add_x_f64_Lam{ ._x = 3.14 };
     var state_lam = try state_applicative.pure(add_x_f64_lam);
     defer _ = state_lam.strongUnref();
-    var state_c = try state_applicative.fapplyLam(u32, f64, state_lam, state_a);
+    var state_c = try state_applicative.fapplyLam(state_lam, state_a);
     defer _ = state_c.strongUnref();
     res1_a, res1_s = try state_c.runState(42);
     try testing.expectEqual(16.14, res1_a);
@@ -1955,7 +1961,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     const pure_free_flam1 = try pure_free_flam.appendFOps(put_flam_ops);
     defer pure_free_flam1.deinit();
 
-    const pure_applied1 = try freem_monad.fapply(u32, f64, pure_free_af1, pure_free_a);
+    const pure_applied1 = try freem_monad.fapply(pure_free_af1, pure_free_a);
     defer pure_applied1.deinit();
     const pure_state1 = try pure_applied1.foldFree(nat_statef_state, statef_functor, state_monad);
     const pure_res1_a, const pure_res1_s = try pure_state1.runState(13);
@@ -1967,7 +1973,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     try testing.expectEqual(45.14, show_pure1.a);
     try testing.expectEqualSlices(u8, "PutF 35, PutF 17, ", show_pure1.w.items);
 
-    const pure_applied2 = try freem_monad.fapply(u32, f64, pure_free_af1, pure_free_a1);
+    const pure_applied2 = try freem_monad.fapply(pure_free_af1, pure_free_a1);
     defer pure_applied2.deinit();
     const pure_state2 = try pure_applied2.foldFree(nat_statef_state, statef_functor, state_monad);
     const pure_res2_a, const pure_res2_s = try pure_state2.runState(13);
@@ -1979,7 +1985,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     try testing.expectEqual(45.14, show_pure2.a);
     try testing.expectEqualSlices(u8, "PutF 35, PutF 17, PutF 19, PutF 25, ", show_pure2.w.items);
 
-    const pure_applied3 = try freem_monad.fapplyLam(u32, f64, pure_free_flam1, pure_free_a1);
+    const pure_applied3 = try freem_monad.fapplyLam(pure_free_flam1, pure_free_a1);
     defer pure_applied3.deinit();
     const pure_state3 = try pure_applied3.foldFree(nat_statef_state, statef_functor, state_monad);
     const pure_res3_a, const pure_res3_s = try pure_state3.runState(13);
@@ -2012,7 +2018,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
 
     var free_state = try FreeMonad(cfg, F, u32).freeFOp(x_to_free_state, GetF, try buildGetF(get_fn));
     defer free_state.deinit();
-    const freem_applied1 = try freem_monad.fapply(u32, f64, pure_free_af1, free_state);
+    const freem_applied1 = try freem_monad.fapply(pure_free_af1, free_state);
     defer freem_applied1.deinit();
     const state1 = try freem_applied1.foldFree(nat_statef_state, statef_functor, state_monad);
     const res1_a, const res1_s = try state1.runState(13);
@@ -2028,7 +2034,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     // (0 + 10) + 37 = 47
     try testing.expectEqualSlices(u8, "PutF 35, PutF 17, GetF, PutF 47, ", show_writer1.w.items);
 
-    const freem_applied11 = try freem_monad.fapplyLam(u32, f64, pure_free_flam1, free_state);
+    const freem_applied11 = try freem_monad.fapplyLam(pure_free_flam1, free_state);
     defer freem_applied11.deinit();
     const state11 = try freem_applied11.foldFree(nat_statef_state, statef_functor, state_monad);
     const res11_a, const res11_s = try state11.runState(13);
@@ -2050,7 +2056,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     };
 
     free_state = try free_state.appendFOps(put_ops);
-    const freem_applied2 = try freem_monad.fapply(u32, f64, pure_free_af1, free_state);
+    const freem_applied2 = try freem_monad.fapply(pure_free_af1, free_state);
     defer freem_applied2.deinit();
     const state2 = try freem_applied2.foldFree(nat_statef_state, statef_functor, state_monad);
     const res2_a, const res2_s = try state2.runState(13);
@@ -2066,7 +2072,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     // (0 + 10) + 37 = 47
     try testing.expectEqualSlices(u8, "PutF 35, PutF 17, PutF 23, PutF 37, GetF, PutF 47, ", show_writer2.w.items);
 
-    const freem_applied22 = try freem_monad.fapplyLam(u32, f64, pure_free_flam1, free_state);
+    const freem_applied22 = try freem_monad.fapplyLam(pure_free_flam1, free_state);
     defer freem_applied22.deinit();
     const state22 = try freem_applied22.foldFree(nat_statef_state, statef_functor, state_monad);
     const res22_a, const res22_s = try state22.runState(13);
@@ -2100,7 +2106,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
 
     var free_state_af1 = try FreeMonad(cfg, F, FnType1).freeFOp(x_to_free_state_fn, GetF, try buildGetF(get_fn));
     defer free_state_af1.deinit();
-    const freem_applied3 = try freem_monad.fapply(u32, f64, free_state_af1, free_state);
+    const freem_applied3 = try freem_monad.fapply(free_state_af1, free_state);
     defer freem_applied3.deinit();
     const state3 = try freem_applied3.foldFree(nat_statef_state, statef_functor, state_monad);
     const res3_a, const res3_s = try state3.runState(13);
@@ -2136,7 +2142,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
 
     var free_state_lam1 = try FreeMonad(cfg, F, LamType1).freeFOp(x_to_free_state_lam, GetF, try buildGetF(get_fn));
     defer free_state_lam1.deinit();
-    const freem_applied33 = try freem_monad.fapplyLam(u32, f64, free_state_lam1, free_state);
+    const freem_applied33 = try freem_monad.fapplyLam(free_state_lam1, free_state);
     defer freem_applied33.deinit();
     const state33 = try freem_applied33.foldFree(nat_statef_state, statef_functor, state_monad);
     const res33_a, const res33_s = try state33.runState(13);
@@ -2157,7 +2163,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
         .{ .op_e = PutF, .op_lam = @bitCast(try buildPutF(21)) },
     };
     free_state_af1 = try free_state_af1.appendFOps(put_af1_ops);
-    const freem_applied4 = try freem_monad.fapply(u32, f64, free_state_af1, free_state);
+    const freem_applied4 = try freem_monad.fapply(free_state_af1, free_state);
     defer freem_applied4.deinit();
     const state4 = try freem_applied4.foldFree(nat_statef_state, statef_functor, state_monad);
     const res4_a, const res4_s = try state4.runState(13);
@@ -2180,7 +2186,7 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     var put_flam1_ops: [put_ops.len]FOpInfo = undefined;
     try free_state_af1.cloneFOpsToSlice(&put_flam1_ops);
     free_state_lam1 = try free_state_lam1.appendFOps(&put_flam1_ops);
-    const freem_applied44 = try freem_monad.fapplyLam(u32, f64, free_state_lam1, free_state);
+    const freem_applied44 = try freem_monad.fapplyLam(free_state_lam1, free_state);
     defer freem_applied44.deinit();
     const state44 = try freem_applied44.foldFree(nat_statef_state, statef_functor, state_monad);
     const res44_a, const res44_s = try state44.runState(13);
@@ -2877,12 +2883,12 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
 
         pub fn fapply(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            ff: F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            // ff: F(*const fn (A) B),
+            ff: anytype,
+            fa: F(ApplyFnInType(Self, @TypeOf(ff))),
+        ) AFbType(ApplyFnRetType(Self, @TypeOf(ff))) {
+            const B = ApplyFnRetType(Self, @TypeOf(ff));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             _ = _B;
             const f = ff.a;
@@ -2892,18 +2898,18 @@ pub fn MWriterMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
 
         pub fn fapplyLam(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
             flam: anytype, // a F(lambda) that present F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            fa: F(ApplyLamInType(Self, @TypeOf(flam))),
+        ) AFbType(ApplyLamRetType(Self, @TypeOf(flam))) {
+            const B = ApplyLamRetType(Self, @TypeOf(flam));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             _ = _B;
             const lam = flam.a;
             const _b = if (has_err) try lam.call(fa.a) else lam.call(fa.a);
             return .{ .a = _b, .w = try self.monoid_impl.mappend(flam.w, fa.w) };
         }
+
         pub fn bind(
             self: *const Self,
             comptime A: type,
@@ -3054,12 +3060,12 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
 
         pub fn fapply(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            ff: F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            // ff: F(*const fn (A) B),
+            ff: anytype,
+            fa: F(ApplyFnInType(Self, @TypeOf(ff))),
+        ) AFbType(ApplyFnRetType(Self, @TypeOf(ff))) {
+            const B = ApplyFnRetType(Self, @TypeOf(ff));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             _ = _B;
             const f = ff.a;
@@ -3071,12 +3077,11 @@ pub fn MWriterMaybeMonadImpl(comptime MonoidImpl: type, comptime W: type) type {
 
         pub fn fapplyLam(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
             flam: anytype, // a F(lambda) that present F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            fa: F(ApplyLamInType(Self, @TypeOf(flam))),
+        ) AFbType(ApplyLamRetType(Self, @TypeOf(flam))) {
+            const B = ApplyLamRetType(Self, @TypeOf(flam));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             _ = _B;
             const lam = flam.a;

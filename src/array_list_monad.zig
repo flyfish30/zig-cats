@@ -16,6 +16,11 @@ const MapFnRetType = base.MapFnRetType;
 const MapLamInType = base.MapLamInType;
 const MapLamRetType = base.MapLamRetType;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const FMapMode = base.FMapMode;
 const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
@@ -239,23 +244,24 @@ pub const ArrayListMonadImpl = struct {
 
     pub fn fapply(
         self: *const Self,
-        comptime A: type,
-        comptime B: type,
         // applicative function: F (a -> b), fa: F a
-        ff: F(*const fn (A) B),
-        fa: F(A),
-    ) AFbType(B) {
+        // ff: F(*const fn (A) B),
+        ff: anytype,
+        fa: F(ApplyFnInType(Self, @TypeOf(ff))),
+    ) AFbType(ApplyFnRetType(Self, @TypeOf(ff))) {
+        const A = ApplyFnInType(Self, @TypeOf(ff));
+        const B = ApplyFnRetType(Self, @TypeOf(ff));
         return fapplyGeneric(self, .NormalMap, A, B, ff, fa);
     }
 
     pub fn fapplyLam(
         self: *const Self,
-        comptime A: type,
-        comptime B: type,
         // applicative function: F (a -> b), fa: F a
         flam: anytype, // a F(lambda) that present F(*const fn (A) B),
-        fa: F(A),
-    ) AFbType(B) {
+        fa: F(ApplyLamInType(Self, @TypeOf(flam))),
+    ) AFbType(ApplyLamRetType(Self, @TypeOf(flam))) {
+        const A = ApplyLamInType(Self, @TypeOf(flam));
+        const B = ApplyLamRetType(Self, @TypeOf(flam));
         return fapplyGeneric(self, .LambdaMap, A, B, flam, fa);
     }
 
@@ -361,7 +367,7 @@ test "ArrayList Applicative pure and fapply" {
     defer array_fns.deinit();
     try array_fns.appendSlice(&[_]IntToFloatFn{ add_pi_f64, mul_pi_f64 });
 
-    const array_f64 = try array_applicative.fapply(u32, f64, array_fns, array_a);
+    const array_f64 = try array_applicative.fapply(array_fns, array_a);
     defer array_f64.deinit();
     try testing.expectEqual(8, array_f64.items.len);
     for (&[_]f64{ 13.14, 23.14, 33.14, 43.14, 31.4, 62.8, 94.2, 125.6 }, 0..) |a, i| {

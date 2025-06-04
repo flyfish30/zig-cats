@@ -26,6 +26,11 @@ const MapFnRetType = base.MapFnRetType;
 const MapLamInType = base.MapLamInType;
 const MapLamRetType = base.MapLamRetType;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const FMapMode = base.FMapMode;
 const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
@@ -1160,12 +1165,13 @@ pub fn FreeMonadImpl(
 
         pub fn fapply(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            ff: F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            // ff: F(*const fn (A) B),
+            ff: anytype,
+            fa: F(ApplyFnInType(Self, @TypeOf(ff))),
+        ) AFbType(ApplyFnRetType(Self, @TypeOf(ff))) {
+            const A = ApplyFnInType(Self, @TypeOf(ff));
+            const B = ApplyFnRetType(Self, @TypeOf(ff));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
 
             if (ff == .pure_m) {
@@ -1199,7 +1205,7 @@ pub fn FreeMonadImpl(
                             freem.deinit();
                         }
                         // recusive call fapply for inner free monad
-                        return self_apply.fimpl.fapply(A, B, freem, self_apply.local_fa);
+                        return self_apply.fimpl.fapply(freem, self_apply.local_fa);
                     }
                 }{ .fimpl = self, .local_fa = try base.copyOrCloneOrRef(fa) };
 
@@ -1239,12 +1245,12 @@ pub fn FreeMonadImpl(
 
         pub fn fapplyLam(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
             flam: anytype, // a F(lambda) that present F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            fa: F(ApplyLamInType(Self, @TypeOf(flam))),
+        ) AFbType(ApplyLamRetType(Self, @TypeOf(flam))) {
+            const A = ApplyLamInType(Self, @TypeOf(flam));
+            const B = ApplyLamRetType(Self, @TypeOf(flam));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
 
             if (flam == .pure_m) {
@@ -1278,7 +1284,7 @@ pub fn FreeMonadImpl(
                             freem.deinit();
                         }
                         // recusive call fapplyLam for inner free monad
-                        return self_apply.fimpl.fapplyLam(A, B, freem, self_apply.local_fa);
+                        return self_apply.fimpl.fapplyLam(freem, self_apply.local_fa);
                     }
                 }{ .fimpl = self, .local_fa = try base.copyOrCloneOrRef(fa) };
 
@@ -1553,7 +1559,7 @@ test "FreeMonad(F, A) pure and fapply" {
     const purem_fn = try freem_applicative.pure(add_pi_f64);
     var freem_fn = try purem_fn.appendFOp(.{ .op_e = Just, .op_lam = @bitCast(buildJust()) });
     defer freem_fn.deinit();
-    const applied_purem = try freem_applicative.fapply(u32, f64, freem_fn, pure_freem);
+    const applied_purem = try freem_applicative.fapply(freem_fn, pure_freem);
     defer applied_purem.deinit();
     try testing.expectEqual(36.14, try applied_purem.iter(maybe_functor, maybeToA(f64)));
     const show_writer = try applied_purem.foldFree(nat_maybe_show, maybe_functor, show_monad);
@@ -1563,7 +1569,7 @@ test "FreeMonad(F, A) pure and fapply" {
 
     const freem_a = try FreeMonad(cfg, Maybe, u32).freeM(42, @constCast(just_fns1));
     defer freem_a.deinit();
-    const applied_freem = try freem_applicative.fapply(u32, f64, freem_fn, freem_a);
+    const applied_freem = try freem_applicative.fapply(freem_fn, freem_a);
     defer applied_freem.deinit();
     try testing.expectEqual(45.14, try applied_freem.iter(maybe_functor, maybeToA(f64)));
     const show1_writer = try applied_freem.foldFree(nat_maybe_show, maybe_functor, show_monad);
@@ -1571,7 +1577,7 @@ test "FreeMonad(F, A) pure and fapply" {
     try testing.expectEqual(45.14, show1_writer.a);
     try testing.expectEqualSlices(u8, "Just Just Just ", show1_writer.w.items);
 
-    const applied_purem1 = try freem_applicative.fapply(u32, f64, purem_fn, freem_a);
+    const applied_purem1 = try freem_applicative.fapply(purem_fn, freem_a);
     defer applied_purem1.deinit();
     try testing.expectEqual(45.14, try applied_purem1.iter(maybe_functor, maybeToA(f64)));
     const show1_purem = try applied_purem1.foldFree(nat_maybe_show, maybe_functor, show_monad);
@@ -1588,7 +1594,7 @@ test "FreeMonad(F, A) pure and fapply" {
         .{ .op_e = Just, .op_lam = @bitCast(buildJust()) },
     };
     freem_lam = try freem_lam.appendFOps(@constCast(just_fns2));
-    const applied_freem1 = try freem_applicative.fapplyLam(u32, f64, freem_lam, freem_a);
+    const applied_freem1 = try freem_applicative.fapplyLam(freem_lam, freem_a);
     defer applied_freem1.deinit();
     try testing.expectEqual(0, try applied_freem1.iter(maybe_functor, maybeToA(f64)));
     const show2_writer = try applied_freem1.foldFree(nat_maybe_show, maybe_functor, show_monad);

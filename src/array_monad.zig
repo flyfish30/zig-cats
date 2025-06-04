@@ -14,6 +14,11 @@ const MapFnRetType = base.MapFnRetType;
 const MapLamInType = base.MapLamInType;
 const MapLamRetType = base.MapLamRetType;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const FMapMode = base.FMapMode;
 const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
@@ -296,25 +301,26 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
 
         pub fn fapply(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            ff: F(*const fn (A) B),
-            fa: F(A),
-        ) F(B) {
+            // ff: F(*const fn (A) B),
+            ff: anytype,
+            fa: F(ApplyFnInType(Self, @TypeOf(ff))),
+        ) F(ApplyFnRetType(Self, @TypeOf(ff))) {
             _ = self;
+            const A = ApplyFnInType(Self, @TypeOf(ff));
+            const B = ApplyFnRetType(Self, @TypeOf(ff));
             return fapplyGeneric(.NormalMap, A, B, ff, fa);
         }
 
         pub fn fapplyLam(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
             flam: anytype, // a F(lambda) that present F(*const fn (A) B),
-            fa: F(A),
-        ) F(B) {
+            fa: F(ApplyLamInType(Self, @TypeOf(flam))),
+        ) F(ApplyLamRetType(Self, @TypeOf(flam))) {
             _ = self;
+            const A = ApplyLamInType(Self, @TypeOf(flam));
+            const B = ApplyLamRetType(Self, @TypeOf(flam));
             return fapplyGeneric(.LambdaMap, A, B, flam, fa);
         }
 
@@ -441,7 +447,7 @@ test "Array Applicative pure and fapply" {
     const array_a = ArrayF(u32){ 10, 20, 30, 40 };
     const IntToFloatFn = *const fn (u32) f64;
     const array_fns = ArrayF(IntToFloatFn){ add_pi_f64, mul_pi_f64, add_e_f64, mul_e_f64 };
-    const array_f64 = array_applicative.fapply(u32, f64, array_fns, array_a);
+    const array_f64 = array_applicative.fapply(array_fns, array_a);
     try testing.expectEqual(4, array_f64.len);
     for (&[_]f64{ 13.14, 62.8, 32.71828, 108.7312 }, 0..) |a, i| {
         try testing.expectApproxEqRel(a, array_f64[i], std.math.floatEps(f64));

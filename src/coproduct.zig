@@ -11,6 +11,11 @@ const assert = std.debug.assert;
 const TCtor = base.TCtor;
 var maybe_error = maybe.maybe_error;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const MapFnKind = base.MapFnKind;
 
 const Functor = functor.Functor;
@@ -189,19 +194,19 @@ pub fn CoproductApplicativeImpl(
 
         pub fn fapply(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            fgf: F(*const fn (A) B),
-            fga: F(A),
-        ) AFbType(B) {
+            // fgf: F(*const fn (A) B),
+            fgf: anytype,
+            fga: F(ApplyFnInType(Self, @TypeOf(fgf))),
+        ) AFbType(ApplyFnRetType(Self, @TypeOf(fgf))) {
+            const A = ApplyFnInType(Self, @TypeOf(fgf));
             const FnType = BaseType(@TypeOf(fgf));
             return switch (fgf) {
                 .inl => |ff| switch (fga) {
                     .inl => |fa| if (ImplF.Error == null)
-                        .{ .inl = self.functor_sup.instanceF.fapply(A, B, ff, fa) }
+                        .{ .inl = self.functor_sup.instanceF.fapply(ff, fa) }
                     else
-                        .{ .inl = try self.functor_sup.instanceF.fapply(A, B, ff, fa) },
+                        .{ .inl = try self.functor_sup.instanceF.fapply(ff, fa) },
                     .inr => |ga| {
                         // fa is ArrayList(A), so we should be free it.
                         const fa = if (ImplNat.Error == null)
@@ -210,9 +215,9 @@ pub fn CoproductApplicativeImpl(
                             try self.natural_gf.trans(A, ga);
                         defer base.deinitOrUnref(fa);
                         return if (ImplF.Error == null)
-                            .{ .inl = self.functor_sup.instanceF.fapply(A, B, ff, fa) }
+                            .{ .inl = self.functor_sup.instanceF.fapply(ff, fa) }
                         else
-                            .{ .inl = try self.functor_sup.instanceF.fapply(A, B, ff, fa) };
+                            .{ .inl = try self.functor_sup.instanceF.fapply(ff, fa) };
                     },
                 },
                 .inr => |gf| switch (fga) {
@@ -224,33 +229,32 @@ pub fn CoproductApplicativeImpl(
                             try self.natural_gf.trans(FnType, gf);
                         defer base.deinitOrUnref(ff);
                         return if (ImplF.Error == null)
-                            .{ .inl = self.functor_sup.instanceF.fapply(A, B, ff, fa) }
+                            .{ .inl = self.functor_sup.instanceF.fapply(ff, fa) }
                         else
-                            .{ .inl = try self.functor_sup.instanceF.fapply(A, B, ff, fa) };
+                            .{ .inl = try self.functor_sup.instanceF.fapply(ff, fa) };
                     },
                     .inr => |ga| if (ImplG.Error == null)
-                        .{ .inr = self.functor_sup.instanceG.fapply(A, B, gf, ga) }
+                        .{ .inr = self.functor_sup.instanceG.fapply(gf, ga) }
                     else
-                        .{ .inr = try self.functor_sup.instanceG.fapply(A, B, gf, ga) },
+                        .{ .inr = try self.functor_sup.instanceG.fapply(gf, ga) },
                 },
             };
         }
 
         pub fn fapplyLam(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            fgf: anytype,
-            fga: F(A),
-        ) AFbType(B) {
-            const LamType = BaseType(@TypeOf(fgf));
-            return switch (fgf) {
+            fglam: anytype, // a F(lambda) that present F(*const fn (A) B),
+            fga: F(ApplyLamInType(Self, @TypeOf(fglam))),
+        ) AFbType(ApplyLamRetType(Self, @TypeOf(fglam))) {
+            const A = ApplyLamInType(Self, @TypeOf(fglam));
+            const LamType = BaseType(@TypeOf(fglam));
+            return switch (fglam) {
                 .inl => |ff| switch (fga) {
                     .inl => |fa| if (ImplF.Error == null)
-                        .{ .inl = self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) }
+                        .{ .inl = self.functor_sup.instanceF.fapplyLam(ff, fa) }
                     else
-                        .{ .inl = try self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) },
+                        .{ .inl = try self.functor_sup.instanceF.fapplyLam(ff, fa) },
                     .inr => |ga| {
                         // fa is ArrayList(A), so we should be free it.
                         const fa = if (ImplNat.Error == null)
@@ -259,9 +263,9 @@ pub fn CoproductApplicativeImpl(
                             try self.natural_gf.trans(A, ga);
                         defer fa.deinit();
                         return if (ImplF.Error == null)
-                            .{ .inl = self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) }
+                            .{ .inl = self.functor_sup.instanceF.fapplyLam(ff, fa) }
                         else
-                            .{ .inl = try self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) };
+                            .{ .inl = try self.functor_sup.instanceF.fapplyLam(ff, fa) };
                     },
                 },
                 .inr => |gf| switch (fga) {
@@ -273,14 +277,14 @@ pub fn CoproductApplicativeImpl(
                             try self.natural_gf.trans(LamType, gf);
                         defer ff.deinit();
                         return if (ImplF.Error == null)
-                            .{ .inl = self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) }
+                            .{ .inl = self.functor_sup.instanceF.fapplyLam(ff, fa) }
                         else
-                            .{ .inl = try self.functor_sup.instanceF.fapplyLam(A, B, ff, fa) };
+                            .{ .inl = try self.functor_sup.instanceF.fapplyLam(ff, fa) };
                     },
                     .inr => |ga| if (ImplG.Error == null)
-                        .{ .inr = self.functor_sup.instanceG.fapplyLam(A, B, gf, ga) }
+                        .{ .inr = self.functor_sup.instanceG.fapplyLam(gf, ga) }
                     else
-                        .{ .inr = try self.functor_sup.instanceG.fapplyLam(A, B, gf, ga) },
+                        .{ .inr = try self.functor_sup.instanceG.fapplyLam(gf, ga) },
                 },
             };
         }
@@ -409,7 +413,7 @@ test "Compose Applicative pure and fapply" {
     const or_array_fns = ArrayOrMaybe(IntToFloatFn){ .inl = array_fns };
     const or_maybe_fns = ArrayOrMaybe(IntToFloatFn){ .inr = mul_pi_f64 };
 
-    const array_array_a = try array_or_maybe.fapply(u32, f64, or_array_fns, or_array_a);
+    const array_array_a = try array_or_maybe.fapply(or_array_fns, or_array_a);
     defer array_array_a.inl.deinit();
     for (&[_]f64{
         // 0..3
@@ -420,18 +424,18 @@ test "Compose Applicative pure and fapply" {
         try testing.expectApproxEqRel(a, array_array_a.inl.items[i], std.math.floatEps(f64));
     }
 
-    const maybe_array_a = try array_or_maybe.fapply(u32, f64, or_maybe_fns, or_array_a);
+    const maybe_array_a = try array_or_maybe.fapply(or_maybe_fns, or_array_a);
     defer maybe_array_a.inl.deinit();
     for (&[_]f64{ 3.14, 6.28, 9.42, 12.56 }, 0..) |a, i| {
         try testing.expectApproxEqRel(a, maybe_array_a.inl.items[i], std.math.floatEps(f64));
     }
 
-    const array_maybe_a = try array_or_maybe.fapply(u32, f64, or_array_fns, or_maybe_a);
+    const array_maybe_a = try array_or_maybe.fapply(or_array_fns, or_maybe_a);
     defer array_maybe_a.inl.deinit();
     for (&[_]f64{ 10.14, 9.71828 }, 0..) |a, i| {
         try testing.expectApproxEqRel(a, array_maybe_a.inl.items[i], std.math.floatEps(f64));
     }
 
-    const maybe_maybe_a = try array_or_maybe.fapply(u32, f64, or_maybe_fns, or_maybe_a);
+    const maybe_maybe_a = try array_or_maybe.fapply(or_maybe_fns, or_maybe_a);
     try testing.expectEqual(21.98, maybe_maybe_a.inr);
 }

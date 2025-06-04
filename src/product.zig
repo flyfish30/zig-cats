@@ -11,6 +11,11 @@ const assert = std.debug.assert;
 const TCtor = base.TCtor;
 var maybe_error = maybe.maybe_error;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const MapFnKind = base.MapFnKind;
 
 const Functor = functor.Functor;
@@ -33,11 +38,11 @@ pub fn ProductFG(comptime F: TCtor, comptime G: TCtor) TCtor {
 /// Get tuple of left and right type of product
 pub fn getProductTypeTuple(comptime P: type) struct { type, type } {
     const info = @typeInfo(P);
-    comptime assert(info == .Struct and info.Struct.is_tuple == true);
-    comptime assert(info.Struct.fields.len == 2);
+    comptime assert(info == .@"struct" and info.@"struct".is_tuple == true);
+    comptime assert(info.@"struct".fields.len == 2);
 
-    const l_type = info.Struct.fields[0].type;
-    const r_type = info.Struct.fields[1].type;
+    const l_type = info.@"struct".fields[0].type;
+    const r_type = info.@"struct".fields[1].type;
     return .{ l_type, r_type };
 }
 
@@ -189,42 +194,39 @@ pub fn ProductApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
 
         pub fn fapply(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            fgf: F(*const fn (A) B),
-            fga: F(A),
-        ) AFbType(B) {
+            // fgf: F(*const fn (A) B),
+            fgf: anytype,
+            fga: F(ApplyFnInType(Self, @TypeOf(fgf))),
+        ) AFbType(ApplyFnRetType(Self, @TypeOf(fgf))) {
             const fgb_0 = if (ImplF.Error == null)
-                self.functor_sup.instanceF.fapply(A, B, fgf[0], fga[0])
+                self.functor_sup.instanceF.fapply(fgf[0], fga[0])
             else
-                try self.functor_sup.instanceF.fapply(A, B, fgf[0], fga[0]);
+                try self.functor_sup.instanceF.fapply(fgf[0], fga[0]);
 
             const fgb_1 = if (ImplG.Error == null)
-                self.functor_sup.instanceG.fapply(A, B, fgf[1], fga[1])
+                self.functor_sup.instanceG.fapply(fgf[1], fga[1])
             else
-                try self.functor_sup.instanceG.fapply(A, B, fgf[1], fga[1]);
+                try self.functor_sup.instanceG.fapply(fgf[1], fga[1]);
 
             return .{ fgb_0, fgb_1 };
         }
 
         pub fn fapplyLam(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            fgf: anytype,
-            fga: F(A),
-        ) AFbType(B) {
+            fglam: anytype, // a F(lambda) that present F(*const fn (A) B),
+            fga: F(ApplyLamInType(Self, @TypeOf(fglam))),
+        ) AFbType(ApplyLamRetType(Self, @TypeOf(fglam))) {
             const fgb_0 = if (ImplF.Error == null)
-                self.functor_sup.instanceF.fapplyLam(A, B, fgf[0], fga[0])
+                self.functor_sup.instanceF.fapplyLam(fglam[0], fga[0])
             else
-                try self.functor_sup.instanceF.fapplyLam(A, B, fgf[0], fga[0]);
+                try self.functor_sup.instanceF.fapplyLam(fglam[0], fga[0]);
 
             const fgb_1 = if (ImplG.Error == null)
-                self.functor_sup.instanceG.fapplyLam(A, B, fgf[1], fga[1])
+                self.functor_sup.instanceG.fapplyLam(fglam[1], fga[1])
             else
-                try self.functor_sup.instanceG.fapplyLam(A, B, fgf[1], fga[1]);
+                try self.functor_sup.instanceG.fapplyLam(fglam[1], fga[1]);
 
             return .{ fgb_0, fgb_1 };
         }
@@ -330,7 +332,7 @@ test "Compose Applicative pure and fapply" {
     try array_fns.appendSlice(&[_]IntToFloatFn{ add_pi_f64, add_e_f64 });
     var arr_maybe_fns = ArrayAndMaybe(IntToFloatFn){ array_fns, add_pi_f64 };
 
-    const arr_maybe_b = try array_and_maybe.fapply(u32, f64, arr_maybe_fns, arr_maybe_a);
+    const arr_maybe_b = try array_and_maybe.fapply(arr_maybe_fns, arr_maybe_a);
     defer arr_maybe_b[0].deinit();
     for (&[_]f64{
         // 0..3
@@ -343,7 +345,7 @@ test "Compose Applicative pure and fapply" {
     try testing.expectEqual(45.14, arr_maybe_b[1]);
 
     arr_maybe_a[1] = null; // (array_a, null)
-    const arr_maybe_c = try array_and_maybe.fapply(u32, f64, arr_maybe_fns, arr_maybe_a);
+    const arr_maybe_c = try array_and_maybe.fapply(arr_maybe_fns, arr_maybe_a);
     defer arr_maybe_c[0].deinit();
     for (&[_]f64{
         // 0..3
@@ -357,7 +359,7 @@ test "Compose Applicative pure and fapply" {
 
     arr_maybe_a[1] = 23; // (array_a, 23)
     arr_maybe_fns[1] = null; // (array_fns, null)
-    const arr_maybe_d = try array_and_maybe.fapply(u32, f64, arr_maybe_fns, arr_maybe_a);
+    const arr_maybe_d = try array_and_maybe.fapply(arr_maybe_fns, arr_maybe_a);
     defer arr_maybe_d[0].deinit();
     for (&[_]f64{
         // 0..3

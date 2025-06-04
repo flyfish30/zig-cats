@@ -1,7 +1,6 @@
 Run pure samples of zig-cats...
 mapped maybe_a: 52, maybe_b: 5.514e1
 maybe_applied: 55
-applied with null function: null
 maybe_binded: 221
 arr inplace mapped: { 42, 43, 44, 45 }
 arr float32 inplace mapped: { 4.818e1, 4.918e1, 5.018e1, 5.118e1 }
@@ -29,7 +28,6 @@ maybe_maybe_applied: { inr: 11 }
 Run impure samples of zig-cats...
 mapped maybe_a: 52, maybe_b: 5.514e1
 maybe_applied: 55
-applied with null function: null
 maybe_binded: 221
 arr inplace mapped: { 42, 43, 44, 45, 46, 47, 48, 49 }
 arr float32 inplace mapped: { 4.818e1, 4.918e1, 5.018e1, 5.118e1, 5.218e1, 5.318e1, 5.418e1, 5.518e1 }

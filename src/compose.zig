@@ -16,6 +16,11 @@ const MapFnRetType = base.MapFnRetType;
 const MapLamInType = base.MapLamInType;
 const MapLamRetType = base.MapLamRetType;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const MapFnKind = base.MapFnKind;
 const FMapMode = base.FMapMode;
 
@@ -185,24 +190,25 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
 
         pub fn fapply(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            fgf: F(*const fn (A) B),
-            fga: F(A),
-        ) AFbType(B) {
+            // fgf: F(*const fn (A) B),
+            fgf: anytype,
+            fga: F(ApplyFnInType(Self, @TypeOf(fgf))),
+        ) AFbType(ApplyFnRetType(Self, @TypeOf(fgf))) {
+            const A = ApplyFnInType(Self, @TypeOf(fgf));
+            const B = ApplyFnRetType(Self, @TypeOf(fgf));
             return fapplyGeneric(self, .NormalMap, A, B, fgf, fga);
         }
 
         pub fn fapplyLam(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            fgf: anytype,
-            fga: F(A),
-        ) AFbType(B) {
-            return fapplyGeneric(self, .LambdaMap, A, B, fgf, fga);
+            fglam: anytype, // a F(lambda) that present F(*const fn (A) B),
+            fga: F(ApplyLamInType(Self, @TypeOf(fglam))),
+        ) AFbType(ApplyLamRetType(Self, @TypeOf(fglam))) {
+            const A = ApplyLamInType(Self, @TypeOf(fglam));
+            const B = ApplyLamRetType(Self, @TypeOf(fglam));
+            return fapplyGeneric(self, .LambdaMap, A, B, fglam, fga);
         }
 
         fn fapplyGeneric(
@@ -236,9 +242,9 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
                     // applyFn: G a -> G b
                     pub fn call(applySelf: *const ApplySelf, ga: ImplG.F(A)) ImplG.AFbType(B) {
                         if (M == .NormalMap) {
-                            return applySelf.apply_instanceG.fapply(A, B, applySelf.apply_gf_p.*, ga);
+                            return applySelf.apply_instanceG.fapply(applySelf.apply_gf_p.*, ga);
                         } else {
-                            return applySelf.apply_instanceG.fapplyLam(A, B, applySelf.apply_gf_p.*, ga);
+                            return applySelf.apply_instanceG.fapplyLam(applySelf.apply_gf_p.*, ga);
                         }
                     }
                 };
@@ -261,12 +267,7 @@ pub fn ComposeApplicativeImpl(comptime ImplF: type, comptime ImplG: type) type {
             else
                 try self.functor_sup.instanceF.fmapLam(.NewValMapRef, inner_fapply, @constCast(&fgf));
             defer ImplF.deinitFa(flam, getFreeNothing(@TypeOf(inner_fapply).ApplyLam));
-            return self.functor_sup.instanceF.fapplyLam(
-                ImplG.F(A),
-                ImplG.AFbType(B),
-                flam,
-                fga,
-            );
+            return self.functor_sup.instanceF.fapplyLam(flam, fga);
         }
     };
 }
@@ -480,7 +481,7 @@ test "Compose Applicative pure and fapply" {
     defer array_fns.deinit();
     try array_fns.appendSlice(&[_]Maybe(IntToFloatFn){ add_pi_f64, mul_pi_f64, null, mul_e_f64 });
 
-    const array_f64 = try array_maybe.fapply(u32, f64, array_fns, array_a);
+    const array_f64 = try array_maybe.fapply(array_fns, array_a);
     defer array_f64.deinit();
     try testing.expectEqual(16, array_f64.items.len);
     for (&[_]?f64{
@@ -530,7 +531,7 @@ test "Compose Applicative pure and fapply" {
     const array3_fns = try array3FromSlices(IntToIntFn, ARRAY_LEN, allocator, @constCast(array3_fns_slice));
     defer array3Deinit(array3_fns);
 
-    const array3_b = try array_maybe_array.fapply(u32, u32, array3_fns, array3_a);
+    const array3_b = try array_maybe_array.fapply(array3_fns, array3_a);
     defer array3Deinit(array3_b);
     // std.debug.print("array3_b: ", .{});
     // array3PrettyPrint(array3_b);

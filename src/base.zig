@@ -2,10 +2,13 @@
 const std = @import("std");
 const testing = std.testing;
 const testu = @import("test_utils.zig");
+const applicative = @import("applicative.zig");
 
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+
+const Applicative = applicative.Applicative;
 
 pub usingnamespace @import("base/util_types.zig");
 
@@ -144,6 +147,34 @@ pub fn mapFnToLam(map_fn: anytype) MapFnToLamType(@TypeOf(map_fn)) {
 
 pub fn AnyMapFn(a: anytype, b: anytype) type {
     return fn (@TypeOf(a)) @TypeOf(b);
+}
+
+/// Get input param type of applicative apply function
+pub fn ApplyFnInType(comptime Impl: type, comptime FAppFn: type) type {
+    // The FAppFn type is F(*const fn(A) B)
+    const MapFn = std.meta.Child(Impl.BaseType(FAppFn));
+    return MapFnInType(MapFn);
+}
+
+/// Get return type of applicative apply function
+pub fn ApplyFnRetType(comptime Impl: type, comptime FAppFn: type) type {
+    // The FAppFn type is F(*const fn(A) B)
+    const MapFn = std.meta.Child(Impl.BaseType(FAppFn));
+    return MapFnRetType(MapFn);
+}
+
+/// Get input param type of function in applicative apply lambda
+pub fn ApplyLamInType(comptime Impl: type, comptime FAppLam: type) type {
+    // a F(lambda) with funtion F(*const fn (Self, A) B),
+    const MapLam = Impl.BaseType(FAppLam);
+    return MapLamInType(MapLam);
+}
+
+/// Get return type of function in applicative apply lambda
+pub fn ApplyLamRetType(comptime Impl: type, comptime FAppLam: type) type {
+    // a F(lambda) with funtion F(*const fn (Self, A) B),
+    const MapLam = Impl.BaseType(FAppLam);
+    return MapLamRetType(MapLam);
 }
 
 /// The kind of map function for new a translated value or inplace replaced by

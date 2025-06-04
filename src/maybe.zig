@@ -22,6 +22,11 @@ const MapFnRetType = base.MapFnRetType;
 const MapLamInType = base.MapLamInType;
 const MapLamRetType = base.MapLamRetType;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const FMapMode = base.FMapMode;
 const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
@@ -272,15 +277,29 @@ pub const MaybeMonadImpl = struct {
         return fa;
     }
 
+    fn ApplyFnType(comptime FnType: type) type {
+        if (FnType == @TypeOf(null)) {
+            @compileError("Maybe fapply function can not be null!");
+        }
+        return FnType;
+    }
+
+    fn ApplyLamType(comptime LamType: type) type {
+        if (LamType == @TypeOf(null)) {
+            @compileError("Maybe fapply lambda can not be null!");
+        }
+        return LamType;
+    }
+
     pub fn fapply(
         self: *const Self,
-        comptime A: type,
-        comptime B: type,
         // applicative function: F (a -> b), fa: F a
-        ff: F(*const fn (A) B),
-        fa: F(A),
-    ) AFbType(B) {
+        // ff: F(*const fn (A) B),
+        ff: anytype,
+        fa: F(ApplyFnInType(Self, ApplyFnType(@TypeOf(ff)))),
+    ) AFbType(ApplyFnRetType(Self, ApplyFnType(@TypeOf(ff)))) {
         _ = self;
+        const B = ApplyFnRetType(Self, @TypeOf(ff));
         const has_err, const _B = comptime isErrorUnionOrVal(B);
         if (ff) |f| {
             if (fa) |a| {
@@ -294,13 +313,12 @@ pub const MaybeMonadImpl = struct {
 
     pub fn fapplyLam(
         self: *const Self,
-        comptime A: type,
-        comptime B: type,
         // applicative function: F (a -> b), fa: F a
         flam: anytype, // a F(lambda) that present F(*const fn (A) B),
-        fa: F(A),
-    ) AFbType(B) {
+        fa: F(ApplyLamInType(Self, ApplyLamType(@TypeOf(flam)))),
+    ) AFbType(ApplyLamRetType(Self, ApplyLamType(@TypeOf(flam)))) {
         _ = self;
+        const B = ApplyLamRetType(Self, @TypeOf(flam));
         const has_err, const _B = comptime isErrorUnionOrVal(B);
         if (flam) |lam| {
             if (fa) |a| {
@@ -383,15 +401,16 @@ test "Maybe Applicative pure and fapply" {
     const fapply_fn = maybe_applicative.pure(add24_from_f64);
 
     var maybe_a: ?f64 = null;
-    var maybe_b = maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
+    var maybe_b = maybe_applicative.fapply(fapply_fn, maybe_a);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 1.68;
-    maybe_b = maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
+    maybe_b = maybe_applicative.fapply(fapply_fn, maybe_a);
     try testing.expectEqual(1 + 24, maybe_b);
 
-    maybe_b = maybe_applicative.fapply(u32, u32, null, maybe_b);
-    try testing.expectEqual(null, maybe_b);
+    // The apply function in Maybe can not be null
+    // maybe_b = maybe_applicative.fapply(null, maybe_b);
+    // try testing.expectEqual(null, maybe_b);
 }
 
 test "Maybe Monad bind" {
@@ -498,15 +517,16 @@ test "pure Maybe Applicative pure and fapply" {
     const fapply_fn = maybe_applicative.pure(add24_from_f64);
 
     var maybe_a: ?f64 = null;
-    var maybe_b = maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
+    var maybe_b = maybe_applicative.fapply(fapply_fn, maybe_a);
     try testing.expectEqual(null, maybe_b);
 
     maybe_a = 1.68;
-    maybe_b = maybe_applicative.fapply(f64, u32, fapply_fn, maybe_a);
+    maybe_b = maybe_applicative.fapply(fapply_fn, maybe_a);
     try testing.expectEqual(1 + 24, maybe_b);
 
-    maybe_b = maybe_applicative.fapply(u32, u32, null, maybe_b);
-    try testing.expectEqual(null, maybe_b);
+    // The apply function in Maybe can not be null
+    // maybe_b = maybe_applicative.fapply(null, maybe_b);
+    // try testing.expectEqual(null, maybe_b);
 }
 
 test "pure Maybe Monad bind" {

@@ -17,6 +17,11 @@ const MapFnRetType = base.MapFnRetType;
 const MapLamInType = base.MapLamInType;
 const MapLamRetType = base.MapLamRetType;
 
+const ApplyFnInType = base.ApplyFnInType;
+const ApplyFnRetType = base.ApplyFnRetType;
+const ApplyLamInType = base.ApplyLamInType;
+const ApplyLamRetType = base.ApplyLamRetType;
+
 const FMapMode = base.FMapMode;
 const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
@@ -477,13 +482,13 @@ fn NumbMonadImpl(comptime NumbF: TCtor) type {
 
         pub fn fapply(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
-            ff: F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            // ff: F(*const fn (A) B),
+            ff: anytype,
+            fa: F(ApplyFnInType(Self, @TypeOf(ff))),
+        ) AFbType(ApplyFnRetType(Self, @TypeOf(ff))) {
             _ = self;
+            const B = ApplyFnRetType(Self, @TypeOf(ff));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             const f = ff.toNumb();
             const a = fa.toNumb();
@@ -493,13 +498,12 @@ fn NumbMonadImpl(comptime NumbF: TCtor) type {
 
         pub fn fapplyLam(
             self: *const Self,
-            comptime A: type,
-            comptime B: type,
             // applicative function: F (a -> b), fa: F a
             flam: anytype, // a F(lambda) that present F(*const fn (A) B),
-            fa: F(A),
-        ) AFbType(B) {
+            fa: F(ApplyLamInType(Self, @TypeOf(flam))),
+        ) AFbType(ApplyLamRetType(Self, @TypeOf(flam))) {
             _ = self;
+            const B = ApplyLamRetType(Self, @TypeOf(flam));
             const has_err, const _B = comptime isErrorUnionOrVal(B);
             const lam = flam.toNumb();
             const a = fa.toNumb();
@@ -593,29 +597,29 @@ test "SumNumb and ProductNumb Applicative pure and fapply/fapplyLam" {
 
     const sum_u32 = sum_applicative.pure(@as(u32, 42));
     const sum_add10 = sum_applicative.pure(&add10);
-    var sum_added = sum_applicative.fapply(u32, u32, sum_add10, sum_u32);
+    var sum_added = sum_applicative.fapply(sum_add10, sum_u32);
     try testing.expectEqual(52, sum_added.toNumb());
     const sum_add_pi = sum_applicative.pure(&add_pi_f64);
-    var sum_f64 = sum_applicative.fapply(u32, f64, sum_add_pi, sum_u32);
+    var sum_f64 = sum_applicative.fapply(sum_add_pi, sum_u32);
     try testing.expectEqual(45.14, sum_f64.toNumb());
 
     const add10_lam = Add_x_u32_Lam{ ._x = 10 };
     const sum_add10_lam = sum_applicative.pure(&add10_lam);
-    sum_added = sum_applicative.fapplyLam(u32, u32, sum_add10_lam, sum_u32);
+    sum_added = sum_applicative.fapplyLam(sum_add10_lam, sum_u32);
     try testing.expectEqual(52, sum_added.toNumb());
     const add_pi_lam = Add_x_f64_Lam{ ._x = 3.14 };
     const sum_add_pi_lam = sum_applicative.pure(&add_pi_lam);
-    sum_f64 = sum_applicative.fapplyLam(u32, f64, sum_add_pi_lam, sum_u32);
+    sum_f64 = sum_applicative.fapplyLam(sum_add_pi_lam, sum_u32);
     try testing.expectEqual(45.14, sum_f64.toNumb());
 
     const product_u32 = product_applicative.pure(@as(u32, 42));
     const product_mul_pi = product_applicative.pure(&mul_pi_f64);
-    var product_f64 = product_applicative.fapply(u32, f64, product_mul_pi, product_u32);
+    var product_f64 = product_applicative.fapply(product_mul_pi, product_u32);
     try testing.expectEqual(131.88, product_f64.toNumb());
 
     const mul_pi_lam = Mul_x_f64_Lam{ ._x = 3.14 };
     const product_mul_pi_lam = product_applicative.pure(&mul_pi_lam);
-    product_f64 = product_applicative.fapplyLam(u32, f64, product_mul_pi_lam, product_u32);
+    product_f64 = product_applicative.fapplyLam(product_mul_pi_lam, product_u32);
     try testing.expectEqual(131.88, product_f64.toNumb());
 
     // test sum/product vector number
@@ -626,15 +630,15 @@ test "SumNumb and ProductNumb Applicative pure and fapply/fapplyLam" {
 
     const sum_vec_u32 = sum_vec_applicative.pure(@as(Vec4xU32, @splat(42)));
     const sum_vec_add10 = sum_vec_applicative.pure(&vec_add10);
-    var sum_vec_added = sum_vec_applicative.fapply(Vec4xU32, Vec4xU32, sum_vec_add10, sum_vec_u32);
+    var sum_vec_added = sum_vec_applicative.fapply(sum_vec_add10, sum_vec_u32);
     try testing.expectEqual(@as(Vec4xU32, @splat(52)), sum_vec_added.toNumb());
     const sum_vec_add_pi = sum_vec_applicative.pure(&vec_add_pi_f64);
-    var sum_vec_f64 = sum_vec_applicative.fapply(Vec4xU32, Vec4xF64, sum_vec_add_pi, sum_vec_u32);
+    var sum_vec_f64 = sum_vec_applicative.fapply(sum_vec_add_pi, sum_vec_u32);
     try testing.expectEqual(@as(Vec4xF64, @splat(45.14)), sum_vec_f64.toNumb());
 
     const product_vec_u32 = product_vec_applicative.pure(@as(Vec4xU32, @splat(42)));
     const product_vec_mul_pi = product_vec_applicative.pure(&vec_mul_pi_f64);
-    var product_vec_f64 = product_vec_applicative.fapply(Vec4xU32, Vec4xF64, product_vec_mul_pi, product_vec_u32);
+    var product_vec_f64 = product_vec_applicative.fapply(product_vec_mul_pi, product_vec_u32);
     try testing.expectEqual(@as(Vec4xF64, @splat(131.88)), product_vec_f64.toNumb());
 }
 

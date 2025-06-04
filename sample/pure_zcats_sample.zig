@@ -50,10 +50,11 @@ fn maybeSample() void {
             return @intFromFloat(@floor(x));
         }
     }.f;
-    var maybe_applied = maybe_monad.fapply(f64, u32, maybe_fn, maybe_b);
+    const maybe_applied = maybe_monad.fapply(maybe_fn, maybe_b);
     std.debug.print("maybe_applied: {any}\n", .{maybe_applied});
-    maybe_applied = maybe_monad.fapply(u32, u32, null, maybe_applied);
-    std.debug.print("applied with null function: {any}\n", .{maybe_applied});
+    // The apply function in Maybe can not be null
+    // maybe_applied = maybe_monad.fapply(null, maybe_applied);
+    // std.debug.print("applied with null function: {any}\n", .{maybe_applied});
 
     const maybe_binded = maybe_monad.bind(f64, u32, maybe_b, struct {
         fn f(impl: *const MaybeMImpl, x: f64) ?u32 {
@@ -131,11 +132,11 @@ fn arraySample() void {
         }.f,
     };
 
-    const arr_applied = array_monad.fapply(f64, u32, arr_fns, arr_new);
+    const arr_applied = array_monad.fapply(arr_fns, arr_new);
     std.debug.print("arr_applied: {any}\n", .{arr_applied});
 
     const arr_comptime = [_]f64{ 2, 4, 5, 9 };
-    const comptime_applied = array_monad.fapply(f64, u32, arr_fns, arr_comptime);
+    const comptime_applied = array_monad.fapply(arr_fns, arr_comptime);
     std.debug.print("comptime_applied: {any}\n", .{comptime_applied});
 
     // example of monad
@@ -238,7 +239,7 @@ fn composeSample() void {
         arr_fns[i] = null;
     }
 
-    const arr_applied = array_maybe_applicative.fapply(f64, u32, arr_fns, arr_new);
+    const arr_applied = array_maybe_applicative.fapply(arr_fns, arr_new);
     std.debug.print("arr_applied: {any}\n", .{arr_applied});
 
     // pretty print the arr3 with type ArrayF(Maybe(AraayF(A)))
@@ -328,7 +329,7 @@ fn composeSample() void {
         },
     };
 
-    const arr3_applied = array_maybe_array_applicative.fapply(u32, u32, arr3_fns, arr3_ints);
+    const arr3_applied = array_maybe_array_applicative.fapply(arr3_fns, arr3_ints);
     std.debug.print("arr3_applied: ", .{});
     prettyPrintArr3(arr3_applied);
 }
@@ -405,7 +406,7 @@ fn productSample() void {
     }
     const arr_and_maybe_fns = ArrayAndMaybe(FloatToIntFn){ arr_fns, fn_array[0] };
 
-    const arr_and_maybe_applied = array_and_maybe_applicative.fapply(f64, u32, arr_and_maybe_fns, arr_and_maybe_new);
+    const arr_and_maybe_applied = array_and_maybe_applicative.fapply(arr_and_maybe_fns, arr_and_maybe_new);
     std.debug.print("arr_and_maybe_applied: ", .{});
     prettyArrayAndMaybe(arr_and_maybe_applied);
 }
@@ -490,20 +491,20 @@ fn coproductSample() void {
     const or_array_fns = ArrayOrMaybe(FloatToIntFn){ .inl = arr_fns };
     const or_maybe_fns = ArrayOrMaybe(FloatToIntFn){ .inr = fn_array[1] };
 
-    const maybe_array_applied = array_or_maybe_applicative.fapply(f64, u32, or_maybe_fns, arr_or_maybe_new);
+    const maybe_array_applied = array_or_maybe_applicative.fapply(or_maybe_fns, arr_or_maybe_new);
     std.debug.print("maybe_array_applied: ", .{});
     prettyArrayOrMaybe(maybe_array_applied);
 
-    const array_array_applied = array_or_maybe_applicative.fapply(f64, u32, or_array_fns, arr_or_maybe_new);
+    const array_array_applied = array_or_maybe_applicative.fapply(or_array_fns, arr_or_maybe_new);
     std.debug.print("array_array_applied: ", .{});
     prettyArrayOrMaybe(array_array_applied);
 
     const or_maybe_float = ArrayOrMaybe(f64){ .inr = 2.71828 };
-    const array_maybe_applied = array_or_maybe_applicative.fapply(f64, u32, or_array_fns, or_maybe_float);
+    const array_maybe_applied = array_or_maybe_applicative.fapply(or_array_fns, or_maybe_float);
     std.debug.print("array_maybe_applied: ", .{});
     prettyArrayOrMaybe(array_maybe_applied);
 
-    const maybe_maybe_applied = array_or_maybe_applicative.fapply(f64, u32, or_maybe_fns, or_maybe_float);
+    const maybe_maybe_applied = array_or_maybe_applicative.fapply(or_maybe_fns, or_maybe_float);
     std.debug.print("maybe_maybe_applied: ", .{});
     prettyArrayOrMaybe(maybe_maybe_applied);
 }
