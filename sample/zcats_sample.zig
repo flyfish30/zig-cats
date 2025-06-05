@@ -21,7 +21,7 @@ const ArrayListMonadImpl = zcats.ArrayListMonadImpl;
 const MaybeToArrayListNatImpl = zcats.MaybeToArrayListNatImpl;
 
 pub fn runZCatsSamples() !void {
-    try maybeSample();
+    maybeSample();
     try arraylistSample();
     try composeSample();
     try productSample();
@@ -29,7 +29,7 @@ pub fn runZCatsSamples() !void {
     try calc.calcSample();
 }
 
-fn maybeSample() !void {
+fn maybeSample() void {
     const MaybeMonad = Monad(Maybe);
     var maybe_m = MaybeMonad.InstanceImpl{};
 
