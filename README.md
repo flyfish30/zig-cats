@@ -5,7 +5,7 @@ zig-cats is a groundbreaking library that masterfully brings core abstractions f
 
 These aren't just abstract theories, zig-cats delivers robust, reusable, and typically zero-cost abstract for solving common, practical programming challenges. With zig-cats, Zig developers can unlock new potentials:
 
-* Write more expressive and declarative code, focusing on the "what" rather than just the "how."
+* Write more expressive and declarative code.
 * Significantly improve code modularity and reusability across different parts of your projects.
 * Handle side effects and errors with greater structure and clarity.
 * Build complex systems that are easier to reason about, test, and maintain.
@@ -40,7 +40,7 @@ zig fetch --save git+https://github.com/flyfish30/zig-cats.git
 ```
 Then add zig-cats as a dependency in your build.zig, add the module to your module as you would normally:
 ```
-    const zig_cats = b.dependency("zig-cats", .{
+    const zig_cats = b.dependency("zig_cats", .{
         .target = target,
         .optimize = optimize,
     });
