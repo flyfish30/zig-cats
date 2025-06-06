@@ -89,9 +89,6 @@ test "Monoid ArrayList(A) mconcat" {
         .allocator = allocator,
     };
 
-    const array1: [2]u32 = @splat(42);
-    const array2: [2]u32 = @splat(37);
-    const array3: [3]u32 = @splat(13);
     var array_m1: ArrayList(u32) = .init(allocator);
     defer array_m1.deinit();
     var array_m2: ArrayList(u32) = .init(allocator);
@@ -99,6 +96,9 @@ test "Monoid ArrayList(A) mconcat" {
     var array_m3: ArrayList(u32) = .init(allocator);
     defer array_m3.deinit();
 
+    const array1: [2]u32 = @splat(42);
+    const array2: [2]u32 = @splat(37);
+    const array3: [3]u32 = @splat(13);
     try array_m1.appendSlice(&array1);
     try array_m2.appendSlice(&array2);
     try array_m3.appendSlice(&array3);

@@ -39,6 +39,516 @@ const MonadFxTypes = monad.MonadFxTypes;
 const runDo = monad.runDo;
 
 const Array = base.Array;
+const ArrayList = std.ArrayList;
+
+pub fn Identity(comptime A: type) type {
+    return struct {
+        a: A,
+
+        const Self = @This();
+        const BaseType = A;
+
+        pub const SemiGroupImpl = IdentityMonoidImpl(Self);
+        pub const MonoidImpl = IdentityMonoidImpl(Self);
+        pub const FunctorImpl = IdentityMonadImpl;
+        pub const ApplicativeImpl = IdentityMonadImpl;
+        pub const MonadImpl = IdentityMonadImpl;
+
+        pub fn deinit(self: Self) void {
+            base.deinitOrUnref(self.a);
+        }
+
+        pub fn fromA(a: A) Self {
+            return .{ .a = a };
+        }
+
+        pub fn toA(self: Self) A {
+            return self.a;
+        }
+    };
+}
+
+fn IdentityMonoidImpl(comptime IdA: type) type {
+    return struct {
+        base_impl: BaseImpl,
+
+        const Self = @This();
+        const A = IdA.BaseType;
+        const BaseImpl = Monoid(A).InstanceImpl;
+
+        pub const Error: ?type = BaseImpl.Error;
+        pub const M = IdA;
+        /// The result type of operator function in Monoid
+        /// This is just the type M that maybe with Error
+        pub const EM = if (Error) |Err| Err!M else M;
+
+        const fromA = IdA.fromA;
+        const toA = IdA.toA;
+
+        pub fn mempty(self: *const Self) EM {
+            if (Error == null) {
+                return IdA.fromA(self.base_impl.mempty());
+            } else {
+                return IdA.fromA(try self.base_impl.mempty());
+            }
+        }
+
+        pub fn mappend(self: *const Self, a: M, b: M) EM {
+            if (Error == null) {
+                return IdA.fromA(self.base_impl.mappend(a.toA(), b.toA()));
+            } else {
+                return IdA.fromA(try self.base_impl.mappend(a.toA(), b.toA()));
+            }
+        }
+
+        pub fn mconcat(self: *const Self, xs: []const M) EM {
+            var acc = if (Error == null) self.base_impl.mempty() else try self.base_impl.mempty();
+            for (xs) |x| {
+                const new_acc = if (Error == null)
+                    self.base_impl.mappend(acc, x.toA())
+                else
+                    try self.base_impl.mappend(acc, x.toA());
+                base.deinitOrUnref(acc);
+                acc = new_acc;
+            }
+            return fromA(acc);
+        }
+    };
+}
+
+test "Monoid Identity(A) mempty, mappend and mconcat" {
+    const U32Monoid = Monoid(u32);
+    const u32_impl = U32Monoid.InstanceImpl{};
+    const IdentityMonoid = Monoid(Identity(u32));
+    const identity_monoid = IdentityMonoid.InstanceImpl{
+        .base_impl = u32_impl,
+    };
+
+    const id_0 = identity_monoid.mempty();
+    try testing.expectEqual(0, id_0.toA());
+
+    const id_1 = Identity(u32).fromA(13);
+    const id_2 = Identity(u32).fromA(42);
+    const id_3 = Identity(u32).fromA(37);
+
+    const id_01 = identity_monoid.mappend(id_0, id_1);
+    try testing.expectEqual(13, id_01.toA());
+    const id_23 = identity_monoid.mappend(id_2, id_3);
+    try testing.expectEqual(79, id_23.toA());
+
+    const ids = &[_]Identity(u32){ id_1, id_2, id_3 };
+    const concated = identity_monoid.mconcat(ids);
+    try testing.expectEqual(92, concated.toA());
+}
+
+const IdentityMonadImpl = struct {
+    const Self = @This();
+
+    /// Constructor Type for Functor, Applicative, Monad, ...
+    pub const F = Identity;
+
+    /// Get base type of Constant(T)(A), it is must just is A.
+    pub fn BaseType(comptime IdA: type) type {
+        return IdA.BaseType;
+    }
+
+    pub const Error: ?type = null;
+
+    pub const FxTypes = FunctorFxTypes(F, Error);
+    pub const FaType = FxTypes.FaType;
+    pub const FbType = FxTypes.FbType;
+    pub const FaLamType = FxTypes.FaLamType;
+    pub const FbLamType = FxTypes.FbLamType;
+
+    const AFxTypes = ApplicativeFxTypes(F, Error);
+    pub const APaType = AFxTypes.APaType;
+    pub const AFbType = AFxTypes.AFbType;
+
+    pub const MbType = MonadFxTypes(F, Error).MbType;
+
+    pub fn deinitFa(
+        fa: anytype, // Identity(A)
+        comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
+    ) void {
+        free_fn(fa.toA());
+    }
+
+    pub fn fmap(
+        self: *const Self,
+        comptime K: MapFnKind,
+        map_fn: anytype,
+        fa: FaType(K, @TypeOf(map_fn)),
+    ) FbType(@TypeOf(map_fn)) {
+        _ = self;
+        const MapFn = @TypeOf(map_fn);
+        const has_err, const B = comptime isErrorUnionOrVal(MapFnRetType(MapFn));
+        const b = if (comptime isMapRef(K))
+            map_fn(&(fa.*.toA()))
+        else
+            map_fn(fa.toA());
+        return if (has_err) try F(B).fromA(b) else F(B).fromA(b);
+    }
+
+    pub fn fmapLam(
+        self: *const Self,
+        comptime K: MapFnKind,
+        map_lam: anytype,
+        fa: FaLamType(K, @TypeOf(map_lam)),
+    ) FbLamType(@TypeOf(map_lam)) {
+        _ = self;
+        const MapLam = @TypeOf(map_lam);
+        const has_err, const B = comptime isErrorUnionOrVal(MapLamRetType(MapLam));
+        const b = if (comptime isMapRef(K))
+            map_lam.call(&(fa.*.toA()))
+        else
+            map_lam.call(fa.toA());
+        return if (has_err) try F(B).fromA(b) else F(B).fromA(b);
+    }
+
+    pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
+        _ = self;
+        const has_err, const _A = comptime isErrorUnionOrVal(@TypeOf(a));
+        return if (has_err) try F(_A).fromA(a) else F(_A).fromA(a);
+    }
+
+    pub fn fapply(
+        self: *const Self,
+        // applicative function: F (a -> b), fa: F a
+        // ff: F(*const fn (A) B),
+        ff: anytype,
+        fa: F(ApplyFnInType(Self, @TypeOf(ff))),
+    ) AFbType(ApplyFnRetType(Self, @TypeOf(ff))) {
+        _ = self;
+        const B = ApplyFnRetType(Self, @TypeOf(ff));
+        const has_err, const _B = comptime isErrorUnionOrVal(B);
+        const f = ff.toA();
+        const a = fa.toA();
+        const b = f(a);
+        return if (has_err) try F(_B).fromA(b) else F(_B).fromA(b);
+    }
+
+    pub fn fapplyLam(
+        self: *const Self,
+        // applicative function: F (a -> b), fa: F a
+        flam: anytype, // a F(lambda) that present F(*const fn (A) B),
+        fa: F(ApplyLamInType(Self, @TypeOf(flam))),
+    ) AFbType(ApplyLamRetType(Self, @TypeOf(flam))) {
+        _ = self;
+        const B = ApplyLamRetType(Self, @TypeOf(flam));
+        const has_err, const _B = comptime isErrorUnionOrVal(B);
+        const lam = flam.toA();
+        const a = fa.toA();
+        const b = lam.call(a);
+        return if (has_err) try F(_B).fromA(b) else F(_B).fromA(b);
+    }
+
+    pub fn bind(
+        self: *const Self,
+        comptime A: type,
+        comptime B: type,
+        // monad function: (a -> M b), ma: M a
+        ma: F(A),
+        k: *const fn (*const Self, A) MbType(B),
+    ) MbType(B) {
+        const a = ma.toA();
+        return k(self, a);
+    }
+
+    pub fn bindLam(
+        self: *const Self,
+        comptime A: type,
+        comptime B: type,
+        // monad function: (a -> M b), ma: M a
+        ma: F(A),
+        klam: anytype,
+    ) MbType(B) {
+        const a = ma.toA();
+        return klam.call(self, a);
+    }
+
+    pub fn join(
+        self: *const Self,
+        comptime A: type,
+        mma: F(F(A)),
+    ) MbType(A) {
+        _ = self;
+        return mma.toA();
+    }
+};
+
+const Ident_mul_f64_Klam = struct {
+    _x: f64,
+    const Self = @This();
+    pub fn call(self: *const Self, impl: *const IdentityMonadImpl, a: u32) Identity(f64) {
+        _ = impl;
+        return Identity(f64).fromA(@as(f64, @floatFromInt(a)) * self._x);
+    }
+};
+
+test "Monad Identity pure, fmap, fapply and bind" {
+    const IdentityMonad = Monad(Identity);
+    const identity_monad = IdentityMonad.InstanceImpl{};
+
+    const id_1: Identity(u32) = .fromA(42);
+    const id_2 = identity_monad.fmap(.InplaceMap, add10, id_1);
+    try testing.expectEqual(52, id_2.toA());
+
+    const id_f = identity_monad.pure(&mul_pi_f64);
+    const id_3 = identity_monad.fapply(id_f, id_2);
+    try testing.expectEqual(163.28, id_3.toA());
+
+    const sum_mul_2_4_klam = Ident_mul_f64_Klam{ ._x = 2.4 };
+    const id_4 = identity_monad.bindLam(u32, f64, id_2, sum_mul_2_4_klam);
+    try testing.expectEqual(124.8, id_4.toA());
+    const id_5 = identity_monad.join(f64, identity_monad.pure(id_3));
+    try testing.expectEqual(163.28, id_5.toA());
+}
+
+pub fn Constant(comptime T: type) TCtor {
+    return struct {
+        fn ConstantT(comptime A: type) type {
+            return struct {
+                t: T,
+
+                const Self = @This();
+                const ConstType = T;
+                pub const BaseType = A;
+                pub const SemiGroupImpl = ConstantMonoidImpl(Self);
+                pub const MonoidImpl = ConstantMonoidImpl(Self);
+                pub const FunctorImpl = ConstantApplicativeImpl(T);
+                pub const ApplicativeImpl = ConstantApplicativeImpl(T);
+
+                pub fn deinit(self: Self) void {
+                    base.deinitOrUnref(self.t);
+                }
+            };
+        }
+    }.ConstantT;
+}
+
+fn ConstantMonoidImpl(comptime ConstTA: type) type {
+    return struct {
+        monoid_impl: MonoidImpl,
+
+        const Self = @This();
+        const T = ConstTA.ConstType;
+        const A = ConstTA.BaseType;
+        const MonoidImpl = Monoid(T).InstanceImpl;
+
+        pub const Error: ?type = MonoidImpl.Error;
+        pub const M = ConstTA;
+        /// The result type of operator function in Monoid
+        /// This is just the type M that maybe with Error
+        pub const EM = if (Error) |Err| Err!M else M;
+
+        pub fn mempty(self: *const Self) EM {
+            if (Error == null) {
+                return .{ .t = self.monoid_impl.mempty() };
+            } else {
+                return .{ .t = try self.monoid_impl.mempty() };
+            }
+        }
+
+        pub fn mappend(self: *const Self, a: M, b: M) EM {
+            if (Error == null) {
+                return .{ .t = self.monoid_impl.mappend(a.t, b.t) };
+            } else {
+                return .{ .t = try self.monoid_impl.mappend(a.t, b.t) };
+            }
+        }
+
+        pub fn mconcat(self: *const Self, xs: []const M) EM {
+            var acc = if (Error == null) self.monoid_impl.mempty() else try self.monoid_impl.mempty();
+            for (xs) |x| {
+                const new_acc = if (Error == null)
+                    self.monoid_impl.mappend(acc, x.t)
+                else
+                    try self.monoid_impl.mappend(acc, x.t);
+                base.deinitOrUnref(acc);
+                acc = new_acc;
+            }
+            return .{ .t = acc };
+        }
+    };
+}
+
+test "Monoid Constant(T)(A) mempty and mappend, mconcat" {
+    const allocator = testing.allocator;
+    const ArrayMonoid = Monoid(ArrayList(u32));
+    const array_monoid = ArrayMonoid.InstanceImpl{
+        .allocator = allocator,
+    };
+    const ConstMonoid = Monoid(Constant(ArrayList(u32))(u32));
+    const const_monoid = ConstMonoid.InstanceImpl{
+        .monoid_impl = array_monoid,
+    };
+
+    var array_m1: ArrayList(u32) = .init(allocator);
+    var array_m2: ArrayList(u32) = .init(allocator);
+    var array_m3: ArrayList(u32) = .init(allocator);
+
+    const array1: [2]u32 = @splat(42);
+    const array2: [2]u32 = @splat(37);
+    const array3: [3]u32 = @splat(13);
+    try array_m1.appendSlice(&array1);
+    const const_array1 = Constant(ArrayList(u32))(u32){ .t = array_m1 };
+    defer const_array1.deinit();
+    try array_m2.appendSlice(&array2);
+    const const_array2 = Constant(ArrayList(u32))(u32){ .t = array_m2 };
+    defer const_array2.deinit();
+    try array_m3.appendSlice(&array3);
+    const const_array3 = Constant(ArrayList(u32))(u32){ .t = array_m3 };
+    defer const_array3.deinit();
+    const consts = &[_]@TypeOf(const_array1){ const_array1, const_array2, const_array3 };
+
+    const const_array_12 = try const_monoid.mappend(const_array1, const_array2);
+    defer const_array_12.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 37, 37 }, const_array_12.t.items);
+
+    const concated = try const_monoid.mconcat(consts);
+    defer concated.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42, 37, 37, 13, 13, 13 }, concated.t.items);
+}
+
+fn ConstantApplicativeImpl(comptime T: type) type {
+    return struct {
+        monoid_impl: MonoidImpl,
+
+        const Self = @This();
+        const MonoidImpl = Monoid(T).InstanceImpl;
+
+        /// Constructor Type for Functor, Applicative, Monad, ...
+        pub const F = Constant(T);
+
+        /// Get base type of Constant(T)(A), it is must just is A.
+        pub fn BaseType(comptime ConstTA: type) type {
+            return ConstTA.BaseType;
+        }
+
+        pub const Error: ?type = MonoidImpl.Error;
+
+        pub const FxTypes = FunctorFxTypes(F, Error);
+        pub const FaType = FxTypes.FaType;
+        pub const FbType = FxTypes.FbType;
+        pub const FaLamType = FxTypes.FaLamType;
+        pub const FbLamType = FxTypes.FbLamType;
+
+        const AFxTypes = ApplicativeFxTypes(F, Error);
+        pub const APaType = AFxTypes.APaType;
+        pub const AFbType = AFxTypes.AFbType;
+
+        pub fn deinitFa(
+            fa: anytype, // Maybe(A)
+            comptime free_fn: *const fn (BaseType(@TypeOf(fa))) void,
+        ) void {
+            _ = free_fn;
+            fa.deinit();
+        }
+
+        pub fn fmap(
+            self: *const Self,
+            comptime K: MapFnKind,
+            map_fn: anytype,
+            fa: FaType(K, @TypeOf(map_fn)),
+        ) FbType(@TypeOf(map_fn)) {
+            _ = self;
+            if (!comptime isInplaceMap(K)) {
+                @compileError("The Constant Functor only support inplace mode fmap!" ++ @tagName(K));
+            }
+            return .{ .t = fa.t };
+        }
+
+        pub fn fmapLam(
+            self: *const Self,
+            comptime K: MapFnKind,
+            map_lam: anytype,
+            fa: FaLamType(K, @TypeOf(map_lam)),
+        ) FbLamType(@TypeOf(map_lam)) {
+            _ = self;
+            if (!comptime isInplaceMap(K)) {
+                @compileError("The Constant Functor only support inplace mode fmapLam!");
+            }
+            return .{ .t = fa.t };
+        }
+
+        pub fn pure(self: *const Self, a: anytype) APaType(@TypeOf(a)) {
+            if (Error == null) {
+                return .{ .t = self.monoid_impl.mempty() };
+            } else {
+                return .{ .t = try self.monoid_impl.mempty() };
+            }
+        }
+
+        pub fn fapply(
+            self: *const Self,
+            // applicative function: F (a -> b), fa: F a
+            // ff: F(*const fn (A) B),
+            ff: anytype,
+            fa: F(ApplyFnInType(Self, @TypeOf(ff))),
+        ) AFbType(ApplyFnRetType(Self, @TypeOf(ff))) {
+            if (Error == null) {
+                return .{ .t = self.monoid_impl.mappend(ff.t, fa.t) };
+            } else {
+                return .{ .t = try self.monoid_impl.mappend(ff.t, fa.t) };
+            }
+        }
+
+        pub fn fapplyLam(
+            self: *const Self,
+            // applicative function: F (a -> b), fa: F a
+            flam: anytype, // a F(lambda) that present F(*const fn (A) B),
+            fa: F(ApplyLamInType(Self, @TypeOf(flam))),
+        ) AFbType(ApplyLamRetType(Self, @TypeOf(flam))) {
+            if (Error == null) {
+                return .{ .t = self.monoid_impl.mappend(flam.t, fa.t) };
+            } else {
+                return .{ .t = try self.monoid_impl.mappend(flam.t, fa.t) };
+            }
+        }
+    };
+}
+
+test "Applicative Constant(T)(A) fmap and pure, fapply" {
+    const allocator = testing.allocator;
+    const ArrayMonoid = Monoid(ArrayList(u32));
+    const array_monoid = ArrayMonoid.InstanceImpl{
+        .allocator = allocator,
+    };
+    const ConstApplicative = Applicative(Constant(ArrayList(u32)));
+    const const_applicative = ConstApplicative.InstanceImpl{
+        .monoid_impl = array_monoid,
+    };
+
+    var array_m1: ArrayList(u32) = .init(allocator);
+    var array_m2: ArrayList(u32) = .init(allocator);
+    var array_m3: ArrayList(u32) = .init(allocator);
+
+    const array1: [2]u32 = @splat(42);
+    const array2: [2]u32 = @splat(37);
+    const array3: [2]u32 = @splat(13);
+    try array_m1.appendSlice(&array1);
+    const const_array1 = Constant(ArrayList(u32))(u32){ .t = array_m1 };
+    defer const_array1.deinit();
+    try array_m2.appendSlice(&array2);
+    const const_array2 = Constant(ArrayList(u32))(*Add_x_u32_Lam){ .t = array_m2 };
+    defer const_array2.deinit();
+    try array_m3.appendSlice(&array3);
+    const const_array3 = Constant(ArrayList(u32))(u32){ .t = array_m3 };
+    defer const_array3.deinit();
+
+    const const_fmapped = try const_applicative.fmap(.InplaceMap, mul_pi_f64, const_array1);
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42 }, const_fmapped.t.items);
+    const const_array_pure = try const_applicative.pure(18);
+    defer const_array_pure.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{}, const_array_pure.t.items);
+    const const_array_ff = try const_applicative.pure(&mul_pi_f64);
+    const const_array_01 = try const_applicative.fapply(const_array_ff, const_array1);
+    defer const_array_01.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{ 42, 42 }, const_array_01.t.items);
+    const const_array_23 = try const_applicative.fapplyLam(const_array2, const_array3);
+    defer const_array_23.deinit();
+    try testing.expectEqualSlices(u32, &[_]u32{ 37, 37, 13, 13 }, const_array_23.t.items);
+}
 
 /// A newtype wrapper for bool, just is
 /// `newtype All = All { getAll :: Bool }`

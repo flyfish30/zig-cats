@@ -179,11 +179,12 @@ pub fn commonMconcat(
     const Error = MonoidImpl.Error;
     var acc = if (Error == null) monoid_impl.mempty() else try monoid_impl.mempty();
     for (xs) |x| {
-        if (Error == null) {
-            acc = monoid_impl.mappend(acc, x);
-        } else {
-            acc = try monoid_impl.mappend(acc, x);
-        }
+        const new_acc = if (Error == null)
+            monoid_impl.mappend(acc, x)
+        else
+            try monoid_impl.mappend(acc, x);
+        base.deinitOrUnref(acc);
+        acc = new_acc;
     }
 
     return acc;
