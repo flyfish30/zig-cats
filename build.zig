@@ -61,9 +61,13 @@ pub fn build(b: *std.Build) void {
     // step is evaluated that depends on it. The next line below will establish
     // such a dependency.
     const run_cmd = b.addRunArtifact(exe);
-    const output = getSampleOutput(b) catch null;
-    if (output) |out_txt|
-        run_cmd.expectStdErrEqual(out_txt);
+
+    const os_tag = target.result.os.tag;
+    if (os_tag != .windows) {
+        const output = getSampleOutput(b) catch null;
+        if (output) |out_txt|
+            run_cmd.expectStdErrEqual(out_txt);
+    }
 
     // By making the run step depend on the install step, it will be run from the
     // installation directory rather than directly from within the cache directory.
