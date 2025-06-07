@@ -1,18 +1,13 @@
 # zig-cats
-A category theory and functional programing library for Zig.
+A category theory and functional programing library for Zig language.
 
-zig-cats is a groundbreaking library that masterfully brings core abstractions from Category Theory and Functional Programming into Zig, a language celebrated for its performance, control, and simplicity in systems programming. It achieves this by ingeniously leveraging Zig's powerful comptime capabilities.
+This library implements some basic data types and functional programming concepts in Haskell, especially the important typeclass in Haskell. Based on Haskell type classes and type combinators, more complex data type construction methods can be implemented. Based on these foundations, we can use the functional programming style to write programs in Zig language and use more combinations of data types to implement complex program.
 
-These aren't just abstract theories, zig-cats delivers robust, reusable, and typically zero-cost abstract for solving common, practical programming challenges. With zig-cats, Zig developers can unlock new potentials:
+With the help of Zig language's strict type constraints and inference capabilities, type reflection, and compile-time calculations, the use of functional programming style can expose problems as early as possible in the compilation stage, making it easier to reduce errors and write correct programs when designing large and complex programs.
 
-* Write more expressive and declarative code.
-* Significantly improve code modularity and reusability across different parts of your projects.
-* Handle side effects and errors with greater structure and clarity.
-* Build complex systems that are easier to reason about, test, and maintain.
+The design and implementation of this library also attempts to explore the boundaries of Zig language's expressiveness and abstraction capabilities. This is a beneficial and bold attempt to combine Zig language with functional programming ideas for good architecture design, which enables the system-level programming language Zig to use some beneficial research results in functional programming.
 
-zig-cats' explorations push the boundaries of Zig's expressiveness and level of abstraction. It beautifully demonstrates that even in the realm of low-level systems programming, we can elegantly apply profound concepts rooted in mathematics to write code that is both efficient and beautifully structured.
-
-It is implement Monoid, Functor, Applicative, Monad, Compose, Product, Coproduct, etc. All of these are support pure and impure data type.
+The library defines type classes such as SemiGroup, Monoid, Functor, Applicative, Monad, and some commonly used data types such as Identity, Constant, AllBool, AnyBool, SumNumb, ProductNumb, Maybe, array, ArrayList, State, etc., and implements instances of the above type classes. In addition, it also implements combinators of some functors, such as Compose, Product, Coproduct. All these type classes support pure data types and impure data types.
 
 ## current supported feature list
 - [x] SemiGroup
