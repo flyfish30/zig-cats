@@ -41,6 +41,9 @@ const runDo = monad.runDo;
 const Array = base.Array;
 const ArrayList = std.ArrayList;
 
+/// A Identity type constructor, just is
+/// `newtype Identity a = Identity { getIdentity :: a }`
+/// in Haskell.
 pub fn Identity(comptime A: type) type {
     return struct {
         a: A,
@@ -304,6 +307,9 @@ test "Monad Identity pure, fmap, fapply and bind" {
     try testing.expectEqual(163.28, id_5.toA());
 }
 
+/// A Constant type constructor, just is
+/// `newtype Constant a b = Constant { getConstant :: a }`
+/// in Haskell.
 pub fn Constant(comptime T: type) TCtor {
     return struct {
         fn ConstantT(comptime A: type) type {

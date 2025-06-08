@@ -1,7 +1,7 @@
 # zig-cats
 A category theory and functional programing library for Zig language.
 
-This library implements some basic data types and functional programming concepts in Haskell, especially the important typeclass in Haskell. Based on Haskell type classes and type combinators, more complex data type construction methods can be implemented. Based on these foundations, we can use the functional programming style to write programs in Zig language and use more combinations of data types to implement complex program.
+This library implements some basic data types and functional programming concepts in Haskell, especially the important typeclass in Haskell. Based on Haskell type classes and type combinators, more complex data type construction methods can be implemented. Based on these foundations, we can use the functional programming style to write programs in Zig language, using high-level abstractions to implement complex programs without runtime overhead.
 
 With the help of Zig language's strict type constraints and inference capabilities, type reflection, and compile-time calculations, the use of functional programming style can expose problems as early as possible in the compilation stage, making it easier to reduce errors and write correct programs when designing large and complex programs.
 
@@ -25,8 +25,8 @@ The library defines type classes such as SemiGroup, Monoid, Functor, Applicative
 
 - [ ] Foldable
 - [ ] Traversable
-- [ ] Fixed Point Type
-- [ ] Catamorphism
+- [x] Fixed Point Type
+- [x] Catamorphism
 
 ## install and integrated to your project
 Download and add zig-cats as a dependency by running the following command in your project root:
