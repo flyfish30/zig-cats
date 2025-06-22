@@ -6,6 +6,8 @@ const applicative = @import("applicative.zig");
 const monad = @import("monad.zig");
 const testu = @import("test_utils.zig");
 
+const foldable = @import("foldable.zig");
+
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -27,6 +29,8 @@ const isMapRef = base.isMapRef;
 const isInplaceMap = base.isInplaceMap;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
 const castInplaceValue = base.castInplaceValue;
+
+const FoldRetType = foldable.FoldRetType;
 
 const Monoid = monoid.Monoid;
 const Functor = functor.Functor;
@@ -495,4 +499,247 @@ test "runDo Arraylist" {
         &[_]f64{ 36, 22.14, 86, 47.14, 36, 22.14, 86, 47.14 },
         out.items,
     );
+}
+
+/// The instance of Foldable ArrayList.
+/// Like `instance Foldable ArrayList` in haskell.
+pub const ArrayListFoldableImpl = struct {
+    allocator: Allocator,
+
+    const Self = @This();
+
+    /// Constructor Type for Foldable
+    pub const F = ArrayList;
+
+    /// Get base type of F(A), it is must just is A.
+    pub const BaseType = ArrayListBaseType;
+
+    pub const Error: ?type = null;
+
+    pub fn foldMap(
+        self: *const Self,
+        comptime A: type,
+        comptime M: type,
+        // monoid instance for type M
+        monoid_impl: Monoid(M).InstanceImpl,
+        // map function: A -> M
+        map_fn: *const fn (A) @TypeOf(monoid_impl).EM,
+        fa: ArrayList(A),
+    ) FoldRetType(Error, M) {
+        _ = self;
+        const MonoidImpl = @TypeOf(monoid_impl);
+        var acc = if (MonoidImpl.Error == null)
+            monoid_impl.mempty()
+        else
+            try monoid_impl.mempty();
+        for (fa.items) |item| {
+            const mapped = map_fn(item);
+            const new_acc = if (MonoidImpl.Error == null)
+                monoid_impl.mappend(acc, mapped)
+            else
+                try monoid_impl.mappend(acc, mapped);
+            base.deinitOrUnref(acc);
+            base.deinitOrUnref(mapped);
+            acc = new_acc;
+        }
+        return acc;
+    }
+
+    pub fn foldl(
+        self: *const Self,
+        comptime A: type,
+        comptime M: type,
+        // fold function: (M, A) -> M
+        fold_fn: *const fn (M, A) Monoid(M).InstanceImpl.EM,
+        init_val: M,
+        fa: ArrayList(A),
+    ) FoldRetType(Error, M) {
+        _ = self;
+        const EM = Monoid(M).InstanceImpl.EM;
+        const has_err, const _M = base.isErrorUnionOrVal(EM);
+        _ = _M;
+
+        var acc = init_val;
+        for (fa.items) |item| {
+            acc = if (has_err)
+                try fold_fn(acc, item)
+            else
+                fold_fn(acc, item);
+        }
+        return acc;
+    }
+
+    pub fn foldr(
+        self: *const Self,
+        comptime A: type,
+        comptime M: type,
+        // fold function: (A, M) -> M
+        fold_fn: *const fn (A, M) Monoid(M).InstanceImpl.EM,
+        init_val: M,
+        fa: ArrayList(A),
+    ) FoldRetType(Error, M) {
+        _ = self;
+        const EM = Monoid(M).InstanceImpl.EM;
+        const has_err, const _M = base.isErrorUnionOrVal(EM);
+        _ = _M;
+
+        var acc = init_val;
+        // foldr iterates from right to left (end to beginning)
+        var i: usize = fa.items.len;
+        while (i > 0) {
+            i -= 1;
+            acc = if (has_err)
+                try fold_fn(fa.items[i], acc)
+            else
+                fold_fn(fa.items[i], acc);
+        }
+        return acc;
+    }
+
+    pub fn foldMapLam(
+        self: *const Self,
+        comptime A: type,
+        comptime M: type,
+        // monoid instance for type M
+        monoid_impl: Monoid(M).InstanceImpl,
+        // map lambda with function: *const fn (Self, A) EM
+        map_lam: anytype,
+        fa: ArrayList(A),
+    ) FoldRetType(Error, M) {
+        _ = self;
+        const MonoidImpl = @TypeOf(monoid_impl);
+        var acc = if (MonoidImpl.Error == null)
+            monoid_impl.mempty()
+        else
+            try monoid_impl.mempty();
+        for (fa.items) |item| {
+            const mapped = map_lam.call(item);
+            const new_acc = if (MonoidImpl.Error == null)
+                monoid_impl.mappend(acc, mapped)
+            else
+                try monoid_impl.mappend(acc, mapped);
+            base.deinitOrUnref(acc);
+            base.deinitOrUnref(mapped);
+            acc = new_acc;
+        }
+        return acc;
+    }
+
+    pub fn foldlLam(
+        self: *const Self,
+        comptime A: type,
+        comptime M: type,
+        // foldl lambda with function: *const fn (Self, M, A) EM
+        foldl_lam: anytype,
+        init_val: M,
+        fa: ArrayList(A),
+    ) FoldRetType(Error, M) {
+        _ = self;
+        const EM = Monoid(M).InstanceImpl.EM;
+        const has_err, const _M = base.isErrorUnionOrVal(EM);
+        _ = _M;
+
+        var acc = init_val;
+        for (fa.items) |item| {
+            acc = if (has_err)
+                try foldl_lam.call(acc, item)
+            else
+                foldl_lam.call(acc, item);
+        }
+        return acc;
+    }
+
+    pub fn foldrLam(
+        self: *const Self,
+        comptime A: type,
+        comptime M: type,
+        // foldr lambda with function: *const fn (Self, A, M) EM
+        foldr_lam: anytype,
+        init_val: M,
+        fa: ArrayList(A),
+    ) FoldRetType(Error, M) {
+        _ = self;
+        const EM = Monoid(M).InstanceImpl.EM;
+        const has_err, const _M = base.isErrorUnionOrVal(EM);
+        _ = _M;
+
+        var acc = init_val;
+        // foldr iterates from right to left (end to beginning)
+        var i: usize = fa.items.len;
+        while (i > 0) {
+            i -= 1;
+            acc = if (has_err)
+                try foldr_lam.call(fa.items[i], acc)
+            else
+                foldr_lam.call(fa.items[i], acc);
+        }
+        return acc;
+    }
+};
+
+test "ArrayList Foldable foldl" {
+    const allocator = testing.allocator;
+    const arrayl_foldable = ArrayListFoldableImpl{ .allocator = allocator };
+
+    var array = ArrayList(u32).init(allocator);
+    defer array.deinit();
+    try array.appendSlice(&[_]u32{ 1, 2, 3, 4, 5 });
+
+    const sum = arrayl_foldable.foldl(u32, u32, struct {
+        fn add(acc: u32, x: u32) u32 {
+            return acc + x;
+        }
+    }.add, 0, array);
+
+    try testing.expectEqual(@as(u32, 15), sum);
+}
+
+test "ArrayList Foldable foldr" {
+    const allocator = testing.allocator;
+    const arrayl_foldable = ArrayListFoldableImpl{ .allocator = allocator };
+
+    var array = ArrayList(u32).init(allocator);
+    defer array.deinit();
+    try array.appendSlice(&[_]u32{ 1, 2, 3, 4 });
+
+    // Test foldr with subtraction to show right-to-left evaluation
+    // foldr (-) 0 [1,2,3,4] = 1 - (2 - (3 - (4 - 0))) = 1 - (2 - (3 - 4)) = 1 - (2 - (-1)) = 1 - 3 = -2
+    const result = arrayl_foldable.foldr(u32, i32, struct {
+        fn sub(x: u32, acc: i32) i32 {
+            return @as(i32, @intCast(x)) - acc;
+        }
+    }.sub, 0, array);
+
+    try testing.expectEqual(@as(i32, -2), result);
+}
+
+test "ArrayList Foldable foldMap" {
+    const allocator = testing.allocator;
+    const arrayl_foldable = ArrayListFoldableImpl{ .allocator = allocator };
+
+    // Create a monoid for u32 (sum)
+    const U32Monoid = monoid.Monoid(u32);
+    const u32_monoid = U32Monoid.InstanceImpl{};
+
+    var array = ArrayList(u32).init(allocator);
+    defer array.deinit();
+    try array.appendSlice(&[_]u32{ 1, 2, 3, 4, 5 });
+
+    // foldMap with identity function should give sum
+    const sum = arrayl_foldable.foldMap(u32, u32, u32_monoid, struct {
+        fn identity(x: u32) u32 {
+            return x;
+        }
+    }.identity, array);
+
+    try testing.expectEqual(@as(u32, 15), sum);
+
+    // foldMap with doubling function
+    const double_sum = arrayl_foldable.foldMap(u32, u32, u32_monoid, struct {
+        fn double(x: u32) u32 {
+            return x * 2;
+        }
+    }.double, array);
+
+    try testing.expectEqual(@as(u32, 30), double_sum);
 }

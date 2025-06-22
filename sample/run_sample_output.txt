@@ -35,6 +35,21 @@ arr inplace mapped again: { 106, 107, 108, 109, 110, 111, 112, 113 }
 arr_new: { 3.3284000000000003e2, 3.3598e2, 3.3912e2, 3.4226e2, 3.4540000000000003e2, 3.4854e2, 3.5168e2, 3.5482e2 }
 arr_applied: { 332, 335, 339, 342, 345, 348, 351, 354, 1332, 1344, 1357, 1370, 1382, 1395, 1407, 1420 }
 arr_binded: { 1332, 2996, 1344, 3024, 1357, 3053, 1370, 3081, 1382, 3109, 1395, 3137, 1407, 3166, 1420, 3194 }
+
+=== Foldable Examples ===
+Original numbers: 1 2 3 4 5 6 7 8 9 10 
+Sum using foldl: 55
+Product using foldr: 3628800
+Sum of squares using foldMap: 385
+Weighted sum (weight=3, offset=10) using foldlLam: 265
+Conditional sum (threshold=5, bonus=100) using foldrLam: 555
+
+--- Array Foldable Examples ---
+Original array: 2 4 6 8 
+Array sum using foldl: 20
+Array product using foldr: 384
+Array sum of squares using foldMap: 120
+=== Foldable Examples Complete ===
 arr mapped: { 50, null, 52, null, 54, null, 56, null }
 arr_new: { 1.57e2, null, 1.6328e2, null, 1.6956e2, null, 1.7584e2, null }
 arr_applied: { 157, null, 163, null, 169, null, 175, null, 628, null, 654, null, 679, null, 704, null, null, null, null, null, null, null, null, null }

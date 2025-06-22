@@ -6,6 +6,8 @@ const Allocator = std.mem.Allocator;
 const Functor = zcats.Functor;
 const Applicative = zcats.Applicative;
 const Monad = zcats.Monad;
+const Foldable = zcats.Foldable;
+const Monoid = zcats.Monoid;
 const NatTrans = zcats.NatTrans;
 
 const ComposeApplicative = zcats.ComposeApplicative;
@@ -23,6 +25,7 @@ const MaybeToArrayListNatImpl = zcats.MaybeToArrayListNatImpl;
 pub fn runZCatsSamples() !void {
     maybeSample();
     try arraylistSample();
+    try foldableSample();
     try composeSample();
     try productSample();
     try coproductSample();
@@ -148,6 +151,129 @@ fn arraylistSample() !void {
     }.f);
     defer arr_binded.deinit();
     std.debug.print("arr_binded: {any}\n", .{arr_binded.items});
+}
+
+fn foldableSample() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    std.debug.print("\n=== Foldable Examples ===\n", .{});
+
+    // Create Foldable instance for ArrayList
+    const ArrayListFoldable = Foldable(ArrayList);
+    const arrayl_foldable = ArrayListFoldable.InstanceImpl{ .allocator = allocator };
+
+    // Create sample data
+    var numbers = ArrayList(u32).init(allocator);
+    defer numbers.deinit();
+    try numbers.appendSlice(&[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 });
+
+    std.debug.print("Original numbers: ", .{});
+    for (numbers.items) |n| {
+        std.debug.print("{} ", .{n});
+    }
+    std.debug.print("\n", .{});
+
+    // Demonstrate foldl - sum all numbers
+    const sum = arrayl_foldable.foldl(u32, u32, struct {
+        fn add(acc: u32, x: u32) u32 {
+            return acc + x;
+        }
+    }.add, 0, numbers);
+    std.debug.print("Sum using foldl: {}\n", .{sum});
+
+    // Demonstrate foldr - product of all numbers
+    const product = arrayl_foldable.foldr(u32, u32, struct {
+        fn multiply(x: u32, acc: u32) u32 {
+            return if (acc == 1) x else x * acc;
+        }
+    }.multiply, 1, numbers);
+    std.debug.print("Product using foldr: {}\n", .{product});
+
+    // Demonstrate foldMap - sum of squares using u32 monoid
+    const U32Monoid = Monoid(u32);
+    const u32_monoid = U32Monoid.InstanceImpl{};
+
+    const sum_of_squares = arrayl_foldable.foldMap(u32, u32, u32_monoid, struct {
+        fn square(x: u32) u32 {
+            return x * x;
+        }
+    }.square, numbers);
+    std.debug.print("Sum of squares using foldMap: {}\n", .{sum_of_squares});
+
+    // Demonstrate foldlLam with lambda that captures variables - weighted sum
+    const weight: u32 = 3;
+    const offset: u32 = 10;
+    const weighted_sum_lam = struct {
+        weight: u32,
+        offset: u32,
+
+        const Self = @This();
+        pub fn call(self: *const Self, acc: u32, x: u32) u32 {
+            return acc + (x * self.weight + self.offset);
+        }
+    }{ .weight = weight, .offset = offset };
+
+    const weighted_sum = arrayl_foldable.foldlLam(u32, u32, weighted_sum_lam, 0, numbers);
+    std.debug.print("Weighted sum (weight={}, offset={}) using foldlLam: {}\n", .{ weight, offset, weighted_sum });
+
+    // Demonstrate foldrLam with lambda that captures variables - conditional sum
+    const threshold: u32 = 5;
+    const bonus: u32 = 100;
+    const conditional_sum_lam = struct {
+        threshold: u32,
+        bonus: u32,
+
+        const Self = @This();
+        pub fn call(self: *const Self, x: u32, acc: u32) u32 {
+            const value = if (x > self.threshold) x + self.bonus else x;
+            return acc + value;
+        }
+    }{ .threshold = threshold, .bonus = bonus };
+
+    const conditional_sum = arrayl_foldable.foldrLam(u32, u32, conditional_sum_lam, 0, numbers);
+    std.debug.print("Conditional sum (threshold={}, bonus={}) using foldrLam: {}\n", .{ threshold, bonus, conditional_sum });
+
+    // Demonstrate Array Foldable examples
+    std.debug.print("\n--- Array Foldable Examples ---\n", .{});
+
+    const Array4 = zcats.Array(4);
+    const ArrayFoldable = Foldable(Array4);
+    const array_foldable = ArrayFoldable.InstanceImpl{};
+
+    const fixed_array = [_]u32{ 2, 4, 6, 8 };
+    std.debug.print("Original array: ", .{});
+    for (fixed_array) |n| {
+        std.debug.print("{} ", .{n});
+    }
+    std.debug.print("\n", .{});
+
+    // Test foldl with array
+    const array_sum = array_foldable.foldl(u32, u32, struct {
+        fn add(acc: u32, x: u32) u32 {
+            return acc + x;
+        }
+    }.add, 0, fixed_array);
+    std.debug.print("Array sum using foldl: {}\n", .{array_sum});
+
+    // Test foldr with array
+    const array_product = array_foldable.foldr(u32, u32, struct {
+        fn multiply(x: u32, acc: u32) u32 {
+            return if (acc == 1) x else x * acc;
+        }
+    }.multiply, 1, fixed_array);
+    std.debug.print("Array product using foldr: {}\n", .{array_product});
+
+    // Test foldMap with array
+    const array_sum_of_squares = array_foldable.foldMap(u32, u32, u32_monoid, struct {
+        fn square(x: u32) u32 {
+            return x * x;
+        }
+    }.square, fixed_array);
+    std.debug.print("Array sum of squares using foldMap: {}\n", .{array_sum_of_squares});
+
+    std.debug.print("=== Foldable Examples Complete ===\n", .{});
 }
 
 // Deinit the array3 with type ArrayList(Maybe(ArrayList(A))

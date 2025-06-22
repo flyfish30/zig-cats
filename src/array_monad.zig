@@ -6,8 +6,12 @@ const applicative = @import("applicative.zig");
 const monad = @import("monad.zig");
 const testu = @import("test_utils.zig");
 
+const foldable = @import("foldable.zig");
+
 const testing = std.testing;
 const assert = std.debug.assert;
+
+const FoldRetType = foldable.FoldRetType;
 
 const MapFnInType = base.MapFnInType;
 const MapFnRetType = base.MapFnRetType;
@@ -409,6 +413,183 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
     };
 }
 
+/// Like `instance Foldable Array(len)` in haskell.
+pub fn ArrayFoldableImpl(comptime len: usize) type {
+    return struct {
+        const Self = @This();
+
+        /// Constructor Type for Foldable
+        pub const F = Array(len);
+
+        /// Get base type of F(A), it is must just is A.
+        pub fn BaseType(comptime ArrayA: type) type {
+            return std.meta.Child(ArrayA);
+        }
+
+        pub const Error: ?type = null;
+
+        pub fn foldMap(
+            self: *const Self,
+            comptime A: type,
+            comptime M: type,
+            // monoid instance for type M
+            monoid_impl: Monoid(M).InstanceImpl,
+            // map function: A -> M
+            map_fn: *const fn (A) @TypeOf(monoid_impl).EM,
+            fa: [len]A,
+        ) FoldRetType(Error, M) {
+            _ = self;
+            const MonoidImpl = @TypeOf(monoid_impl);
+            var acc = if (MonoidImpl.Error == null)
+                monoid_impl.mempty()
+            else
+                try monoid_impl.mempty();
+            for (fa) |item| {
+                const mapped = map_fn(item);
+                const new_acc = if (MonoidImpl.Error == null)
+                    monoid_impl.mappend(acc, mapped)
+                else
+                    try monoid_impl.mappend(acc, mapped);
+                base.deinitOrUnref(acc);
+                base.deinitOrUnref(mapped);
+                acc = new_acc;
+            }
+            return acc;
+        }
+
+        pub fn foldl(
+            self: *const Self,
+            comptime A: type,
+            comptime M: type,
+            // fold function: (M, A) -> M
+            fold_fn: *const fn (M, A) Monoid(M).InstanceImpl.EM,
+            init_val: M,
+            fa: [len]A,
+        ) FoldRetType(Error, M) {
+            _ = self;
+            const EM = Monoid(M).InstanceImpl.EM;
+            const has_err, const _M = base.isErrorUnionOrVal(EM);
+            _ = _M;
+
+            var acc = init_val;
+            for (fa) |item| {
+                acc = if (has_err)
+                    try fold_fn(acc, item)
+                else
+                    fold_fn(acc, item);
+            }
+            return acc;
+        }
+
+        pub fn foldr(
+            self: *const Self,
+            comptime A: type,
+            comptime M: type,
+            // fold function: (A, M) -> M
+            fold_fn: *const fn (A, M) Monoid(M).InstanceImpl.EM,
+            init_val: M,
+            fa: [len]A,
+        ) FoldRetType(Error, M) {
+            _ = self;
+            const EM = Monoid(M).InstanceImpl.EM;
+            const has_err, const _M = base.isErrorUnionOrVal(EM);
+            _ = _M;
+
+            var acc = init_val;
+            // foldr iterates from right to left (end to beginning)
+            var i: usize = fa.len;
+            while (i > 0) {
+                i -= 1;
+                acc = if (has_err)
+                    try fold_fn(fa[i], acc)
+                else
+                    fold_fn(fa[i], acc);
+            }
+            return acc;
+        }
+
+        pub fn foldMapLam(
+            self: *const Self,
+            comptime A: type,
+            comptime M: type,
+            // monoid instance for type M
+            monoid_impl: Monoid(M).InstanceImpl,
+            // map lambda with function: *const fn (Self, A) EM
+            map_lam: anytype,
+            fa: [len]A,
+        ) FoldRetType(Error, M) {
+            _ = self;
+            const MonoidImpl = @TypeOf(monoid_impl);
+            var acc = if (MonoidImpl.Error == null)
+                monoid_impl.mempty()
+            else
+                try monoid_impl.mempty();
+            for (fa) |item| {
+                const mapped = map_lam.call(item);
+                const new_acc = if (MonoidImpl.Error == null)
+                    monoid_impl.mappend(acc, mapped)
+                else
+                    try monoid_impl.mappend(acc, mapped);
+                base.deinitOrUnref(acc);
+                base.deinitOrUnref(mapped);
+                acc = new_acc;
+            }
+            return acc;
+        }
+
+        pub fn foldlLam(
+            self: *const Self,
+            comptime A: type,
+            comptime M: type,
+            // foldl lambda with function: *const fn (Self, M, A) EM
+            foldl_lam: anytype,
+            init_val: M,
+            fa: [len]A,
+        ) FoldRetType(Error, M) {
+            _ = self;
+            const EM = Monoid(M).InstanceImpl.EM;
+            const has_err, const _M = base.isErrorUnionOrVal(EM);
+            _ = _M;
+
+            var acc = init_val;
+            for (fa) |item| {
+                acc = if (has_err)
+                    try foldl_lam.call(acc, item)
+                else
+                    foldl_lam.call(acc, item);
+            }
+            return acc;
+        }
+
+        pub fn foldrLam(
+            self: *const Self,
+            comptime A: type,
+            comptime M: type,
+            // foldr lambda with function: *const fn (Self, A, M) EM
+            foldr_lam: anytype,
+            init_val: M,
+            fa: [len]A,
+        ) FoldRetType(Error, M) {
+            _ = self;
+            const EM = Monoid(M).InstanceImpl.EM;
+            const has_err, const _M = base.isErrorUnionOrVal(EM);
+            _ = _M;
+
+            var acc = init_val;
+            // foldr iterates from right to left (end to beginning)
+            var i: usize = fa.len;
+            while (i > 0) {
+                i -= 1;
+                acc = if (has_err)
+                    try foldr_lam.call(fa[i], acc)
+                else
+                    foldr_lam.call(fa[i], acc);
+            }
+            return acc;
+        }
+    };
+}
+
 // These functions are used for unit test
 const add10 = testu.add10;
 const add_pi_f32 = testu.add_pi_f32;
@@ -603,4 +784,65 @@ test "comptime runDo Array" {
         &[_]f64{ 36, 87.14, 867, 144.44 },
         &out,
     );
+}
+
+test "Array Foldable foldl" {
+    const ArrayFoldable = ArrayFoldableImpl(ARRAY_LEN);
+    const array_foldable = ArrayFoldable{};
+
+    const array = [_]u32{ 1, 2, 3, 4 };
+
+    const sum = array_foldable.foldl(u32, u32, struct {
+        fn add(acc: u32, x: u32) u32 {
+            return acc + x;
+        }
+    }.add, 0, array);
+
+    try testing.expectEqual(@as(u32, 10), sum);
+}
+
+test "Array Foldable foldr" {
+    const ArrayFoldable = ArrayFoldableImpl(ARRAY_LEN);
+    const array_foldable = ArrayFoldable{};
+
+    const array = [_]u32{ 1, 2, 3, 4 };
+
+    // Test foldr with subtraction to show right-to-left evaluation
+    // foldr (-) 0 [1,2,3,4] = 1 - (2 - (3 - (4 - 0))) = 1 - (2 - (3 - 4)) = 1 - (2 - (-1)) = 1 - 3 = -2
+    const result = array_foldable.foldr(u32, i32, struct {
+        fn sub(x: u32, acc: i32) i32 {
+            return @as(i32, @intCast(x)) - acc;
+        }
+    }.sub, 0, array);
+
+    try testing.expectEqual(@as(i32, -2), result);
+}
+
+test "Array Foldable foldMap" {
+    const ArrayFoldable = ArrayFoldableImpl(ARRAY_LEN);
+    const array_foldable = ArrayFoldable{};
+
+    // Create a monoid for u32 (sum)
+    const U32Monoid = monoid.Monoid(u32);
+    const u32_monoid = U32Monoid.InstanceImpl{};
+
+    const array = [_]u32{ 1, 2, 3, 4 };
+
+    // foldMap with identity function should give sum
+    const sum = array_foldable.foldMap(u32, u32, u32_monoid, struct {
+        fn identity(x: u32) u32 {
+            return x;
+        }
+    }.identity, array);
+
+    try testing.expectEqual(@as(u32, 10), sum);
+
+    // foldMap with doubling function
+    const double_sum = array_foldable.foldMap(u32, u32, u32_monoid, struct {
+        fn double(x: u32) u32 {
+            return x * 2;
+        }
+    }.double, array);
+
+    try testing.expectEqual(@as(u32, 20), double_sum);
 }

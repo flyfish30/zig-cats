@@ -346,4 +346,5 @@ test "Fix(SimpleExprF) cata function" {
     try testing.expectEqualSlices(u8, " 42  +  37  +  13 ", show_array.items);
 
     try cata(&exprf_functor, mapFnToLam(printSimpleExprF), expr);
+    // Output string is " 42  37  +  13  + "
 }
