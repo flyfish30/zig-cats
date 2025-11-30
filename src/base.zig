@@ -6,11 +6,19 @@ const applicative = @import("applicative.zig");
 
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 const Applicative = applicative.Applicative;
 
-pub usingnamespace @import("base/util_types.zig");
+const util_types = @import("base/util_types.zig");
+
+// re-exports from base/util_types.zig
+pub const Identity = util_types.Identity;
+pub const Constant = util_types.Constant;
+pub const AllBool = util_types.AllBool;
+pub const AnyBool = util_types.AnyBool;
+pub const SumNumb = util_types.SumNumb;
+pub const ProductNumb = util_types.ProductNumb;
 
 const TypeId = *const struct {
     _: u8,
@@ -430,7 +438,7 @@ pub fn ComposableLam(
 
                 const NormalLamFns = struct {
                     fn ref(self: *Self) *Self {
-                        const real_lam: *InitLam = @alignCast(@ptrCast(self.any_lam));
+                        const real_lam: *InitLam = @ptrCast(@alignCast(self.any_lam));
                         if (@hasDecl(InitLam, "refSubLam"))
                             real_lam.refSubLam()
                         else
@@ -441,7 +449,7 @@ pub fn ComposableLam(
                     }
 
                     fn unref(self: *Self) bool {
-                        const real_lam: *InitLam = @alignCast(@ptrCast(self.any_lam));
+                        const real_lam: *InitLam = @ptrCast(@alignCast(self.any_lam));
                         // std.debug.print("unref ref_count={d}, NormalLam = {*}\n", .{ self.ref_count, self });
                         if (self.ref_count > 1) {
                             self.ref_count -= 1;
@@ -464,7 +472,7 @@ pub fn ComposableLam(
                     }
 
                     fn call(self_any_lam: *anyopaque, a: A) B {
-                        const real_lam: *InitLam = @alignCast(@ptrCast(self_any_lam));
+                        const real_lam: *InitLam = @ptrCast(@alignCast(self_any_lam));
                         return real_lam.call(a);
                     }
                 };
@@ -614,13 +622,13 @@ pub fn LamWrapper(comptime cfg: anytype, comptime Lam: type) type {
         }
 
         pub fn deinit(self: Self) void {
-            const lam_self: *Lam = @alignCast(@ptrCast(self.lam_self));
+            const lam_self: *Lam = @ptrCast(@alignCast(self.lam_self));
             deinitOrUnref(lam_self.*);
             cfg.allocator.destroy(lam_self);
         }
 
         pub fn call(self: *Self, a: A) B {
-            const lam_self: *Lam = @alignCast(@ptrCast(self.lam_self));
+            const lam_self: *Lam = @ptrCast(@alignCast(self.lam_self));
             Lam.call(lam_self, a);
         }
     };

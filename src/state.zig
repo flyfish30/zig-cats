@@ -16,7 +16,7 @@ const testing = std.testing;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Maybe = base.Maybe;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 const TCtor = base.TCtor;
 var maybe_error = maybe.maybe_error;

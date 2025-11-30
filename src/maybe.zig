@@ -103,7 +103,7 @@ const MaybeErrorImpl = struct {
 
 pub const maybe_error: MaybeErrorImpl = MaybeErrorImpl{};
 
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 const SemiGroup = semi_grp.SemiGroup;
 
 test "Monoid Maybe(A) mempty and mappend" {

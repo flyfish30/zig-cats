@@ -16,7 +16,7 @@ const KontLamInType = base.KontLamInType;
 const KontLamRetType = base.KontLamRetType;
 
 const Maybe = base.Maybe;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 pub fn MonadFxTypes(comptime F: TCtor, comptime E: ?type) type {
     return struct {
@@ -238,7 +238,7 @@ fn ContRetType(comptime K: type) type {
 }
 
 fn MonadImplType(comptime DoCtx: type) type {
-    return std.meta.FieldType(DoCtx, .monad_impl);
+    return @TypeOf(@field(@as(DoCtx, undefined), "monad_impl"));
 }
 
 fn mkDoContFn(

@@ -276,7 +276,7 @@ fn evalSimpleExprF(exprf: SimpleExprF(i32)) i32 {
     };
 }
 
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 const ShowSimpleExprFLam = struct {
     show_str_ptr: *ArrayList(u8),

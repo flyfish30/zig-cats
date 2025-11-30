@@ -305,7 +305,7 @@ const Maybe = base.Maybe;
 const ARRAY_LEN = 4;
 const Array = base.Array;
 const ArrayF = Array(ARRAY_LEN);
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 // Deinit the array3 with type ArrayList(Maybe(ArrayList(A))
 fn array3Deinit(array3: anytype) void {

@@ -18,7 +18,7 @@ const CoproductApplicative = zcats.CoproductApplicative;
 
 const Maybe = zcats.Maybe;
 const MaybeMonadImpl = zcats.MaybeMonadImpl;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 const ArrayListMonadImpl = zcats.ArrayListMonadImpl;
 const MaybeToArrayListNatImpl = zcats.MaybeToArrayListNatImpl;
 

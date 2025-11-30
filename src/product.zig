@@ -260,7 +260,7 @@ const ArrayListMonadImpl = listm.ArrayListMonadImpl;
 const MaybeMonadImpl = maybe.MaybeMonadImpl;
 
 const Maybe = base.Maybe;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 test "Compose Functor fmap" {
     // test (ArrayList, Maybe) product functor

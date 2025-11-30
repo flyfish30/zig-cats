@@ -82,7 +82,7 @@ pub fn ArrayMonoidImpl(comptime len: u32, comptime T: type) type {
     };
 }
 
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 test "Monoid Array(A) mempty and mappend" {
     const U32Monoid = Monoid(u32);

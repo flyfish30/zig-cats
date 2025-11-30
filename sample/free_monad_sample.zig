@@ -4,7 +4,7 @@ const zcats = @import("zcats");
 const testing = std.testing;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 const TCtor = zcats.TCtor;
 

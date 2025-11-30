@@ -10,7 +10,7 @@ const isErrorUnionOrVal = base.isErrorUnionOrVal;
 const maybe_error = maybe.maybe_error;
 const Monoid = monoid.Monoid;
 
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 pub fn FoldRetType(comptime E: ?type, comptime M: type) type {
     const Impl = Monoid(M).InstanceImpl;

@@ -18,7 +18,7 @@ const EffectVal = base.EffectVal;
 
 const Maybe = base.Maybe;
 const Array = base.Array;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 const getDefaultFn = base.getDefaultFn;
 

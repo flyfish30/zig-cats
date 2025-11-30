@@ -17,7 +17,7 @@ const ApplyLamInType = base.ApplyLamInType;
 const ApplyLamRetType = base.ApplyLamRetType;
 
 const Maybe = base.Maybe;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 pub const MaybeApplicativeImpl = maybe.MaybeMonadImpl;
 pub const ArrayListApplicativeImpl = arraylm.ArrayListMonadImpl;

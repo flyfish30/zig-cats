@@ -10,7 +10,7 @@ const foldable = @import("foldable.zig");
 
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 const MapFnInType = base.MapFnInType;

@@ -39,7 +39,7 @@ const MonadFxTypes = monad.MonadFxTypes;
 const runDo = monad.runDo;
 
 const Array = base.Array;
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 
 /// A Identity type constructor, just is
 /// `newtype Identity a = Identity { getIdentity :: a }`

@@ -28,13 +28,19 @@ pub fn build(b: *std.Build) void {
     // zig-cats module
     const zcats = b.addModule("zcats", .{
         .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const zcats_sample = b.addModule("zcats_sample", .{
+        .root_source_file = b.path("sample/main.zig"),
+        .target = target,
+        .optimize = optimize,
     });
 
     const exe = b.addExecutable(.{
         .name = "zcats-sample",
-        .root_source_file = b.path("sample/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = zcats_sample,
     });
     exe.root_module.addImport("zcats", zcats);
 
@@ -43,13 +49,10 @@ pub fn build(b: *std.Build) void {
     // step when running `zig build`).
     b.installArtifact(exe);
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "zig-cats",
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = zcats,
+        .linkage = .static,
     });
 
     // This declares intent for the library to be installed into the standard
@@ -90,9 +93,8 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const zcats_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
+        .name = "zcats-unit-tests",
+        .root_module = zcats,
     });
 
     const run_zcats_unit_tests = b.addRunArtifact(zcats_unit_tests);
@@ -100,9 +102,8 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("sample/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .name = "zcats-sample-unit-tests",
+        .root_module = zcats_sample,
     });
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
