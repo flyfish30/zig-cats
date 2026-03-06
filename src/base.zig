@@ -4,10 +4,14 @@ const testing = std.testing;
 const testu = @import("test_utils.zig");
 const applicative = @import("applicative.zig");
 
+const compsable_fast = @import("composable_lam_fast.zig");
+
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.array_list.Managed;
 
+pub const ComposableLamFast = compsable_fast.ComposableLamFast;
+pub const ComposableLam = ComposableLamFast;
 const Applicative = applicative.Applicative;
 
 const util_types = @import("base/util_types.zig");
@@ -337,7 +341,7 @@ pub fn getDefaultBaseCfg(allocator: Allocator) BaseContextCfg {
 /// No matter how many functions and lambdas are combined, the composable lambda can be
 /// considered as a single lambda containing the call function A->B.
 /// The parameter cfg must has allocator field.
-pub fn ComposableLam(
+pub fn ComposableLamNormal(
     comptime cfg: anytype,
     comptime A: type,
     comptime B: type,
@@ -517,7 +521,7 @@ pub fn ComposableLam(
         pub fn appendFn(
             self: *Self,
             map_fn: anytype,
-        ) Allocator.Error!*ComposableLam(cfg, A, AppendedRetType(B, MapFnToLamType(@TypeOf(map_fn)))) {
+        ) Allocator.Error!*ComposableLamNormal(cfg, A, AppendedRetType(B, MapFnToLamType(@TypeOf(map_fn)))) {
             return self.appendLam(mapFnToLam(map_fn));
         }
 
@@ -526,7 +530,7 @@ pub fn ComposableLam(
         pub fn appendLam(
             self: *Self,
             map_lam: anytype,
-        ) Allocator.Error!*ComposableLam(cfg, A, AppendedRetType(B, @TypeOf(map_lam))) {
+        ) Allocator.Error!*ComposableLamNormal(cfg, A, AppendedRetType(B, @TypeOf(map_lam))) {
             const MapLam = @TypeOf(map_lam);
             const InType = MapLamInType(MapLam);
             comptime assert(_B == InType);
@@ -569,7 +573,7 @@ pub fn ComposableLam(
                 .append_lam = try copyOrCloneOrRef(map_lam),
             };
             // std.debug.print("appended_comp_lam comp_lam={*}\n", .{appended_comp_lam.comp_lam});
-            return ComposableLam(cfg, A, RetType).create(appended_comp_lam);
+            return ComposableLamNormal(cfg, A, RetType).create(appended_comp_lam);
         }
 
         pub fn call(self: *const Self, a: A) B {
@@ -578,7 +582,12 @@ pub fn ComposableLam(
     };
 }
 
-test ComposableLam {
+const ComposableKind = enum {
+    Normal,
+    Fast,
+};
+
+fn testComposableLam(comptime k: ComposableKind) !void {
     const cfg = getDefaultBaseCfg(testing.allocator);
     var add_pi_lam = testu.Add_x_f64_Lam{ ._x = 3.14 };
     _ = &add_pi_lam;
@@ -589,18 +598,29 @@ test ComposableLam {
     var point_move_lam = testu.Point3_offset_u32_Lam{ ._point = .{ 46.2, 26.83, 72.56 } };
     _ = &point_move_lam;
 
-    const comp1 = try ComposableLam(cfg, u32, f64).create(add_pi_lam);
+    const comp1 = try switch (k) {
+        .Normal => ComposableLamNormal(cfg, u32, f64).create(add_pi_lam),
+        .Fast => ComposableLamFast(cfg, u32, f64).create(add_pi_lam),
+    };
     const comp2 = try comp1.appendLam(div_5_lam);
     try testing.expectEqual(8, comp2.call(40));
     const comp3 = try comp2.appendLam(add_e_f32_lam);
     try testing.expectEqual(10.72, comp3.call(40));
     _ = comp3.strongUnref();
 
-    const comp11 = try ComposableLam(cfg, u32, f64).create(add_pi_lam);
+    const comp11 = try switch (k) {
+        .Normal => ComposableLamNormal(cfg, u32, f64).create(add_pi_lam),
+        .Fast => ComposableLamFast(cfg, u32, f64).create(add_pi_lam),
+    };
     const comp12 = try comp11.appendLam(div_5_lam);
     const comp13 = try comp12.appendLam(point_move_lam);
     try testing.expectEqual(.{ 54.2, 34.83, 80.56 }, comp13.call(40));
     _ = comp13.strongUnref();
+}
+
+test "ComposableLamNormal and ComposableLamFast" {
+    try testComposableLam(.Normal);
+    try testComposableLam(.Fast);
 }
 
 pub fn LamWrapper(comptime cfg: anytype, comptime Lam: type) type {
