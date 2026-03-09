@@ -283,7 +283,7 @@ pub fn EffectIdentityLamType(E: ?type, T: type) type {
         lam_ctx: void = {},
 
         const Self = @This();
-        fn call(self: *Self, val: T) EffectVal(E, T) {
+        pub fn call(self: *Self, val: T) EffectVal(E, T) {
             _ = self;
             return val;
         }
