@@ -319,7 +319,11 @@ pub fn ComposableLamFast(
             box.* = .{
                 .ref_count = 1,
                 .tag = if (use_sbo) .sbo else .heap,
-                .storage = undefined,
+                // Keep union active field consistent with tag to satisfy runtime safety checks.
+                .storage = if (use_sbo)
+                    .{ .sbo = undefined }
+                else
+                    .{ .heap = undefined },
                 .ref_fn = BoxFns.ref,
                 .unref_fn = BoxFns.unref,
             };
