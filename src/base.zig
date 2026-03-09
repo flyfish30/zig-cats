@@ -4,13 +4,13 @@ const testing = std.testing;
 const testu = @import("test_utils.zig");
 const applicative = @import("applicative.zig");
 
-const compsable_fast = @import("composable_lam_fast.zig");
+const composable_fast = @import("composable_lam_fast.zig");
 
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.array_list.Managed;
 
-pub const ComposableLamFast = compsable_fast.ComposableLamFast;
+pub const ComposableLamFast = composable_fast.ComposableLamFast;
 pub const ComposableLam = ComposableLamFast;
 const Applicative = applicative.Applicative;
 
@@ -337,6 +337,9 @@ pub fn getDefaultBaseCfg(allocator: Allocator) BaseContextCfg {
     };
 }
 
+pub const getDefaultComposableLamCfg = composable_fast.getDefaultComposableLamCfg;
+pub const ComposableLamCfg = composable_fast.ComposableLamCfg;
+
 /// Define a lambda type for composable lambda that can compose functions and lambdas.
 /// No matter how many functions and lambdas are combined, the composable lambda can be
 /// considered as a single lambda containing the call function A->B.
@@ -588,7 +591,7 @@ const ComposableKind = enum {
 };
 
 fn testComposableLam(comptime k: ComposableKind) !void {
-    const cfg = getDefaultBaseCfg(testing.allocator);
+    const cfg = getDefaultComposableLamCfg(testing.allocator);
     var add_pi_lam = testu.Add_x_f64_Lam{ ._x = 3.14 };
     _ = &add_pi_lam;
     var div_5_lam = testu.Div_x_u32_Lam{ ._x = 5 };

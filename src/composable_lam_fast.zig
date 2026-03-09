@@ -1,5 +1,6 @@
 const std = @import("std");
 const base = @import("base.zig");
+const builtin = @import("builtin");
 
 const Alignment = std.mem.Alignment;
 const mapFnToLam = base.mapFnToLam;
@@ -14,28 +15,57 @@ const isErrorUnionOrVal = base.isErrorUnionOrVal;
 const copyOrCloneOrRef = base.copyOrCloneOrRef;
 const deinitOrUnref = base.deinitOrUnref;
 
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
+
+/// Configuration for ComposableLamFast. Use getDefaultComposableLamCfg(allocator) for defaults.
+pub const ComposableLamCfg = struct {
+    allocator: Allocator,
+    errors: ?type,
+
+    /// Max bytes for stack-allocated params buffer; larger pipelines use heap. Default from defaultStackParamsMaxSize().
+    stack_params_max_size: usize = defaultStackParamsMaxSize(),
+
+    /// Max alignment guaranteed for params buffer. Typical desktop: 16. MCU: 4 or 8.
+    params_max_align: Alignment = Alignment.fromByteUnits(16),
+
+    /// LamBox SBO capacity (bytes). Lambdas with size <= this and align <= sbo_align are stored inline.
+    sbo_size: usize = 32,
+
+    /// LamBox SBO alignment. Must be >= max alignment of lambdas stored inline.
+    sbo_align: Alignment = Alignment.fromByteUnits(16),
+
+    /// When true, Frame includes trace_in_size/out_size/align for observability.
+    trace_inout_params: bool = false,
+};
+
+/// Returns default ComposableLamCfg. stack_params_max_size uses defaultStackParamsMaxSize().
+pub fn getDefaultComposableLamCfg(allocator: Allocator) ComposableLamCfg {
+    return .{
+        .allocator = allocator,
+        .errors = Allocator.Error,
+        .stack_params_max_size = defaultStackParamsMaxSize(),
+        .params_max_align = Alignment.fromByteUnits(16),
+        .sbo_size = 32,
+        .sbo_align = Alignment.fromByteUnits(16),
+        .trace_inout_params = false,
+    };
+}
+
 /// High-performance, dynamically-appendable, type-safe composable lambda pipeline.
 /// Key properties:
 /// - Dynamic append (runtime): appendLam builds a pipeline of frames (no nested recursion).
 /// - Static strong typing for intermediate values: each stage is compiled for its exact types.
-/// - No boxing of intermediate values: uses ping-pong scratch buffers (raw bytes), typed by each stage.
+/// - No boxing of intermediate values: uses single scratch buffer (raw bytes), typed by each stage.
 /// - Deterministic alignment via cfg.scratch_align_cap (comptime). Each append checks align requirements.
 /// - Lambda environment storage uses LamBox with SBO (small-buffer optimization).
 ///
-
-// The max size of a stack-allocated parameter buffer.
-const STACK_PARAMS_MAX_SIZE: usize = 64;
-
-/// Maximum alignment that params buffer will guarantee.
-/// Typical desktop: 16. Typical MCU: 4 or 8 (8 is safer if u64/f64 appear).
-const PARAMS_MAX_ALIGN: Alignment = Alignment.fromByteUnits(16);
-const PARAMS_MAX_ALIGN_BYTES: usize = Alignment.toByteUnits(PARAMS_MAX_ALIGN);
-
-// LamBox SBO capacity (bytes). Small lambdas with size <= this and align <= lam_sbo_align are stored inline.
-const SBO_SIZE: usize = 32;
-
-// LamBox SBO alignment. Must be >= max alignment of lambdas you want to store inline.
-const SBO_ALIGN: Alignment = Alignment.fromByteUnits(16);
+pub fn defaultStackParamsMaxSize() usize {
+    // Keep conservative defaults on constrained targets.
+    if (builtin.target.os.tag == .freestanding or builtin.target.os.tag == .uefi) return 64;
+    if (builtin.target.ptrBitWidth() <= 32) return 128;
+    return 256;
+}
 
 fn getCallFnType(comptime Lam: type) type {
     const info = @typeInfo(Lam);
@@ -80,20 +110,39 @@ pub fn ComposableLamFast(
         cfg.trace_inout_params
     else
         false;
+    // Configurable params buffer alignment; default keeps previous behavior.
+    const PARAMS_MAX_ALIGN: Alignment = comptime if (@hasField(@TypeOf(cfg), "params_max_align"))
+        cfg.params_max_align
+    else
+        Alignment.fromByteUnits(16);
+    const PARAMS_MAX_ALIGN_BYTES: usize = Alignment.toByteUnits(PARAMS_MAX_ALIGN);
+    // Configurable LamBox SBO size/alignment; defaults keep previous behavior.
+    const SBO_SIZE: usize = comptime if (@hasField(@TypeOf(cfg), "sbo_size"))
+        cfg.sbo_size
+    else
+        32;
+    const SBO_ALIGN: Alignment = comptime if (@hasField(@TypeOf(cfg), "sbo_align"))
+        cfg.sbo_align
+    else
+        Alignment.fromByteUnits(16);
+
+    // The max size of a stack-allocated parameter buffer.
+    const STACK_PARAMS_MAX_SIZE: usize = comptime if (@hasField(@TypeOf(cfg), "stack_params_max_size"))
+        cfg.stack_params_max_size
+    else
+        defaultStackParamsMaxSize();
 
     return struct {
         composed: *Composed,
 
         const Self = @This();
-        const Allocator = std.mem.Allocator;
-        const ArrayList = std.ArrayListUnmanaged;
 
         const StorageTag = enum { sbo, heap };
 
         const LamBox = struct {
             ref_count: usize,
             tag: StorageTag,
-            storage: union(StorageTag) {
+            storage: union {
                 sbo: [SBO_SIZE]u8 align(Alignment.toByteUnits(SBO_ALIGN)),
                 heap: *anyopaque,
             },
