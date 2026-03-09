@@ -75,6 +75,11 @@ pub fn ComposableLamFast(
     comptime B: type,
 ) type {
     const has_err_final, const _B_payload = comptime isErrorUnionOrVal(B);
+    const ErrSet = if (has_err_final) @typeInfo(B).error_union.error_set else error{};
+    const TRACE_INOUT_PARAMS: bool = comptime if (@hasField(@TypeOf(cfg), "trace_inout_params"))
+        cfg.trace_inout_params
+    else
+        false;
 
     return struct {
         composed: *Composed,
@@ -104,13 +109,21 @@ pub fn ComposableLamFast(
         };
 
         const Frame = struct {
-            box: *LamBox,
+            box: ?*LamBox,
 
-            apply: *const fn (*anyopaque, [*]u8, [*]u8) anyerror!void,
-            in_size: usize,
-            out_size: usize,
-            in_align: u29,
-            out_align: u29,
+            // In-place apply: reads input value from `buf` as InType, writes output value to same `buf` as OutType.
+            // `env` is null for stateless lambdas.
+            apply: *const fn (?*anyopaque, [*]u8) ErrSet!void,
+
+            // Runtime scheduling uses merged in/out requirements for the in-place buffer.
+            inout_size: usize,
+            inout_align: u29,
+
+            // Optional observability fields (compiled in only when TRACE_INOUT_PARAMS=true).
+            trace_in_size: if (TRACE_INOUT_PARAMS) usize else void = if (TRACE_INOUT_PARAMS) 0 else {},
+            trace_out_size: if (TRACE_INOUT_PARAMS) usize else void = if (TRACE_INOUT_PARAMS) 0 else {},
+            trace_in_align: if (TRACE_INOUT_PARAMS) u29 else void = if (TRACE_INOUT_PARAMS) 0 else {},
+            trace_out_align: if (TRACE_INOUT_PARAMS) u29 else void = if (TRACE_INOUT_PARAMS) 0 else {},
         };
 
         const Composed = struct {
@@ -137,7 +150,9 @@ pub fn ComposableLamFast(
                     self.ref_count -= 1;
                     return;
                 }
-                for (self.frames.items) |fr| fr.box.unref_fn(fr.box);
+                for (self.frames.items) |fr| {
+                    if (fr.box) |b| b.unref_fn(b);
+                }
                 self.frames.deinit(cfg.allocator);
                 cfg.allocator.destroy(self);
             }
@@ -149,7 +164,7 @@ pub fn ComposableLamFast(
                 composed_new.max_size = self.max_size;
                 try composed_new.frames.ensureTotalCapacity(cfg.allocator, self.frames.items.len);
                 for (self.frames.items) |frame| {
-                    frame.box.ref_fn(frame.box);
+                    if (frame.box) |b| b.ref_fn(b);
                     composed_new.frames.appendAssumeCapacity(frame);
                 }
                 return composed_new;
@@ -160,8 +175,8 @@ pub fn ComposableLamFast(
                 return self.clone();
             }
 
-            fn updateScratchNeed(self: *Composed, in_size: usize, out_size: usize) void {
-                self.max_size = @max(self.max_size, @max(in_size, out_size));
+            fn updateScratchNeed(self: *Composed, inout_size: usize) void {
+                self.max_size = @max(self.max_size, inout_size);
             }
         };
 
@@ -207,7 +222,7 @@ pub fn ComposableLamFast(
             return OutError!RetType;
         }
 
-        fn newLamBox(lam_val: anytype) Allocator.Error!*LamBox {
+        pub fn newLamBox(lam_val: anytype) Allocator.Error!*LamBox {
             const Lam = @TypeOf(lam_val);
             // When Lam is a pointer (e.g. *ComposableLamFast), use pointee type for @hasDecl and correct call target
             const LamDecl = if (@typeInfo(Lam) == .pointer) std.meta.Child(Lam) else Lam;
@@ -299,9 +314,13 @@ pub fn ComposableLamFast(
             }
         }
 
-        fn makeApply(
+        pub fn isStatelessLam(comptime Lam: type) bool {
+            return @typeInfo(Lam) == .@"struct" and @sizeOf(Lam) == 0;
+        }
+
+        pub fn makeApplyBoxed(
             comptime MapLam: type,
-        ) *const fn (*anyopaque, [*]u8, [*]u8) anyerror!void {
+        ) *const fn (?*anyopaque, [*]u8) ErrSet!void {
             const InType = MapLamInType(MapLam);
             const ret_has_err, const RetType = comptime isErrorUnionOrVal(MapLamRetType(MapLam));
             comptime {
@@ -310,15 +329,47 @@ pub fn ComposableLamFast(
             }
 
             return struct {
-                fn apply(env: *anyopaque, in_buf: [*]u8, out_buf: [*]u8) anyerror!void {
-                    const in_ptr: *InType = @ptrCast(@alignCast(in_buf));
+                fn apply(env_opt: ?*anyopaque, buf: [*]u8) ErrSet!void {
+                    const env = env_opt.?;
+
+                    const in_ptr: *InType = @ptrCast(@alignCast(buf));
                     const x: InType = in_ptr.*;
 
-                    const out_ptr: *RetType = @ptrCast(@alignCast(out_buf));
+                    const out_ptr: *RetType = @ptrCast(@alignCast(buf));
                     out_ptr.* = if (ret_has_err)
                         try lamCall(MapLam, env, x)
                     else
                         lamCall(MapLam, env, x);
+                }
+            }.apply;
+        }
+
+        pub fn makeApplyStateless(
+            comptime MapLam: type,
+        ) *const fn (?*anyopaque, [*]u8) ErrSet!void {
+            comptime {
+                if (!isStatelessLam(MapLam)) @compileError("makeApplyStateless requires a zero-sized struct lambda type.");
+            }
+
+            const InType = MapLamInType(MapLam);
+            const ret_has_err, const RetType = comptime isErrorUnionOrVal(MapLamRetType(MapLam));
+            comptime {
+                assertAlignCapOk(InType, RetType);
+            }
+
+            return struct {
+                fn apply(_: ?*anyopaque, buf: [*]u8) ErrSet!void {
+                    const in_ptr: *InType = @ptrCast(@alignCast(buf));
+                    const x: InType = in_ptr.*;
+
+                    // Zero-sized lambda: no environment needed.
+                    var lam: MapLam = .{};
+
+                    const out_ptr: *RetType = @ptrCast(@alignCast(buf));
+                    out_ptr.* = if (ret_has_err)
+                        try lam.call(x)
+                    else
+                        lam.call(x);
                 }
             }.apply;
         }
@@ -332,28 +383,41 @@ pub fn ComposableLamFast(
             comptime {
                 if (A != MapLamInType(InitLam)) @compileError("create: input type mismatch.");
                 if (B != MapLamRetType(InitLam)) @compileError("create: return type mismatch.");
-                assertAlignCapOk(A, B);
+                // Buffer stores payload only.
+                assertAlignCapOk(A, _B_payload);
             }
 
             const composed = try Composed.init();
             errdefer composed.unref();
 
-            const box = try newLamBox(init_lam);
-            errdefer box.unref_fn(box);
+            var box_opt: ?*LamBox = null;
+            errdefer {
+                if (box_opt) |box| box.unref_fn(box);
+            }
 
-            const apply_fn = makeApply(InitLam);
+            const apply_fn = if (comptime isStatelessLam(InitLam))
+                makeApplyStateless(InitLam)
+            else blk: {
+                box_opt = try newLamBox(init_lam);
+                break :blk makeApplyBoxed(InitLam);
+            };
 
             const frame: Frame = .{
-                .box = box,
+                .box = box_opt,
                 .apply = apply_fn,
-                .in_size = @sizeOf(A),
-                .out_size = @sizeOf(B),
-                .in_align = @alignOf(A),
-                .out_align = @alignOf(B),
+                .inout_size = @max(@sizeOf(A), @sizeOf(_B_payload)),
+                .inout_align = @max(@alignOf(A), @alignOf(_B_payload)),
+                .trace_in_size = if (TRACE_INOUT_PARAMS) @sizeOf(A) else {},
+                .trace_out_size = if (TRACE_INOUT_PARAMS) @sizeOf(_B_payload) else {},
+                .trace_in_align = if (TRACE_INOUT_PARAMS) @alignOf(A) else {},
+                .trace_out_align = if (TRACE_INOUT_PARAMS) @alignOf(_B_payload) else {},
             };
 
             try composed.frames.append(cfg.allocator, frame);
-            composed.updateScratchNeed(frame.in_size, frame.out_size);
+            composed.updateScratchNeed(frame.inout_size);
+
+            // ownership transferred into composed
+            box_opt = null;
 
             const self = try cfg.allocator.create(Self);
             self.* = .{ .composed = composed };
@@ -408,56 +472,114 @@ pub fn ComposableLamFast(
             }
 
             const RetType = AppendedRetType(B, MapLam);
+            const ret_has_err, const RetPayload = comptime isErrorUnionOrVal(RetType);
+            _ = ret_has_err;
 
-            // Create new Composed for the new pipeline type (cfg, A, RetType), then copy existing frames into it
-            const old_composed = self.composed;
+            // New specialization for the extended pipeline.
             const ComposedLam = ComposableLamFast(cfg, A, RetType);
+
+            const old_composed = self.composed;
+
+            // Fast path: sole owner -> mutate in place (no frame copy) and re-type the composed pointer.
+            if (old_composed.ref_count == 1) {
+                const new_composed: *ComposedLam.Composed = @ptrCast(old_composed);
+
+                var box_opt: ?*ComposedLam.LamBox = null;
+                errdefer {
+                    if (box_opt) |box| box.unref_fn(box);
+                }
+
+                const apply_fn = if (comptime ComposedLam.isStatelessLam(MapLam))
+                    ComposedLam.makeApplyStateless(MapLam)
+                else blk: {
+                    box_opt = try ComposedLam.newLamBox(map_lam);
+                    break :blk ComposedLam.makeApplyBoxed(MapLam);
+                };
+
+                const frame: ComposedLam.Frame = .{
+                    .box = box_opt,
+                    .apply = apply_fn,
+                    .inout_size = @max(@sizeOf(_B_payload), @sizeOf(RetPayload)),
+                    .inout_align = @max(@alignOf(_B_payload), @alignOf(RetPayload)),
+                    .trace_in_size = if (TRACE_INOUT_PARAMS) @sizeOf(_B_payload) else {},
+                    .trace_out_size = if (TRACE_INOUT_PARAMS) @sizeOf(RetPayload) else {},
+                    .trace_in_align = if (TRACE_INOUT_PARAMS) @alignOf(_B_payload) else {},
+                    .trace_out_align = if (TRACE_INOUT_PARAMS) @alignOf(RetPayload) else {},
+                };
+
+                try new_composed.frames.append(cfg.allocator, frame);
+                new_composed.updateScratchNeed(frame.inout_size);
+
+                const composed_lam = try cfg.allocator.create(ComposedLam);
+                composed_lam.* = .{ .composed = new_composed };
+
+                // safe to destroy handle because it is not shared (ref_count==1)
+                cfg.allocator.destroy(self);
+                return composed_lam;
+            }
+
+            // Shared path: copy existing frames into a fresh composed, then append.
             const new_composed = try createEmptyComposedFor(RetType);
             errdefer new_composed.unref();
 
             new_composed.max_size = old_composed.max_size;
             try new_composed.frames.ensureTotalCapacity(cfg.allocator, old_composed.frames.items.len + 1);
-            for (old_composed.frames.items) |fr| {
-                fr.box.ref_fn(fr.box);
-                // LamBox layout is identical across (cfg, A, _) instantiations; safe to reinterpret.
+
+            for (old_composed.frames.items) |frame| {
+                var new_box_opt: ?*ComposedLam.LamBox = null;
+                if (frame.box) |box| {
+                    box.ref_fn(box);
+                    new_box_opt = @ptrCast(box);
+                }
+
                 const new_frame: ComposedLam.Frame = .{
-                    .box = @ptrCast(fr.box),
-                    .apply = fr.apply,
-                    .in_size = fr.in_size,
-                    .out_size = fr.out_size,
-                    .in_align = fr.in_align,
-                    .out_align = fr.out_align,
+                    .box = new_box_opt,
+                    // Cast is ABI-safe: error sets are subsets; function pointers are just code addresses.
+                    .apply = @ptrCast(frame.apply),
+                    .inout_size = frame.inout_size,
+                    .inout_align = frame.inout_align,
+                    .trace_in_size = frame.trace_in_size,
+                    .trace_out_size = frame.trace_out_size,
+                    .trace_in_align = frame.trace_in_align,
+                    .trace_out_align = frame.trace_out_align,
                 };
                 new_composed.frames.appendAssumeCapacity(new_frame);
             }
 
-            const box = try newLamBox(map_lam);
-            errdefer box.unref_fn(box);
+            var box_opt: ?*ComposedLam.LamBox = null;
+            errdefer {
+                if (box_opt) |box| box.unref_fn(box);
+            }
 
-            // compile-time alignment cap check is inside makeApply via assertAlignCapOk(B, RetType)
-            const apply_fn = makeApply(MapLam);
+            const apply_fn = if (comptime ComposedLam.isStatelessLam(MapLam))
+                ComposedLam.makeApplyStateless(MapLam)
+            else blk2: {
+                box_opt = try ComposedLam.newLamBox(map_lam);
+                break :blk2 ComposedLam.makeApplyBoxed(MapLam);
+            };
 
             const frame: ComposedLam.Frame = .{
-                .box = @ptrCast(box),
+                .box = box_opt,
                 .apply = apply_fn,
-                .in_size = @sizeOf(B),
-                .out_size = @sizeOf(RetType),
-                .in_align = @alignOf(B),
-                .out_align = @alignOf(RetType),
+                .inout_size = @max(@sizeOf(_B_payload), @sizeOf(RetPayload)),
+                .inout_align = @max(@alignOf(_B_payload), @alignOf(RetPayload)),
+                .trace_in_size = if (TRACE_INOUT_PARAMS) @sizeOf(_B_payload) else {},
+                .trace_out_size = if (TRACE_INOUT_PARAMS) @sizeOf(RetPayload) else {},
+                .trace_in_align = if (TRACE_INOUT_PARAMS) @alignOf(_B_payload) else {},
+                .trace_out_align = if (TRACE_INOUT_PARAMS) @alignOf(RetPayload) else {},
             };
 
             new_composed.frames.appendAssumeCapacity(frame);
-            new_composed.updateScratchNeed(frame.in_size, frame.out_size);
+            new_composed.updateScratchNeed(frame.inout_size);
+
+            // ownership transferred into composed
+            box_opt = null;
 
             const composed_lam = try cfg.allocator.create(ComposedLam);
             composed_lam.* = .{ .composed = new_composed };
 
-            // When ref_count > 1, another owner holds this pipeline (e.g. via strongRef()); do not destroy self to avoid double-free.
-            const was_sole_owner = (old_composed.ref_count == 1);
+            // Release exactly one owner share from the old composed (other owners keep using the existing handle).
             old_composed.unref();
-            if (was_sole_owner) {
-                cfg.allocator.destroy(self);
-            }
             return composed_lam;
         }
 
@@ -466,19 +588,18 @@ pub fn ComposableLamFast(
             const composed = self.composed;
 
             const stride = std.mem.alignForward(usize, composed.max_size, PARAMS_MAX_ALIGN_BYTES);
-            const total = 2 * stride;
 
             // Stack fast path (cap is compile-time).
-            const use_stack = (total <= STACK_PARAMS_MAX_SIZE);
+            const use_stack = (stride <= STACK_PARAMS_MAX_SIZE);
 
             var stack_buf: [STACK_PARAMS_MAX_SIZE]u8 align(PARAMS_MAX_ALIGN_BYTES) = undefined;
             var scratch: []u8 = undefined;
 
             if (use_stack) {
-                scratch = stack_buf[0..total];
+                scratch = stack_buf[0..stride];
             } else {
                 // deterministic alignment: allocate with PARAMS_MAX_ALIGN; free with same alignment
-                scratch = cfg.allocator.alignedAlloc(u8, PARAMS_MAX_ALIGN, total) catch unreachable;
+                scratch = cfg.allocator.alignedAlloc(u8, PARAMS_MAX_ALIGN, stride) catch unreachable;
             }
             defer {
                 if (!use_stack) {
@@ -486,35 +607,28 @@ pub fn ComposableLamFast(
                 }
             }
 
-            var in_buf = scratch[0..stride];
-            const out_buf = scratch[stride..total];
-
             // write initial input A
-            const a_ptr: *A = @ptrCast(@alignCast(in_buf.ptr));
+            const a_ptr: *A = @ptrCast(@alignCast(scratch.ptr));
             a_ptr.* = a;
 
-            // run frames in order (stride is >= every frame's in_size/out_size by updateScratchNeed invariant)
-            for (composed.frames.items) |frame| {
-                std.debug.assert(stride >= frame.in_size and stride >= frame.out_size);
-                const env = frame.box.envPtr();
-                frame.apply(env, in_buf.ptr, out_buf.ptr) catch |e| {
-                    if (has_err_final) {
-                        return @errorCast(e);
-                    } else {
-                        unreachable;
-                    }
-                };
-                in_buf = out_buf;
+            // run frames in order (composed.max_size invariant ensures stride is sufficient)
+            if (has_err_final) {
+                for (composed.frames.items) |frame| {
+                    std.debug.assert(stride >= frame.inout_size);
+                    const env_opt: ?*anyopaque = if (frame.box) |b| b.envPtr() else null;
+                    try frame.apply(env_opt, scratch.ptr);
+                }
+            } else {
+                for (composed.frames.items) |frame| {
+                    std.debug.assert(stride >= frame.inout_size);
+                    const env_opt: ?*anyopaque = if (frame.box) |b| b.envPtr() else null;
+                    frame.apply(env_opt, scratch.ptr) catch unreachable;
+                }
             }
 
-            // When B is error!T, buffer only ever holds payload T (errors propagated via try); read as payload.
-            if (has_err_final) {
-                const p_ptr: *_B_payload = @ptrCast(@alignCast(in_buf.ptr));
-                return p_ptr.*;
-            } else {
-                const b_ptr: *B = @ptrCast(@alignCast(in_buf.ptr));
-                return b_ptr.*;
-            }
+            // Buffer holds payload only; for non-error unions payload == B.
+            const p_ptr: *_B_payload = @ptrCast(@alignCast(scratch.ptr));
+            return p_ptr.*;
         }
     };
 }
