@@ -57,7 +57,7 @@ pub fn getDefaultComposableLamCfg(allocator: Allocator) ComposableLamCfg {
 /// - Dynamic append (runtime): appendLam builds a pipeline of frames (no nested recursion).
 /// - Static strong typing for intermediate values: each stage is compiled for its exact types.
 /// - No boxing of intermediate values: uses single scratch buffer (raw bytes), typed by each stage.
-/// - Deterministic alignment via cfg.scratch_align_cap (comptime). Each append checks align requirements.
+/// - Deterministic alignment via cfg.params_max_align (comptime). Each append checks align requirements.
 /// - Lambda environment storage uses LamBox with SBO (small-buffer optimization).
 ///
 pub fn defaultStackParamsMaxSize() usize {
@@ -241,15 +241,15 @@ pub fn ComposableLamFast(
             return composed;
         }
 
-        fn assertAlignCapOk(comptime InT: type, comptime OutT: type) void {
+        fn ensureParamsMaxAlignOk(comptime InT: type, comptime OutT: type) void {
             comptime {
                 const need_in: Alignment = Alignment.fromByteUnits(@alignOf(InT));
                 const need_out: Alignment = Alignment.fromByteUnits(@alignOf(OutT));
                 const need: Alignment = Alignment.max(need_in, need_out);
                 if (Alignment.compare(need, .gt, PARAMS_MAX_ALIGN)) {
                     @compileError(std.fmt.comptimePrint(
-                        "ComposableLamFast scratch_align_cap too small: cap={d}, need={d}. In={s} (align {d}), Out={s} (align {d}). " ++
-                            "Increase cfg.scratch_align_cap to >= {d}.",
+                        "ComposableLamFast params_max_align too small: params_max_align_bytes={d}, need={d}. In={s} (align {d}), Out={s} (align {d}). " ++
+                            "Increase cfg.params_max_align to >= {d}.",
                         .{ Alignment.toByteUnits(PARAMS_MAX_ALIGN), Alignment.toByteUnits(need), @typeName(InT), Alignment.toByteUnits(need_in), @typeName(OutT), Alignment.toByteUnits(need_out), Alignment.toByteUnits(need) },
                     ));
                 }
@@ -374,7 +374,7 @@ pub fn ComposableLamFast(
             const ret_has_err, const RetType = comptime isErrorUnionOrVal(MapLamRetType(MapLam));
             comptime {
                 // alignment cap check (compile-time)
-                assertAlignCapOk(InType, RetType);
+                ensureParamsMaxAlignOk(InType, RetType);
             }
 
             return struct {
@@ -403,7 +403,7 @@ pub fn ComposableLamFast(
             const InType = MapLamInType(MapLam);
             const ret_has_err, const RetType = comptime isErrorUnionOrVal(MapLamRetType(MapLam));
             comptime {
-                assertAlignCapOk(InType, RetType);
+                ensureParamsMaxAlignOk(InType, RetType);
             }
 
             return struct {
@@ -433,7 +433,7 @@ pub fn ComposableLamFast(
                 if (A != MapLamInType(InitLam)) @compileError("create: input type mismatch.");
                 if (B != MapLamRetType(InitLam)) @compileError("create: return type mismatch.");
                 // Buffer stores payload only.
-                assertAlignCapOk(A, _B_payload);
+                ensureParamsMaxAlignOk(A, _B_payload);
             }
 
             const composed = try Composed.init();
@@ -632,7 +632,7 @@ pub fn ComposableLamFast(
             return composed_lam;
         }
 
-        /// Single-loop interpreter execution using ping-pong scratch buffers.
+        /// Single-loop interpreter execution using in-place params buffer.
         pub fn call(self: *const Self, a: A) B {
             const composed = self.composed;
 
@@ -656,7 +656,7 @@ pub fn ComposableLamFast(
                 }
             }
 
-            // write initial input A
+            // write initial input A into scratch buffer
             const a_ptr: *A = @ptrCast(@alignCast(scratch.ptr));
             a_ptr.* = a;
 
