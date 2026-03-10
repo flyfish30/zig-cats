@@ -508,10 +508,14 @@ pub fn ComposableLamFast(
             return false;
         }
 
+        /// Append a single argument function to a composable lambda.
+        /// Note: this function will consume the self.
         pub fn appendFn(self: *Self, map_fn: anytype) Allocator.Error!*ComposableLamFast(cfg, A, AppendedRetType(B, MapFnToLamType(@TypeOf(map_fn)))) {
             return self.appendLam(mapFnToLam(map_fn));
         }
 
+        /// Append a single argument lambda to a composable lambda.
+        /// Note: this function will consume the self.
         pub fn appendLam(self: *Self, map_lam: anytype) Allocator.Error!*ComposableLamFast(cfg, A, AppendedRetType(B, @TypeOf(map_lam))) {
             const MapLam = @TypeOf(map_lam);
             const InType = MapLamInType(MapLam);
@@ -530,10 +534,51 @@ pub fn ComposableLamFast(
 
             // New specialization for the extended pipeline.
             const ComposedLam = ComposableLamFast(cfg, A, RetType);
+            comptime {
+                // appendLam uses pointer re-interpretation between old/new specializations.
+                // Keep hard guards here so future type/layout changes fail at compile time.
+                if (@sizeOf(Composed) != @sizeOf(ComposedLam.Composed) or @alignOf(Composed) != @alignOf(ComposedLam.Composed)) {
+                    @compileError("appendLam fast path requires Composed layout compatibility across specializations.");
+                }
+                if (@offsetOf(Composed, "ref_count") != @offsetOf(ComposedLam.Composed, "ref_count") or
+                    @offsetOf(Composed, "frames") != @offsetOf(ComposedLam.Composed, "frames") or
+                    @offsetOf(Composed, "max_size") != @offsetOf(ComposedLam.Composed, "max_size"))
+                {
+                    @compileError("appendLam fast path requires Composed field offset compatibility.");
+                }
+
+                if (@sizeOf(LamBox) != @sizeOf(ComposedLam.LamBox) or @alignOf(LamBox) != @alignOf(ComposedLam.LamBox)) {
+                    @compileError("appendLam requires LamBox layout compatibility across specializations.");
+                }
+                if (@offsetOf(LamBox, "ref_count") != @offsetOf(ComposedLam.LamBox, "ref_count") or
+                    @offsetOf(LamBox, "tag") != @offsetOf(ComposedLam.LamBox, "tag") or
+                    @offsetOf(LamBox, "storage") != @offsetOf(ComposedLam.LamBox, "storage") or
+                    @offsetOf(LamBox, "ref_fn") != @offsetOf(ComposedLam.LamBox, "ref_fn") or
+                    @offsetOf(LamBox, "unref_fn") != @offsetOf(ComposedLam.LamBox, "unref_fn"))
+                {
+                    @compileError("appendLam requires LamBox field offset compatibility.");
+                }
+
+                if (@sizeOf(Frame) != @sizeOf(ComposedLam.Frame) or @alignOf(Frame) != @alignOf(ComposedLam.Frame)) {
+                    @compileError("appendLam requires Frame layout compatibility across specializations.");
+                }
+                if (@offsetOf(Frame, "box") != @offsetOf(ComposedLam.Frame, "box") or
+                    @offsetOf(Frame, "apply") != @offsetOf(ComposedLam.Frame, "apply") or
+                    @offsetOf(Frame, "inout_size") != @offsetOf(ComposedLam.Frame, "inout_size") or
+                    @offsetOf(Frame, "inout_align") != @offsetOf(ComposedLam.Frame, "inout_align") or
+                    @offsetOf(Frame, "trace_in_size") != @offsetOf(ComposedLam.Frame, "trace_in_size") or
+                    @offsetOf(Frame, "trace_out_size") != @offsetOf(ComposedLam.Frame, "trace_out_size") or
+                    @offsetOf(Frame, "trace_in_align") != @offsetOf(ComposedLam.Frame, "trace_in_align") or
+                    @offsetOf(Frame, "trace_out_align") != @offsetOf(ComposedLam.Frame, "trace_out_align"))
+                {
+                    @compileError("appendLam requires Frame field offset compatibility.");
+                }
+            }
 
             const old_composed = self.composed;
 
             // Fast path: sole owner -> mutate in place (no frame copy) and re-type the composed pointer.
+            // The cast is protected by the compile-time layout checks above.
             if (old_composed.ref_count == 1) {
                 const new_composed: *ComposedLam.Composed = @ptrCast(old_composed);
 
@@ -582,12 +627,13 @@ pub fn ComposableLamFast(
                 var new_box_opt: ?*ComposedLam.LamBox = null;
                 if (frame.box) |box| {
                     box.ref_fn(box);
+                    // Safe because LamBox layout compatibility is checked above.
                     new_box_opt = @ptrCast(box);
                 }
 
                 const new_frame: ComposedLam.Frame = .{
                     .box = new_box_opt,
-                    // Cast is ABI-safe: error sets are subsets; function pointers are just code addresses.
+                    // Safe because Frame layout compatibility is checked above and apply is a function pointer slot.
                     .apply = @ptrCast(frame.apply),
                     .inout_size = frame.inout_size,
                     .inout_align = frame.inout_align,
