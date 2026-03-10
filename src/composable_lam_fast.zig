@@ -137,32 +137,33 @@ pub fn ComposableLamFast(
 
         const Self = @This();
 
-        const StorageTag = enum { sbo, heap };
+        const LamTag = enum { sbo, heap };
 
         const LamBox = struct {
             ref_count: usize,
-            tag: StorageTag,
-            storage: union {
-                sbo: [SBO_SIZE]u8 align(Alignment.toByteUnits(SBO_ALIGN)),
-                heap: *anyopaque,
+            tag: LamTag,
+            lam: union {
+                sbo_lam: [SBO_SIZE]u8 align(Alignment.toByteUnits(SBO_ALIGN)),
+                heap_lam: *anyopaque,
             },
             ref_fn: *const fn (*LamBox) void,
             unref_fn: *const fn (*LamBox) void,
 
-            fn envPtr(box: *LamBox) *anyopaque {
-                return switch (box.tag) {
-                    .sbo => @ptrCast(@alignCast(&box.storage.sbo)),
-                    .heap => box.storage.heap,
+            fn lamPtr(lam_box: *LamBox) *anyopaque {
+                return switch (lam_box.tag) {
+                    .sbo => @ptrCast(@alignCast(&lam_box.lam.sbo_lam)),
+                    .heap => lam_box.lam.heap_lam,
                 };
             }
         };
 
         const Frame = struct {
-            box: ?*LamBox,
+            // `lam_box` is null for stateless lambdas.
+            lam_box: ?*LamBox,
 
             // In-place apply: reads input value from `buf` as InType, writes output value to same `buf` as OutType.
-            // `env` is null for stateless lambdas.
-            apply: *const fn (?*anyopaque, [*]u8) ErrSet!void,
+            // `lam_any_opt` is null for stateless lambdas.
+            apply: *const fn (lam_any_opt: ?*anyopaque, buf: [*]u8) ErrSet!void,
 
             // Runtime scheduling uses merged in/out requirements for the in-place buffer.
             inout_size: usize,
@@ -199,8 +200,8 @@ pub fn ComposableLamFast(
                     self.ref_count -= 1;
                     return;
                 }
-                for (self.frames.items) |fr| {
-                    if (fr.box) |b| b.unref_fn(b);
+                for (self.frames.items) |frame| {
+                    if (frame.lam_box) |lam_box| lam_box.unref_fn(lam_box);
                 }
                 self.frames.deinit(cfg.allocator);
                 cfg.allocator.destroy(self);
@@ -213,7 +214,7 @@ pub fn ComposableLamFast(
                 composed_new.max_size = self.max_size;
                 try composed_new.frames.ensureTotalCapacity(cfg.allocator, self.frames.items.len);
                 for (self.frames.items) |frame| {
-                    if (frame.box) |b| b.ref_fn(b);
+                    if (frame.lam_box) |lam_box| lam_box.ref_fn(lam_box);
                     composed_new.frames.appendAssumeCapacity(frame);
                 }
                 return composed_new;
@@ -277,26 +278,26 @@ pub fn ComposableLamFast(
             const LamDecl = if (@typeInfo(Lam) == .pointer) std.meta.Child(Lam) else Lam;
 
             const BoxFns = struct {
-                fn get(box: *LamBox) *Lam {
-                    return switch (box.tag) {
-                        .sbo => @ptrCast(@alignCast(&box.storage.sbo)),
-                        .heap => @ptrCast(@alignCast(box.storage.heap)),
+                fn get(lam_box: *LamBox) *Lam {
+                    return switch (lam_box.tag) {
+                        .sbo => @ptrCast(@alignCast(&lam_box.lam.sbo_lam)),
+                        .heap => @ptrCast(@alignCast(lam_box.lam.heap_lam)),
                     };
                 }
 
-                fn ref(box: *LamBox) void {
-                    const p = get(box);
+                fn ref(lam_box: *LamBox) void {
+                    const p = get(lam_box);
                     if (@hasDecl(LamDecl, "refSubLam")) {
                         if (@typeInfo(Lam) == .pointer) (p.*).refSubLam() else p.refSubLam();
                     }
-                    box.ref_count += 1;
+                    lam_box.ref_count += 1;
                 }
 
-                fn unref(box: *LamBox) void {
-                    const p = get(box);
+                fn unref(lam_box: *LamBox) void {
+                    const p = get(lam_box);
 
-                    if (box.ref_count > 1) {
-                        box.ref_count -= 1;
+                    if (lam_box.ref_count > 1) {
+                        lam_box.ref_count -= 1;
                         if (@hasDecl(LamDecl, "unrefSubLam")) {
                             if (@typeInfo(Lam) == .pointer) (p.*).unrefSubLam() else p.unrefSubLam();
                         }
@@ -305,63 +306,64 @@ pub fn ComposableLamFast(
 
                     // last reference
                     deinitOrUnref(p.*);
-                    if (box.tag == .heap) {
+                    if (lam_box.tag == .heap) {
                         cfg.allocator.destroy(p);
                     }
-                    cfg.allocator.destroy(box);
+                    cfg.allocator.destroy(lam_box);
                 }
             };
 
-            const box = try cfg.allocator.create(LamBox);
-            errdefer cfg.allocator.destroy(box);
+            const lam_box = try cfg.allocator.create(LamBox);
+            errdefer cfg.allocator.destroy(lam_box);
 
             const use_sbo = (@sizeOf(Lam) <= SBO_SIZE) and Alignment.compare(Alignment.fromByteUnits(@alignOf(Lam)), .lte, SBO_ALIGN);
-            box.* = .{
+            lam_box.* = .{
                 .ref_count = 1,
                 .tag = if (use_sbo) .sbo else .heap,
                 // Keep union active field consistent with tag to satisfy runtime safety checks.
-                .storage = if (use_sbo)
-                    .{ .sbo = undefined }
+                .lam = if (use_sbo)
+                    .{ .sbo_lam = undefined }
                 else
-                    .{ .heap = undefined },
+                    .{ .heap_lam = undefined },
                 .ref_fn = BoxFns.ref,
                 .unref_fn = BoxFns.unref,
             };
 
             if (use_sbo) {
                 // Store Lam value inline.
-                const p: *Lam = @ptrCast(@alignCast(&box.storage.sbo));
-                p.* = try copyOrCloneOrRef(lam_val);
+                const lam_p: *Lam = @ptrCast(@alignCast(&lam_box.lam.sbo_lam));
+                lam_p.* = try copyOrCloneOrRef(lam_val);
             } else {
                 // Heap allocate Lam and store pointer.
-                const p = try cfg.allocator.create(Lam);
-                errdefer cfg.allocator.destroy(p);
-                p.* = try copyOrCloneOrRef(lam_val);
-                box.storage = .{ .heap = @ptrCast(p) };
+                const lam_p = try cfg.allocator.create(Lam);
+                errdefer cfg.allocator.destroy(lam_p);
+                lam_p.* = try copyOrCloneOrRef(lam_val);
+                lam_box.lam = .{ .heap_lam = @ptrCast(lam_p) };
             }
-            return box;
+            return lam_box;
         }
 
         /// Call the stored lambda (function or struct-with-call) in a uniform way.
-        fn lamCall(comptime Lam: type, env: *anyopaque, x: anytype) MapLamRetType(Lam) {
+        fn lamCall(comptime Lam: type, lam_any: *anyopaque, x: anytype) MapLamRetType(Lam) {
             const info = @typeInfo(Lam);
             switch (info) {
-                .@"fn" => return (@as(Lam, @ptrCast(env)))(x), // unreachable in our storage (env points to value), but kept for completeness
+                .@"fn" => return (@as(Lam, @ptrCast(lam_any)))(x), // unreachable in our storage (lam_any points to value), but kept for completeness
                 .pointer => |p| {
                     if (@typeInfo(p.child) == .@"fn") {
                         // env points to a value of type Lam (pointer-to-fn or pointer-to-fn? Actually Lam itself is pointer type)
-                        const p_fp: *Lam = @ptrCast(@alignCast(env));
+                        const p_fp: *Lam = @ptrCast(@alignCast(lam_any));
                         const fp: Lam = p_fp.*;
                         return fp(x);
                     }
                     // pointer to struct lambda is stored as Lam value; call on it
-                    const p_lv: *Lam = @ptrCast(@alignCast(env));
-                    const lv: Lam = p_lv.*;
-                    return lv.call(x);
+                    const lam_p: *Lam = @ptrCast(@alignCast(lam_any));
+                    const lam: Lam = lam_p.*;
+                    return lam.call(x);
                 },
                 .@"struct" => {
-                    const l: *Lam = @ptrCast(@alignCast(env));
-                    return l.call(x);
+                    const lam_p: *Lam = @ptrCast(@alignCast(lam_any));
+                    const lam: Lam = lam_p.*;
+                    return lam.call(x);
                 },
                 else => @compileError("Unsupported Lam in lamCall."),
             }
@@ -382,17 +384,17 @@ pub fn ComposableLamFast(
             }
 
             return struct {
-                fn apply(env_opt: ?*anyopaque, buf: [*]u8) ErrSet!void {
-                    const env = env_opt.?;
+                fn apply(lam_any_opt: ?*anyopaque, buf: [*]u8) ErrSet!void {
+                    const lam_any = lam_any_opt.?;
 
                     const in_ptr: *InType = @ptrCast(@alignCast(buf));
                     const x: InType = in_ptr.*;
 
                     const out_ptr: *RetType = @ptrCast(@alignCast(buf));
                     out_ptr.* = if (ret_has_err)
-                        try lamCall(MapLam, env, x)
+                        try lamCall(MapLam, lam_any, x)
                     else
-                        lamCall(MapLam, env, x);
+                        lamCall(MapLam, lam_any, x);
                 }
             }.apply;
         }
@@ -443,20 +445,20 @@ pub fn ComposableLamFast(
             const composed = try Composed.init();
             errdefer composed.unref();
 
-            var box_opt: ?*LamBox = null;
+            var lam_box_opt: ?*LamBox = null;
             errdefer {
-                if (box_opt) |box| box.unref_fn(box);
+                if (lam_box_opt) |lam_box| lam_box.unref_fn(lam_box);
             }
 
             const apply_fn = if (comptime isStatelessLam(InitLam))
                 makeApplyStateless(InitLam)
             else blk: {
-                box_opt = try newLamBox(init_lam);
+                lam_box_opt = try newLamBox(init_lam);
                 break :blk makeApplyBoxed(InitLam);
             };
 
             const frame: Frame = .{
-                .box = box_opt,
+                .lam_box = lam_box_opt,
                 .apply = apply_fn,
                 .inout_size = @max(@sizeOf(A), @sizeOf(_B_payload)),
                 .inout_align = @max(@alignOf(A), @alignOf(_B_payload)),
@@ -470,7 +472,7 @@ pub fn ComposableLamFast(
             composed.updateScratchNeed(frame.inout_size);
 
             // ownership transferred into composed
-            box_opt = null;
+            lam_box_opt = null;
 
             const self = try cfg.allocator.create(Self);
             self.* = .{ .composed = composed };
@@ -552,7 +554,7 @@ pub fn ComposableLamFast(
                 }
                 if (@offsetOf(LamBox, "ref_count") != @offsetOf(ComposedLam.LamBox, "ref_count") or
                     @offsetOf(LamBox, "tag") != @offsetOf(ComposedLam.LamBox, "tag") or
-                    @offsetOf(LamBox, "storage") != @offsetOf(ComposedLam.LamBox, "storage") or
+                    @offsetOf(LamBox, "lam") != @offsetOf(ComposedLam.LamBox, "lam") or
                     @offsetOf(LamBox, "ref_fn") != @offsetOf(ComposedLam.LamBox, "ref_fn") or
                     @offsetOf(LamBox, "unref_fn") != @offsetOf(ComposedLam.LamBox, "unref_fn"))
                 {
@@ -562,7 +564,7 @@ pub fn ComposableLamFast(
                 if (@sizeOf(Frame) != @sizeOf(ComposedLam.Frame) or @alignOf(Frame) != @alignOf(ComposedLam.Frame)) {
                     @compileError("appendLam requires Frame layout compatibility across specializations.");
                 }
-                if (@offsetOf(Frame, "box") != @offsetOf(ComposedLam.Frame, "box") or
+                if (@offsetOf(Frame, "lam_box") != @offsetOf(ComposedLam.Frame, "lam_box") or
                     @offsetOf(Frame, "apply") != @offsetOf(ComposedLam.Frame, "apply") or
                     @offsetOf(Frame, "inout_size") != @offsetOf(ComposedLam.Frame, "inout_size") or
                     @offsetOf(Frame, "inout_align") != @offsetOf(ComposedLam.Frame, "inout_align") or
@@ -582,20 +584,20 @@ pub fn ComposableLamFast(
             if (old_composed.ref_count == 1) {
                 const new_composed: *ComposedLam.Composed = @ptrCast(old_composed);
 
-                var box_opt: ?*ComposedLam.LamBox = null;
+                var lam_box_opt: ?*ComposedLam.LamBox = null;
                 errdefer {
-                    if (box_opt) |box| box.unref_fn(box);
+                    if (lam_box_opt) |lam_box| lam_box.unref_fn(lam_box);
                 }
 
                 const apply_fn = if (comptime ComposedLam.isStatelessLam(MapLam))
                     ComposedLam.makeApplyStateless(MapLam)
                 else blk: {
-                    box_opt = try ComposedLam.newLamBox(map_lam);
+                    lam_box_opt = try ComposedLam.newLamBox(map_lam);
                     break :blk ComposedLam.makeApplyBoxed(MapLam);
                 };
 
                 const frame: ComposedLam.Frame = .{
-                    .box = box_opt,
+                    .lam_box = lam_box_opt,
                     .apply = apply_fn,
                     .inout_size = @max(@sizeOf(_B_payload), @sizeOf(RetPayload)),
                     .inout_align = @max(@alignOf(_B_payload), @alignOf(RetPayload)),
@@ -624,15 +626,15 @@ pub fn ComposableLamFast(
             try new_composed.frames.ensureTotalCapacity(cfg.allocator, old_composed.frames.items.len + 1);
 
             for (old_composed.frames.items) |frame| {
-                var new_box_opt: ?*ComposedLam.LamBox = null;
-                if (frame.box) |box| {
-                    box.ref_fn(box);
+                var new_lam_box_opt: ?*ComposedLam.LamBox = null;
+                if (frame.lam_box) |lam_box| {
+                    lam_box.ref_fn(lam_box);
                     // Safe because LamBox layout compatibility is checked above.
-                    new_box_opt = @ptrCast(box);
+                    new_lam_box_opt = @ptrCast(lam_box);
                 }
 
                 const new_frame: ComposedLam.Frame = .{
-                    .box = new_box_opt,
+                    .lam_box = new_lam_box_opt,
                     // Safe because Frame layout compatibility is checked above and apply is a function pointer slot.
                     .apply = @ptrCast(frame.apply),
                     .inout_size = frame.inout_size,
@@ -645,20 +647,20 @@ pub fn ComposableLamFast(
                 new_composed.frames.appendAssumeCapacity(new_frame);
             }
 
-            var box_opt: ?*ComposedLam.LamBox = null;
+            var lam_box_opt: ?*ComposedLam.LamBox = null;
             errdefer {
-                if (box_opt) |box| box.unref_fn(box);
+                if (lam_box_opt) |lam_box| lam_box.unref_fn(lam_box);
             }
 
             const apply_fn = if (comptime ComposedLam.isStatelessLam(MapLam))
                 ComposedLam.makeApplyStateless(MapLam)
             else blk2: {
-                box_opt = try ComposedLam.newLamBox(map_lam);
+                lam_box_opt = try ComposedLam.newLamBox(map_lam);
                 break :blk2 ComposedLam.makeApplyBoxed(MapLam);
             };
 
             const frame: ComposedLam.Frame = .{
-                .box = box_opt,
+                .lam_box = lam_box_opt,
                 .apply = apply_fn,
                 .inout_size = @max(@sizeOf(_B_payload), @sizeOf(RetPayload)),
                 .inout_align = @max(@alignOf(_B_payload), @alignOf(RetPayload)),
@@ -670,9 +672,6 @@ pub fn ComposableLamFast(
 
             new_composed.frames.appendAssumeCapacity(frame);
             new_composed.updateScratchNeed(frame.inout_size);
-
-            // ownership transferred into composed
-            box_opt = null;
 
             const composed_lam = try cfg.allocator.create(ComposedLam);
             composed_lam.* = .{ .composed = new_composed };
@@ -714,14 +713,14 @@ pub fn ComposableLamFast(
             if (has_err_final) {
                 for (composed.frames.items) |frame| {
                     std.debug.assert(stride >= frame.inout_size);
-                    const env_opt: ?*anyopaque = if (frame.box) |b| b.envPtr() else null;
-                    try frame.apply(env_opt, scratch.ptr);
+                    const lam_any_opt: ?*anyopaque = if (frame.lam_box) |lam_box| lam_box.lamPtr() else null;
+                    try frame.apply(lam_any_opt, scratch.ptr);
                 }
             } else {
                 for (composed.frames.items) |frame| {
                     std.debug.assert(stride >= frame.inout_size);
-                    const env_opt: ?*anyopaque = if (frame.box) |b| b.envPtr() else null;
-                    frame.apply(env_opt, scratch.ptr) catch unreachable;
+                    const lam_any_opt: ?*anyopaque = if (frame.lam_box) |lam_box| lam_box.lamPtr() else null;
+                    frame.apply(lam_any_opt, scratch.ptr) catch unreachable;
                 }
             }
 
