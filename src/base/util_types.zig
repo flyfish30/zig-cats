@@ -765,13 +765,11 @@ fn SumOrProductNumb(comptime Numb: type, comptime numbop: NumbOp) type {
         pub const MonadImpl = NumbMonadImpl(NumbF);
 
         pub fn fromNumb(numb: Numb) Self {
-            if (@typeInfo(Numb) == .pointer) return @bitCast(@intFromPtr(numb));
-            return @bitCast(numb);
+            return .{ .numb = numb };
         }
 
         pub fn toNumb(self: Self) Numb {
-            if (@typeInfo(Numb) == .pointer) return @ptrFromInt(@as(usize, @bitCast(self)));
-            return @bitCast(self);
+            return self.numb;
         }
     };
 }
