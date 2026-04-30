@@ -129,7 +129,9 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                 /// function operator.
                 ///     data StateF s a = GetF (s -> a)
                 ///                     | PutF s a
-                free_fop: struct { *XToFreeFALam, FOpInfo },
+                free_fop: struct { *anyopaque, FOpInfo },
+                //^ The type of x_to_freem in tuple is *XToFreeFALam, instead of *anyopaque to avoid
+                //^ type dependency loop when use @typeInfo(self) in zig 0.16.0
 
                 /// Tuple of (pure FreeMonad(F, A), reversed f list), every f is just a
                 /// build information of operator in F.
@@ -144,6 +146,10 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                 else
                     GetExistentialType(F);
                 const XToFreeFALam = base.ComposableLam(cfg, ExistType, Error.?!Self);
+                pub fn opaqueToXToFreeFALam(x_to_freem: *anyopaque) *XToFreeFALam {
+                    return @ptrCast(@alignCast(x_to_freem));
+                }
+
                 pub const FunctorImpl = FreeMonadImpl(in_cfg, F, FunctorImplFromTCtor(F));
                 pub const ApplicativeImpl = FunctorImpl;
                 pub const MonadImpl = FunctorImpl;
@@ -161,7 +167,7 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                         self.free_m[0].deinit();
                         allocator.destroy(self.free_m[0]);
                     } else if (self == .free_fop) {
-                        _ = self.free_fop[0].strongUnref();
+                        _ = opaqueToXToFreeFALam(self.free_fop[0]).strongUnref();
                         const op_info = self.free_fop[1];
                         const fa_op_ctors = GetOpCtors(F, A);
                         const op_ctor_info = fa_op_ctors[op_info.op_e];
@@ -345,7 +351,7 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                             }
                         }{ .iter_fimpl = f_impl, .iter_f = f };
 
-                        const x_to_freem = self.free_fop[0].strongRef();
+                        const x_to_freem = opaqueToXToFreeFALam(self.free_fop[0]).strongRef();
                         const comp_iter = try x_to_freem.appendLam(inner_iter);
                         const fa = try f_impl.fmapLam(.InplaceMap, comp_iter, fx);
                         _ = comp_iter.strongUnref();
@@ -447,7 +453,7 @@ pub fn FreeM(comptime in_cfg: anytype, comptime F: TCtor) TCtor {
                         };
                         // Because the appendLam will consume the x_to_freem, so we
                         // should add a reference for x_to_freem.
-                        const x_to_freem = self.free_fop[0].strongRef();
+                        const x_to_freem = opaqueToXToFreeFALam(self.free_fop[0]).strongRef();
                         const comp_fold = try x_to_freem.appendLam(inner_fold);
                         const f_acc_m = try f_impl.fmapLam(.InplaceMap, comp_fold, fx);
                         const m_acc_m = try nat_impl.trans(MImpl.F(A), f_acc_m);
@@ -1012,7 +1018,10 @@ pub fn FreeMonadImpl(
                     }
                 }{ .fimpl = self, .map_fn = map_fn };
 
-                const x_to_freem = if (isInplaceMap(K)) _free_fop[0] else _free_fop[0].strongRef();
+                const x_to_freem = if (isInplaceMap(K))
+                    @TypeOf(fa).opaqueToXToFreeFALam(_free_fop[0])
+                else
+                    @TypeOf(fa).opaqueToXToFreeFALam(_free_fop[0]).strongRef();
                 const new_op_info = if (isInplaceMap(K))
                     _free_fop[1]
                 else
@@ -1111,7 +1120,10 @@ pub fn FreeMonadImpl(
                     }
                 }{ .fimpl = self, .map_lam = try base.copyOrCloneOrRef(map_lam) };
 
-                const x_to_freem = if (isInplaceMap(K)) _free_fop[0] else _free_fop[0].strongRef();
+                const x_to_freem = if (isInplaceMap(K))
+                    @TypeOf(fa).opaqueToXToFreeFALam(_free_fop[0])
+                else
+                    @TypeOf(fa).opaqueToXToFreeFALam(_free_fop[0]).strongRef();
                 const new_op_info = if (isInplaceMap(K))
                     _free_fop[1]
                 else
@@ -1209,7 +1221,7 @@ pub fn FreeMonadImpl(
                     }
                 }{ .fimpl = self, .local_fa = try base.copyOrCloneOrRef(fa) };
 
-                const x_to_freem = _free_fop[0].strongRef();
+                const x_to_freem = @TypeOf(ff).opaqueToXToFreeFALam(_free_fop[0]).strongRef();
                 const new_op_info = try @TypeOf(ff).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_apply_lam);
                 if (is_only_fop) {
@@ -1288,7 +1300,7 @@ pub fn FreeMonadImpl(
                     }
                 }{ .fimpl = self, .local_fa = try base.copyOrCloneOrRef(fa) };
 
-                const x_to_freem = _free_fop[0].strongRef();
+                const x_to_freem = @TypeOf(flam).opaqueToXToFreeFALam(_free_fop[0]).strongRef();
                 const new_op_info = try @TypeOf(flam).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_apply_lam);
                 if (is_only_fop) {
@@ -1393,7 +1405,7 @@ pub fn FreeMonadImpl(
                     }
                 }{ .fimpl = self, .local_k = k };
 
-                const x_to_freem = _free_fop[0].strongRef();
+                const x_to_freem = @TypeOf(ma).opaqueToXToFreeFALam(_free_fop[0]).strongRef();
                 const new_op_info = try @TypeOf(ma).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_bind_lam);
                 if (is_only_fop) {
@@ -1458,7 +1470,7 @@ pub fn FreeMonadImpl(
                     }
                 }{ .fimpl = self };
 
-                const x_to_freem = _free_fop[0].strongRef();
+                const x_to_freem = @TypeOf(mma).opaqueToXToFreeFALam(_free_fop[0]).strongRef();
                 const new_op_info = try @TypeOf(mma).copyOrCloneFOp(_free_fop[1]);
                 const new_x_to_freem = try x_to_freem.appendLam(inner_bind_lam);
                 if (is_only_fop) {

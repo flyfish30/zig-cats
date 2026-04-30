@@ -28,7 +28,6 @@ const MapFnKind = base.MapFnKind;
 const isMapRef = base.isMapRef;
 const isInplaceMap = base.isInplaceMap;
 const isErrorUnionOrVal = base.isErrorUnionOrVal;
-const castInplaceValue = base.castInplaceValue;
 
 const FoldRetType = foldable.FoldRetType;
 
@@ -204,16 +203,17 @@ pub const ArrayListMonadImpl = struct {
             @constCast(fa).moveToUnmanaged()
         else
             @constCast(&fa).moveToUnmanaged();
-        var slice = array.items;
+        var slice_a = array.items;
+        var slice_b: []B = @ptrCast(slice_a);
         var i: usize = 0;
-        while (i < slice.len) : (i += 1) {
-            const a = if (comptime isMapRef(K)) &slice[i] else slice[i];
+        while (i < slice_a.len) : (i += 1) {
+            const a = if (comptime isMapRef(K)) &slice_a[i] else slice_a[i];
             const b = if (has_err) try map_lam.call(a) else map_lam.call(a);
-            slice[i] = castInplaceValue(A, b);
+            slice_b[i] = b;
         }
 
         var array_b: ArrayListUnmanaged(B) = .{
-            .items = @ptrCast(slice),
+            .items = slice_b,
             .capacity = array.capacity,
         };
         return array_b.toManaged(self.allocator);
@@ -358,8 +358,11 @@ test "ArrayList Functor fmap" {
     array_a = try array_functor.fmap(.InplaceMap, add10, array_a);
     try testing.expectEqualSlices(u32, &[_]u32{ 10, 11, 12, 13 }, array_a.items);
 
-    const array_f32 = try array_functor.fmap(.InplaceMap, add_pi_f32, array_a);
-    array_a.clearRetainingCapacity();
+    var array_f32 = try array_functor.fmap(.InplaceMap, add_pi_f32, array_a);
+    defer array_f32.deinit();
+    // In Zig 0.16, clearRetainingCapacity() overwrites items with undefined bytes.
+    // Rebind `array_a` to detach ownership before reusing it in later assertions.
+    array_a = ArrayList(u32).init(allocator);
     try testing.expectEqualSlices(f32, &[_]f32{ 13.14, 14.14, 15.14, 16.14 }, array_f32.items);
 
     try array_a.appendSlice(&[_]u32{ 10, 20, 30, 40 });

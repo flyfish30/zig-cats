@@ -314,12 +314,17 @@ const ShowSimpleExprFLam = struct {
     }
 };
 
-fn printSimpleExprF(exprf: SimpleExprF(void)) !void {
-    return switch (exprf) {
-        .liti => |int| std.debug.print(" {d} ", .{int}),
-        .add => std.debug.print(" + ", .{}),
-    };
-}
+const PrintSimpleExprFLam = struct {
+    writer: *std.Io.Writer,
+
+    const Self = @This();
+    pub fn call(self: *const Self, exprf: SimpleExprF(void)) !void {
+        switch (exprf) {
+            .liti => |int| try self.writer.print(" {d} ", .{int}),
+            .add => try self.writer.print(" + ", .{}),
+        }
+    }
+};
 
 test "Fix(SimpleExprF) cata function" {
     const allocator = testing.allocator;
@@ -345,6 +350,11 @@ test "Fix(SimpleExprF) cata function" {
     _ = show_str;
     try testing.expectEqualSlices(u8, " 42  +  37  +  13 ", show_array.items);
 
-    try cata(&exprf_functor, mapFnToLam(printSimpleExprF), expr);
+    var print_writer = std.Io.Writer.Allocating.init(allocator);
+    defer print_writer.deinit();
+    var print_exprf_lam = PrintSimpleExprFLam{ .writer = &print_writer.writer };
+    _ = &print_exprf_lam;
+    try cata(&exprf_functor, print_exprf_lam, expr);
     // Output string is " 42  37  +  13  + "
+    try testing.expectEqualSlices(u8, " 42  37  +  13  + ", print_writer.written());
 }

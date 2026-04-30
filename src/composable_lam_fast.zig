@@ -185,7 +185,7 @@ pub fn ComposableLamFast(
                 const composed = try cfg.allocator.create(Composed);
                 composed.* = .{
                     .ref_count = 1,
-                    .frames = .{},
+                    .frames = .empty,
                     .max_size = 0,
                 };
                 return composed;
@@ -236,7 +236,7 @@ pub fn ComposableLamFast(
             const composed = try cfg.allocator.create(ComposedOut);
             composed.* = .{
                 .ref_count = 1,
-                .frames = .{},
+                .frames = .empty,
                 .max_size = 0,
             };
             return composed;

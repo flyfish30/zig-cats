@@ -67,7 +67,7 @@ fn maybeSample() void {
 
 fn arraySample() void {
     const ARRAY_LEN = 4;
-    const ArrayF = Array(ARRAY_LEN);
+    const ArrayF = comptime Array(ARRAY_LEN);
     const ArrayMonad = Monad(ArrayF);
     var array_monad = ArrayMonad.InstanceImpl{};
     const ArrayMImpl = @TypeOf(array_monad);
@@ -177,7 +177,7 @@ fn arraySample() void {
 
 fn composeSample() void {
     const ARRAY_LEN = 4;
-    const ArrayF = Array(ARRAY_LEN);
+    const ArrayF = comptime Array(ARRAY_LEN);
     const ArrayApplicative = Applicative(ArrayF);
     const MaybeApplicative = Applicative(Maybe);
 
@@ -336,8 +336,8 @@ fn composeSample() void {
 
 fn productSample() void {
     const ARRAY_LEN = 4;
-    const ArrayF = Array(ARRAY_LEN);
-    const ArrayAndMaybe = ProductFG(ArrayF, Maybe);
+    const ArrayF = comptime Array(ARRAY_LEN);
+    const ArrayAndMaybe = comptime ProductFG(ArrayF, Maybe);
     const ArrayApplicative = Applicative(ArrayF);
     const MaybeApplicative = Applicative(Maybe);
 
@@ -413,8 +413,8 @@ fn productSample() void {
 
 fn coproductSample() void {
     const ARRAY_LEN = 4;
-    const ArrayF = Array(ARRAY_LEN);
-    const ArrayOrMaybe = CoproductFG(ArrayF, Maybe);
+    const ArrayF = comptime Array(ARRAY_LEN);
+    const ArrayOrMaybe = comptime CoproductFG(ArrayF, Maybe);
     const ArrayApplicative = Applicative(ArrayF);
     const MaybeApplicative = Applicative(Maybe);
     const NatMaybeToArray = NatTrans(MaybeToArrayNatImpl(ARRAY_LEN));

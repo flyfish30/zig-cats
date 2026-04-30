@@ -35,6 +35,42 @@ pub fn mul_e_f64(a: u32) f64 {
     return @as(f64, @floatFromInt(a)) * 2.71828;
 }
 
+pub fn add4_c(a: u32) callconv(.c) u32 {
+    return a + 4;
+}
+
+pub fn add10_c(a: u32) callconv(.c) u32 {
+    return a + 10;
+}
+
+pub fn mul2_c(a: u32) callconv(.c) u32 {
+    return a * 2;
+}
+
+pub fn mul3_c(a: u32) callconv(.c) u32 {
+    return a * 3;
+}
+
+pub fn add_pi_f32_c(a: u32) callconv(.c) f32 {
+    return @as(f32, @floatFromInt(a)) + 3.14;
+}
+
+pub fn add_pi_f64_c(a: u32) callconv(.c) f64 {
+    return @as(f64, @floatFromInt(a)) + 3.14;
+}
+
+pub fn mul_pi_f64_c(a: u32) callconv(.c) f64 {
+    return @as(f64, @floatFromInt(a)) * 3.14;
+}
+
+pub fn add_e_f64_c(a: u32) callconv(.c) f64 {
+    return @as(f64, @floatFromInt(a)) + 2.71828;
+}
+
+pub fn mul_e_f64_c(a: u32) callconv(.c) f64 {
+    return @as(f64, @floatFromInt(a)) * 2.71828;
+}
+
 pub const Add_x_u32_Lam = struct {
     _x: u32,
     const Self = @This();

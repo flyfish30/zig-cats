@@ -293,10 +293,10 @@ test "Monad Identity pure, fmap, fapply and bind" {
     const identity_monad = IdentityMonad.InstanceImpl{};
 
     const id_1: Identity(u32) = .fromA(42);
-    const id_2 = identity_monad.fmap(.InplaceMap, add10, id_1);
+    const id_2 = identity_monad.fmap(.InplaceMap, add10_c, id_1);
     try testing.expectEqual(52, id_2.toA());
 
-    const id_f = identity_monad.pure(&mul_pi_f64);
+    const id_f = identity_monad.pure(&mul_pi_f64_c);
     const id_3 = identity_monad.fapply(id_f, id_2);
     try testing.expectEqual(163.28, id_3.toA());
 
@@ -542,12 +542,12 @@ test "Applicative Constant(T)(A) fmap and pure, fapply" {
     const const_array3 = Constant(ArrayList(u32))(u32){ .t = array_m3 };
     defer const_array3.deinit();
 
-    const const_fmapped = try const_applicative.fmap(.InplaceMap, mul_pi_f64, const_array1);
+    const const_fmapped = try const_applicative.fmap(.InplaceMap, mul_pi_f64_c, const_array1);
     try testing.expectEqualSlices(u32, &[_]u32{ 42, 42 }, const_fmapped.t.items);
     const const_array_pure = try const_applicative.pure(18);
     defer const_array_pure.deinit();
     try testing.expectEqualSlices(u32, &[_]u32{}, const_array_pure.t.items);
-    const const_array_ff = try const_applicative.pure(&mul_pi_f64);
+    const const_array_ff = try const_applicative.pure(&mul_pi_f64_c);
     const const_array_01 = try const_applicative.fapply(const_array_ff, const_array1);
     defer const_array_01.deinit();
     try testing.expectEqualSlices(u32, &[_]u32{ 42, 42 }, const_array_01.t.items);
@@ -747,7 +747,7 @@ fn SumOrProductNumb(comptime Numb: type, comptime numbop: NumbOp) type {
         else => @compileError("SumNumb/ProductNumb is not accept non-number type: " ++ @typeName(Numb)),
     }
 
-    return packed struct {
+    return extern struct {
         /// The numb should be a number or a function pointer `*const fn (Numb) Numb`.
         numb: Numb,
 
@@ -1054,9 +1054,9 @@ fn NumbMonadImpl(comptime NumbF: TCtor) type {
 }
 
 // These functions are used for unit test
-const add10 = testu.add10;
-const add_pi_f64 = testu.add_pi_f64;
-const mul_pi_f64 = testu.mul_pi_f64;
+const add10_c = testu.add10_c;
+const add_pi_f64_c = testu.add_pi_f64_c;
+const mul_pi_f64_c = testu.mul_pi_f64_c;
 const Add_x_u32_Lam = testu.Add_x_u32_Lam;
 const Add_x_f64_Lam = testu.Add_x_f64_Lam;
 const Mul_x_f64_Lam = testu.Mul_x_f64_Lam;
@@ -1071,7 +1071,7 @@ test "SumNumb and ProductNumb Functor fmap/fmapLam" {
     const product_functor = ProductFunctor.InstanceImpl{};
 
     const sum_u32 = SumNumb(u32).fromNumb(42);
-    var sum_f64 = sum_functor.fmap(.NewValMap, add_pi_f64, sum_u32);
+    var sum_f64 = sum_functor.fmap(.NewValMap, add_pi_f64_c, sum_u32);
     try testing.expectEqual(45.14, sum_f64.toNumb());
 
     const add_pi_lam = Add_x_f64_Lam{ ._x = 3.14 };
@@ -1079,7 +1079,7 @@ test "SumNumb and ProductNumb Functor fmap/fmapLam" {
     try testing.expectEqual(45.14, sum_f64.toNumb());
 
     const product_u32 = ProductNumb(u32).fromNumb(42);
-    var product_f64 = product_functor.fmap(.NewValMap, mul_pi_f64, product_u32);
+    var product_f64 = product_functor.fmap(.NewValMap, mul_pi_f64_c, product_u32);
     try testing.expectEqual(131.88, product_f64.toNumb());
 
     const mul_pi_lam = Mul_x_f64_Lam{ ._x = 3.14 };
@@ -1092,17 +1092,29 @@ test "SumNumb and ProductNumb Functor fmap/fmapLam" {
 const Vec4xU32 = @Vector(4, u32);
 const Vec4xF64 = @Vector(4, f64);
 
-fn vec_add10(v: Vec4xU32) Vec4xU32 {
-    return v + @as(Vec4xU32, @splat(10));
-}
+const Vec_add10_Lam = struct {
+    const Self = @This();
+    pub fn call(self: *const Self, v: Vec4xU32) Vec4xU32 {
+        _ = self;
+        return v + @as(Vec4xU32, @splat(10));
+    }
+};
 
-fn vec_add_pi_f64(v: Vec4xU32) Vec4xF64 {
-    return @as(Vec4xF64, @floatFromInt(v)) + @as(Vec4xF64, @splat(3.14));
-}
+const Vec_add_pi_f64_Lam = struct {
+    const Self = @This();
+    pub fn call(self: *const Self, v: Vec4xU32) Vec4xF64 {
+        _ = self;
+        return @as(Vec4xF64, @floatFromInt(v)) + @as(Vec4xF64, @splat(3.14));
+    }
+};
 
-fn vec_mul_pi_f64(v: Vec4xU32) Vec4xF64 {
-    return @as(Vec4xF64, @floatFromInt(v)) * @as(Vec4xF64, @splat(3.14));
-}
+const Vec_mul_pi_f64_Lam = struct {
+    const Self = @This();
+    pub fn call(self: *const Self, v: Vec4xU32) Vec4xF64 {
+        _ = self;
+        return @as(Vec4xF64, @floatFromInt(v)) * @as(Vec4xF64, @splat(3.14));
+    }
+};
 
 test "SumNumb and ProductNumb Applicative pure and fapply/fapplyLam" {
     // test sum/product number
@@ -1112,10 +1124,10 @@ test "SumNumb and ProductNumb Applicative pure and fapply/fapplyLam" {
     const product_applicative = ProductApplicative.InstanceImpl{};
 
     const sum_u32 = sum_applicative.pure(@as(u32, 42));
-    const sum_add10 = sum_applicative.pure(&add10);
+    const sum_add10 = sum_applicative.pure(&add10_c);
     var sum_added = sum_applicative.fapply(sum_add10, sum_u32);
     try testing.expectEqual(52, sum_added.toNumb());
-    const sum_add_pi = sum_applicative.pure(&add_pi_f64);
+    const sum_add_pi = sum_applicative.pure(&add_pi_f64_c);
     var sum_f64 = sum_applicative.fapply(sum_add_pi, sum_u32);
     try testing.expectEqual(45.14, sum_f64.toNumb());
 
@@ -1129,7 +1141,7 @@ test "SumNumb and ProductNumb Applicative pure and fapply/fapplyLam" {
     try testing.expectEqual(45.14, sum_f64.toNumb());
 
     const product_u32 = product_applicative.pure(@as(u32, 42));
-    const product_mul_pi = product_applicative.pure(&mul_pi_f64);
+    const product_mul_pi = product_applicative.pure(&mul_pi_f64_c);
     var product_f64 = product_applicative.fapply(product_mul_pi, product_u32);
     try testing.expectEqual(131.88, product_f64.toNumb());
 
@@ -1145,16 +1157,16 @@ test "SumNumb and ProductNumb Applicative pure and fapply/fapplyLam" {
     const product_vec_applicative = ProductVecApplicative.InstanceImpl{};
 
     const sum_vec_u32 = sum_vec_applicative.pure(@as(Vec4xU32, @splat(42)));
-    const sum_vec_add10 = sum_vec_applicative.pure(&vec_add10);
-    var sum_vec_added = sum_vec_applicative.fapply(sum_vec_add10, sum_vec_u32);
+    const sum_vec_add10 = sum_vec_applicative.pure(&Vec_add10_Lam{});
+    var sum_vec_added = sum_vec_applicative.fapplyLam(sum_vec_add10, sum_vec_u32);
     try testing.expectEqual(@as(Vec4xU32, @splat(52)), sum_vec_added.toNumb());
-    const sum_vec_add_pi = sum_vec_applicative.pure(&vec_add_pi_f64);
-    var sum_vec_f64 = sum_vec_applicative.fapply(sum_vec_add_pi, sum_vec_u32);
+    const sum_vec_add_pi = sum_vec_applicative.pure(&Vec_add_pi_f64_Lam{});
+    var sum_vec_f64 = sum_vec_applicative.fapplyLam(sum_vec_add_pi, sum_vec_u32);
     try testing.expectEqual(@as(Vec4xF64, @splat(45.14)), sum_vec_f64.toNumb());
 
     const product_vec_u32 = product_vec_applicative.pure(@as(Vec4xU32, @splat(42)));
-    const product_vec_mul_pi = product_vec_applicative.pure(&vec_mul_pi_f64);
-    var product_vec_f64 = product_vec_applicative.fapply(product_vec_mul_pi, product_vec_u32);
+    const product_vec_mul_pi = product_vec_applicative.pure(&Vec_mul_pi_f64_Lam{});
+    var product_vec_f64 = product_vec_applicative.fapplyLam(product_vec_mul_pi, product_vec_u32);
     try testing.expectEqual(@as(Vec4xF64, @splat(131.88)), product_vec_f64.toNumb());
 }
 

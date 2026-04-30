@@ -728,7 +728,7 @@ pub const StackCalcFShowNatImpl = struct {
     }
 };
 
-var allocator_instance = std.heap.GeneralPurposeAllocator(.{}){};
+var allocator_instance = std.heap.DebugAllocator(.{}){};
 const g_allocator = allocator_instance.allocator();
 const StateS = *ArrayList(Int);
 

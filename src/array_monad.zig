@@ -264,17 +264,17 @@ pub fn ArrayMonadImpl(comptime len: usize) type {
             }
 
             // const arr = if (comptime isMapRef(K)) fa.* else fa;
-            var slice = @constCast(fa[0..len]);
+            var slice_b: *FbFnOrLamType(M, @TypeOf(fn_or_lam)) = @ptrCast(@alignCast(@constCast(fa[0..len])));
             var i: usize = 0;
-            while (i < slice.len) : (i += 1) {
-                const a = if (comptime isMapRef(K)) &slice[i] else slice[i];
+            while (i < fa.len) : (i += 1) {
+                const a = if (comptime isMapRef(K)) &fa[i] else fa[i];
                 if (M == .NormalMap) {
-                    slice[i] = castInplaceValue(A, fn_or_lam(a));
+                    slice_b[i] = fn_or_lam(a);
                 } else {
-                    slice[i] = castInplaceValue(A, fn_or_lam.call(a));
+                    slice_b[i] = fn_or_lam.call(a);
                 }
             }
-            return @bitCast(slice.*);
+            return slice_b.*;
         }
 
         fn mapNewValue(

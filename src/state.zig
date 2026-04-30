@@ -939,8 +939,8 @@ test "State(s, a) Functor fmap" {
     const allocator = testing.allocator;
     const default_cfg = comptime getDefaultStateCfg(u32, allocator);
     const DefaultCtx = StateContext(default_cfg);
-    const StateU32 = DefaultCtx.StateM(u32);
-    const StateFunctor = Functor(StateU32);
+    const StateU32 = comptime DefaultCtx.StateM(u32);
+    const StateFunctor = comptime Functor(StateU32);
     const state_functor = StateFunctor.InstanceImpl{ .allocator = allocator };
 
     // test fmap
@@ -963,10 +963,10 @@ test "State(s, a) Functor fmap" {
     try testing.expectEqual(42, res_s);
 
     // test State(ArrayList(u32), a) fmap
-    const ArrayListU32 = ArrayList(u32);
+    const ArrayListU32 = comptime ArrayList(u32);
     const array_cfg = comptime getDeinitCfg(ArrayListU32, allocator);
     const ArrayStCtx = StateContext(array_cfg);
-    const StateArrayU32 = ArrayStCtx.StateM(ArrayListU32);
+    const StateArrayU32 = comptime ArrayStCtx.StateM(ArrayListU32);
     _ = Functor(StateArrayU32);
     var array_st_functor = FunctorImplFromTCtor(StateArrayU32){ .allocator = allocator };
 
@@ -1015,8 +1015,8 @@ test "State(s, a) Applicative pure and fapply" {
     const allocator = testing.allocator;
     const default_cfg = comptime getDefaultStateCfg(u32, allocator);
     const DefaultCtx = StateContext(default_cfg);
-    const StateU32 = DefaultCtx.StateM(u32);
-    const StateApplicative = Applicative(StateU32);
+    const StateU32 = comptime DefaultCtx.StateM(u32);
+    const StateApplicative = comptime Applicative(StateU32);
     const state_applicative = StateApplicative.InstanceImpl{ .allocator = allocator };
 
     var state_a = try state_applicative.pure(@as(u32, 13));
@@ -1050,8 +1050,8 @@ test "State(s, a) Monad bind" {
     const allocator = testing.allocator;
     const default_cfg = comptime getDefaultStateCfg(u32, allocator);
     const DefaultCtx = StateContext(default_cfg);
-    const StateU32 = DefaultCtx.StateM(u32);
-    const StateMonad = Monad(StateU32);
+    const StateU32 = comptime DefaultCtx.StateM(u32);
+    const StateMonad = comptime Monad(StateU32);
     const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
 
     var state_a = try state_monad.pure(@as(u32, 13));
@@ -1083,8 +1083,8 @@ test "runDo State(Arraylist(i32), A)" {
 
     const array_cfg = comptime getDeinitCfg(ArrayList(i32), allocator);
     const ArrayStCtx = StateContext(array_cfg);
-    const StateArrayI32 = ArrayStCtx.StateM(ArrayList(i32));
-    const StateMonad = Monad(StateArrayI32);
+    const StateArrayI32 = comptime ArrayStCtx.StateM(ArrayList(i32));
+    const StateMonad = comptime Monad(StateArrayI32);
     const state_array_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const ArrayStImpl = @TypeOf(state_array_monad);
 
@@ -1472,7 +1472,7 @@ pub fn liftPutF(
 ) !FreeMonad(cfg, StateF(cfg, @TypeOf(s)), @TypeOf(a)) {
     const S = @TypeOf(s);
     const A = @TypeOf(a);
-    const F = StateF(cfg, S);
+    const F = comptime StateF(cfg, S);
 
     const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, S, A));
     const PutF: FOpEnumInt = @intFromEnum(StateFCtorEnum.PutF);
@@ -1544,7 +1544,7 @@ pub fn liftGetF(
     const A = MapLamRetType(@TypeOf(action_lam));
     const has_err, const _A = isErrorUnionOrVal(A);
     _ = has_err;
-    const F = StateF(cfg, S);
+    const F = comptime StateF(cfg, S);
     const ExistType = freetypes.GetExistentialType(F);
     const StateFCtorEnum = std.meta.DeclEnum(StateFCtorDefs(cfg, S, _A));
     const GetF: FOpEnumInt = @intFromEnum(StateFCtorEnum.GetF);
@@ -1560,8 +1560,8 @@ test "FreeMonad(StateF, A) liftFree" {
     const allocator = testing.allocator;
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
-    const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(F);
+    const F = comptime StateF(cfg, StateS);
+    const StateFFunctor = comptime Functor(F);
     const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
 
     const ShowMonadImpl = MWriterMaybeMonadImpl(ArrayListMonoidImpl(u8), ArrayList(u8));
@@ -1642,7 +1642,7 @@ pub fn StateFToStateNatImpl(comptime cfg: anytype, comptime S: type) type {
 }
 
 pub fn StateFShowNatImpl(comptime cfg: anytype, comptime S: type) type {
-    const InF = StateF(cfg, S);
+    const InF = comptime StateF(cfg, S);
     const ExistType = freetypes.GetExistentialType(InF);
     return struct {
         allocator: Allocator,
@@ -1680,7 +1680,7 @@ fn statefToA(
     comptime S: type,
     comptime A: type,
 ) *const fn (a: StateFA(cfg, S, A)) A {
-    const F = StateF(cfg, S);
+    const F = comptime StateF(cfg, S);
     const ExistType = freetypes.GetExistentialType(F);
     return struct {
         fn iterFn(statef: StateFA(cfg, S, A)) A {
@@ -1706,12 +1706,12 @@ test "FreeMonad(StateF, A) foldFree and iter" {
     const allocator = testing.allocator;
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
-    const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(F);
+    const F = comptime StateF(cfg, StateS);
+    const StateFFunctor = comptime Functor(F);
     const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
 
-    const StateU64 = StateContext(cfg).StateM(StateS);
-    const StateMonad = Monad(StateU64);
+    const StateU64 = comptime StateContext(cfg).StateM(StateS);
+    const StateMonad = comptime Monad(StateU64);
     const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
     const nat_statef_state = NatStateFToState.InstanceImpl{};
@@ -1809,16 +1809,16 @@ test "FreeMonad(StateF, A) fmap and fmapLam" {
     const allocator = testing.allocator;
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
-    const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(F);
+    const F = comptime StateF(cfg, StateS);
+    const StateFFunctor = comptime Functor(F);
     const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
-    const FStateMonad = Monad(freetypes.FreeM(cfg, F));
+    const FStateMonad = comptime Monad(freetypes.FreeM(cfg, F));
     var freem_monad = FStateMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = statef_functor,
     };
 
-    const StateMonad = Monad(StateContext(cfg).StateM(StateS));
+    const StateMonad = comptime Monad(StateContext(cfg).StateM(StateS));
     const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
     const nat_statef_state = NatStateFToState.InstanceImpl{};
@@ -1921,16 +1921,16 @@ test "FreeMonad(StateF, A) fapply and fapplyLam" {
     const allocator = testing.allocator;
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
-    const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(F);
+    const F = comptime StateF(cfg, StateS);
+    const StateFFunctor = comptime Functor(F);
     const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
-    const FStateMonad = Monad(freetypes.FreeM(cfg, F));
+    const FStateMonad = comptime Monad(freetypes.FreeM(cfg, F));
     var freem_monad = FStateMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = statef_functor,
     };
 
-    const StateMonad = Monad(StateContext(cfg).StateM(StateS));
+    const StateMonad = comptime Monad(StateContext(cfg).StateM(StateS));
     const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
     const nat_statef_state = NatStateFToState.InstanceImpl{};
@@ -2226,10 +2226,10 @@ test "FreeMonad(StateF, A) bind and join" {
     const allocator = testing.allocator;
     const StateS = u64;
     const cfg = getDefaultStateCfg(StateS, allocator);
-    const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(F);
+    const F = comptime StateF(cfg, StateS);
+    const StateFFunctor = comptime Functor(F);
     const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
-    const FStateMonad = Monad(freetypes.FreeM(cfg, F));
+    const FStateMonad = comptime Monad(freetypes.FreeM(cfg, F));
     var freem_monad = FStateMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = statef_functor,
@@ -2678,17 +2678,17 @@ test "runDo FreeMonad(StateF, A) " {
     const StateS = u32;
     const cfg = getDefaultStateCfg(StateS, allocator);
     const CfgError = cfg.errors;
-    const F = StateF(cfg, StateS);
-    const StateFFunctor = Functor(F);
+    const F = comptime StateF(cfg, StateS);
+    const StateFFunctor = comptime Functor(F);
     const statef_functor = StateFFunctor.InstanceImpl{ .allocator = allocator };
-    const FStateMonad = Monad(freetypes.FreeM(cfg, F));
+    const FStateMonad = comptime Monad(freetypes.FreeM(cfg, F));
     const freem_monad = FStateMonad.InstanceImpl{
         .allocator = allocator,
         .funf_impl = statef_functor,
     };
     const FreeStateFImpl = @TypeOf(freem_monad);
 
-    const StateMonad = Monad(StateContext(cfg).StateM(StateS));
+    const StateMonad = comptime Monad(StateContext(cfg).StateM(StateS));
     const state_monad = StateMonad.InstanceImpl{ .allocator = allocator };
     const NatStateFToState = NatTrans(StateFToStateNatImpl(cfg, StateS));
     const nat_statef_state = NatStateFToState.InstanceImpl{};

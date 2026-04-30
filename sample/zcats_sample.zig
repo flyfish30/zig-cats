@@ -71,7 +71,7 @@ fn maybeSample() void {
 }
 
 fn arraylistSample() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -154,7 +154,7 @@ fn arraylistSample() !void {
 }
 
 fn foldableSample() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -238,7 +238,7 @@ fn foldableSample() !void {
     // Demonstrate Array Foldable examples
     std.debug.print("\n--- Array Foldable Examples ---\n", .{});
 
-    const Array4 = zcats.Array(4);
+    const Array4 = comptime zcats.Array(4);
     const ArrayFoldable = Foldable(Array4);
     const array_foldable = ArrayFoldable.InstanceImpl{};
 
@@ -311,7 +311,7 @@ fn array3PrettyPrint(arr3: anytype) void {
 }
 
 fn composeSample() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
 
     const allocator = gpa.allocator();
@@ -448,11 +448,11 @@ fn composeSample() !void {
 }
 
 fn productSample() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
 
     const allocator = gpa.allocator();
-    const ArrayAndMaybe = ProductFG(ArrayList, Maybe);
+    const ArrayAndMaybe = comptime ProductFG(ArrayList, Maybe);
     const ArrayListApplicative = Applicative(ArrayList);
     const MaybeApplicative = Applicative(Maybe);
     const ArrayListAndMaybeApplicative = ProductApplicative(ArrayListApplicative, MaybeApplicative);
@@ -526,11 +526,11 @@ fn productSample() !void {
 }
 
 fn coproductSample() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
 
     const allocator = gpa.allocator();
-    const ArrayOrMaybe = CoproductFG(ArrayList, Maybe);
+    const ArrayOrMaybe = comptime CoproductFG(ArrayList, Maybe);
     const ArrayListApplicative = Applicative(ArrayList);
     const MaybeApplicative = Applicative(Maybe);
     const NatMaybeToArray = NatTrans(MaybeToArrayListNatImpl);

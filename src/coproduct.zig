@@ -334,7 +334,7 @@ const ArrayList = std.array_list.Managed;
 test "Compose Functor fmap" {
     // test (ArrayList, Maybe) product functor
     const allocator = testing.allocator;
-    const ArrayOrMaybe = CoproductFG(ArrayList, Maybe);
+    const ArrayOrMaybe = comptime CoproductFG(ArrayList, Maybe);
     const ArrayListFunctor = Functor(ArrayList);
     const MaybeFunctor = Functor(Maybe);
     const ArrayListOrMaybeFunctor = CoproductFunctor(ArrayListFunctor, MaybeFunctor);
@@ -377,7 +377,7 @@ test "Compose Applicative pure and fapply" {
 
     // test (ArrayList, Maybe) product applicative
     const allocator = testing.allocator;
-    const ArrayOrMaybe = CoproductFG(ArrayList, Maybe);
+    const ArrayOrMaybe = comptime CoproductFG(ArrayList, Maybe);
     const ArrayListApplicative = Applicative(ArrayList);
     const MaybeApplicative = Applicative(Maybe);
     const NatMaybeToArray = NatTrans(MaybeToArrayListNatImpl);

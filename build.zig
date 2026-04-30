@@ -2,11 +2,12 @@ const std = @import("std");
 
 // Get all output messages of run sample
 fn getSampleOutput(b: *std.Build) ![]const u8 {
-    var dir = try b.build_root.handle.openDir("./sample", .{ .iterate = true });
-    defer dir.close();
+    const io = b.graph.io;
+    var dir = try std.Io.Dir.cwd().openDir(io, "./sample", .{ .iterate = true });
+    defer dir.close(io);
 
     const max_file_size = 10 * 1024 * 1024;
-    const output = try dir.readFileAlloc(b.allocator, "run_sample_output.txt", max_file_size);
+    const output = try dir.readFileAlloc(io, "run_sample_output.txt", b.allocator, .limited(max_file_size));
     return output;
 }
 

@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        zig_version: ['0.15.2']
+        zig_version: ['0.16.0']
         target:
           # Linux Targets
           - name: x86_64-linux-gnu
